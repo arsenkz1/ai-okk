@@ -1,0 +1,1328 @@
+{
+  "name": "ОКК ии QADAMEDU в2",
+  "nodes": [
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "49f28943-16ce-4710-b2a5-8d54928658b1",
+              "leftValue": "={{ $('Code13').item.json['сумма'] }}",
+              "rightValue": 32,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3440,
+        1360
+      ],
+      "id": "90cbdae7-443c-4d0b-a6c0-ce3537838cf6",
+      "name": "If",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "chatId": "хххххххх",
+        "text": "=Менеджер допустил много ошибок. Общая оценка - {{ $json['Оценка'] }}\nid сделки - {{ $('Loop Over Items1').item.json['Сделка ID'] }}\n[Строка в таблице](https://bit.ly/4jQXCri) - {{ $('Loop Over Items1').item.json.row_number }}\nОтветственный - {{ $('Loop Over Items1').item.json['Менеджер'] }}\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3712,
+        1440
+      ],
+      "id": "d51874a1-4ee3-4a4b-bbb6-50753c399bae",
+      "name": "Telegram",
+      "webhookId": "f65a7bfd-b5b5-4b58-8c34-e1f54de26ba8",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "content": "Например, общая сумма у нас может доходить до 40. \nесли % ошибок менеджера по скрипту более 20% (т.е. это меньше 32 баллов), отправляем уведомление РОПУ",
+        "width": 300,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3632,
+        1248
+      ],
+      "typeVersion": 1,
+      "id": "c38e9ff8-ba93-4ddd-a1fa-b64a4123aac8",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "amount": 8
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1232,
+        304
+      ],
+      "id": "bd5ae275-6ca6-4033-a65f-b0d146eea149",
+      "name": "Wait2",
+      "webhookId": "37b925ab-db1e-4f9f-b726-c831f91771e9"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        528
+      ],
+      "id": "6c153edc-5267-4468-bc27-4048387b0420",
+      "name": "Wait3",
+      "webhookId": "5b68af99-2875-443d-bae2-3e73053bcbd5"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3b843024-5cf3-453b-bc34-975164268fe6",
+              "leftValue": "={{ $json['Транскрибация'] }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "e4202b45-516f-4737-821b-6cdf990ec431",
+              "leftValue": "={{ $json[\"Текущий контекст\"] }}\n",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "dcaeadf2-ace0-4999-9474-c8296139a6e9",
+      "name": "фильтруем по наличию транскрипта",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1FVPV38OrkbDkZ51wNyQaVq-q5lVvaUcwqDwVi6YxPBw/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Оценка звонков",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1FVPV38OrkbDkZ51wNyQaVq-q5lVvaUcwqDwVi6YxPBw/edit#gid=0"
+        },
+        "options": {}
+      },
+      "id": "eab00e98-5d35-4aff-8ab0-35a7a2f221a8",
+      "name": "забираем только те, у которых статус Ready",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        560,
+        64
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uMDDa8dmjMIJgAtP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Получаем текущий элемент\nconst item = $input.item;\n\n// ✅ Если нет текста — возвращаем пустую структуру, чтобы не ломался цикл\nif (!item.json?.message?.content) {\n  return {\n    json: {\n      ...item.json,\n      ratings: {},\n      expertComment: \"\"\n    }\n  };\n}\n\n// Получаем текст от предыдущей ноды\nconst content = item.json.message.content;\n\n// Объект для хранения оценок\nconst ratings = {};\n\n// Регулярные выражения для поиска числовых оценок\nconst regexes = {\n  \"Связь с болью и потребностью\": /Связь с болью и потребностью:\\s*\\*{0,2}(\\d+)/i,\n  \"Описание точки Б через продукт\": /Описание точки Б через продукт:\\s*\\*{0,2}(\\d+)/i,\n  \"Итоговая оценка\": /Итоговая\\s*оценка:\\s*\\*{0,2}(\\d+)/i\n};\n\n// Извлекаем оценки\nfor (const [key, regex] of Object.entries(regexes)) {\n  const match = content.match(regex);\n  if (match && match[1]) {\n    ratings[key] = parseInt(match[1]);\n  }\n}\n\n// Извлекаем комментарий эксперта\nlet expertComment = null;\nconst expertCommentStart = content.indexOf(\"Комментарий эксперта:\");\nif (expertCommentStart !== -1) {\n  expertComment = content\n    .substring(expertCommentStart + \"Комментарий эксперта:\".length)\n    .trim();\n}\n\n// Возвращаем обновлённые данные\nreturn {\n  json: {\n    ...item.json,\n    ratings,\n    expertComment\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        304
+      ],
+      "id": "03a6fca8-6bb4-4b32-bfe0-00a58961cac8",
+      "name": "Code2"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// === Универсальный анализатор оценок ===\nconst item = $input.item;\n\n// ✅ Если нет текста — возвращаем пустую структуру, чтобы не ломался цикл\nif (!item.json?.message?.content) {\n  return {\n    json: {\n      ...item.json,\n      ratings: {},\n      expertComment: \"\"\n    }\n  };\n}\n\n// 1️⃣ Берём текст из предыдущего узла\nconst content = $json.message?.content || \"\";\n\n// 2️⃣ Инициализируем объект оценок\nconst ratings = {};\n\n// 3️⃣ Регулярные выражения для поиска всех нужных блоков\nconst regexes = {\n  // Этап 1\n  \"Контекст\": /Контекст[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Цель и точка Б\": /Цель\\s*и\\s*точка\\s*Б[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Вытащил Боли\": /Вытащил\\s*Боли[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Боли и триггеры\": /Боли\\s*и\\s*триггеры[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n\n  // Этап 2\n  \"Резюме\": /Резюме[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Презентация\": /Презентация[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Точка Б\\\\+продукт\": /Точка\\s*Б\\s*\\+\\s*продукт[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Отработка возражения\": /Отработка\\s*возражения[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Срочность\": /Срочность[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Договоренность след шаг\": /Договоренность\\s*след\\s*шаг[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n\n  // Этап 3\n  \"Попытка закрытия\": /Попытка\\s*закрытия[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Попытка закрытия на оплату\": /Попытка\\s*закрытия\\s*на\\s*оплату[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Работа с возражениями через контекст\": /Работа\\s*с\\s*возражениями\\s*через\\s*контекст[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Усиление боли / FOMO / срочности\": /Усиление\\s*боли\\s*\\/?\\s*FOMO\\s*\\/?\\s*срочности[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n  \"Договорённость по шагу и сроку оплаты\": /Договор[её]нность\\s*по\\s*шагу\\s*и\\s*сроку\\s*оплаты[:：]?\\s*[*` ]{0,5}(\\d+)/i,\n\n  // Финал\n  \"Итоговая оценка\": /Итоговая\\s*оценка[:：]?\\s*[*` ]{0,5}(\\d+)/i\n};\n\n// 4️⃣ Извлекаем оценки\nfor (const [key, regex] of Object.entries(regexes)) {\n  const match = content.match(regex);\n  if (match && match[1]) {\n    const clean = match[1].replace(/[^\\d]/g, \"\");\n    ratings[key] = clean ? parseInt(clean) : null;\n  }\n}\n\n// 5️⃣ Извлекаем комментарий эксперта\nlet expertComment = null;\nconst start = content.indexOf(\"Комментарий эксперта:\");\nif (start !== -1) {\n  expertComment = content.substring(start + \"Комментарий эксперта:\".length).trim();\n}\n\n// 6️⃣ Возвращаем результат\nreturn {\n  json: {\n    ...$json,\n    ratings,\n    expertComment\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        528
+      ],
+      "id": "0e7fff21-e5c1-489c-92bd-2a30b3740a8f",
+      "name": "Code3"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1024,
+        64
+      ],
+      "id": "9458e9f9-9fb7-4410-b50f-12fcfc364cd6",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "Ты — опытный руководитель отдела продаж онлайн-школы, обучающей практическим профессиям (таргетинг, SMM, Excel, аналитика и др.).  \nТвоя задача — проанализировать звонок менеджера и оценить, насколько качественно он провёл этап «Идентификация клиента».  \nОцени по 4 критериям (каждый — от 1 до 10, максимум — 40 баллов), используя нижеописанные шкалы.\n\n---\n\n📌 **1. Контекст клиента**  \nПонял ли менеджер, чем сейчас занимается клиент?\n\n**Оцени по шкале:**\n- **10** — Узнал всё: текущую занятость, опыт, обучение, пробовал ли что-то (YouTube, курсы и т.д.).\n- **7–9** — Выяснил 2–3 аспекта, но поверхностно.\n- **4–6** — Узнал только одну деталь, не копал глубже.\n- **1–3** — Вообще не интересовался или задал дежурный вопрос без уточнений.\n\n---\n\n📌 **2. Цель и точка Б**  \nВыяснил ли менеджер, что клиент хочет изменить или достичь с помощью обучения?\n\n**Оцени по шкале:**\n- **10** — Клиент ясно назвал цель (сменить профессию, начать подрабатывать, повысить доход, расти в компании и т.д.), менеджер докопался до сути.\n- **7–9** — Цель названа, но без глубины.\n- **4–6** — Менеджер сам сделал вывод, клиент напрямую не сказал.\n- **1–3** — Цель осталась неясной, вопрос не задавался.\n\n---\n\n📌 **3. Боли и триггеры**  \nУзнал ли менеджер, сильное эмоциональное переживание, которое клиент явно или косвенно проявил в разговоре, и которое усиливает его потребность в продукте?\n**Оцени по шкале:**\n- **10** — Клиент чётко озвучил боли (устал от текущей работы, боится потерять профессию, не зарабатывает, пробовал — не вышло и т.д.), менеджер задал нужные вопросы.\n- **7–9** — Боль упомянута, но не раскрыта.\n- **4–6** — Менеджер сделал предположения, клиент не подтверждал.\n- **1–3** — Боли не обсуждались.\n\n---\n\n📌 **4. Резюме запроса**  \nСделал ли менеджер итоговое резюме по клиенту?\n\n**Оцени по шкале:**\n- **10** — Менеджер кратко повторил суть запроса (что хочет, почему, текущая ситуация), и задал уточнение: «Я правильно понял, что вы…?»\n- **7–9** — Было резюме, но частичное или без уточнений.\n- **4–6** — Что-то повторил, но не оформил это как резюме.\n- **1–3** — Резюме не было вовсе.\n\n---\n\n🎯 Дай ответ в следующем формате:\n\n**Оценка по критериям:**\n- Контекст: [1–10]\n- Цель и точка Б: [1–10]\n- Боли и триггеры: [1–10]\n- Резюме: [1–10]\n\n**Комментарий эксперта:**  \n[Краткий и чёткий разбор — что сделано хорошо, где провал, что улучшить. Без воды, как для обучения менеджера.]\n",
+              "role": "system"
+            },
+            {
+              "content": "=\nТранскрипт для анализа:\n{{ $json[\"Транскрибация\"] }}\n\nТекущий контекст:\n{{ $json[\"Текущий контекст\"] }}\n"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 500
+        }
+      },
+      "id": "de6b3d93-1f31-4fef-9744-7d1d148497bf",
+      "name": "Идентификация клиента",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        1392,
+        96
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "F7I4qohsosINCyoT",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "Ты — опытный руководитель отдела продаж онлайн-школы, обучающей профессиям: таргетинг, SMM, Excel, аналитика и т.д.\n\nТвоя задача — проанализировать часть звонка, где менеджер презентует курс, и оценить, насколько убедительно он связал продукт с **потребностью и болью клиента**.\n\nОцени по 2 критериям, каждый — от 1 до 10 (максимум — 20 баллов), по следующим шкалам:\n\n---\n\n📌 **1. Связь презентации с болью и потребностью клиента**  \nСумел ли менеджер «привязать» рассказ о курсе к тому, что волнует клиента? Было ли ощущение, что это решение именно для него?\n\n**Оцени по шкале:**\n- **10** — Менеджер чётко связал курс с озвученной болью клиента и его целями. Например: «Вы говорили, что устали от работы без перспектив — у нас как раз есть программа, с которой вы сможете выйти на подработку уже через месяц».  \n- **7–9** — Привязка есть, но слабая или частичная. Курс упомянут, но связь с болью клиента неочевидна.  \n- **4–6** — Презентация оторвана от контекста клиента. Менеджер говорит о курсе абстрактно.  \n- **1–3** — Просто рассказал про курс как по скрипту, вообще не опираясь на слова клиента. Нет индивидуализации.\n\n---\n\n📌 **2. Описание точки Б через продукт**  \nСмог ли менеджер показать клиенту конкретный желаемый результат, которого тот может достичь с помощью курса?\n\n**Оцени по шкале:**\n- **10** — Ясно нарисовал «после»: чем клиент будет заниматься, сколько может зарабатывать, какие навыки получит, как изменится жизнь. Упоминается конкретика (фриланс, подработка, офис, рост дохода, уверенность).  \n- **7–9** — Есть намёк на точку Б, но образ размыт или общий.  \n- **4–6** — Менеджер говорил больше о процессе обучения, а не о результате.  \n- **1–3** — Вообще не рассказывал, к чему приведёт курс. Сфокусирован на теории, программе, цене — а не на результате.\n\n---\n\n🎯 Ответ оформи в таком виде:\n\n**Оценка по критериям:**\n- Связь с болью и потребностью: [1–10]\n- Описание точки Б через продукт: [1–10]\n\n**Комментарий эксперта:**  \n[Кратко оцени, насколько хорошо менеджер связал продукт с запросом клиента и нарисовал будущий результат. Отметь сильные и слабые стороны, дай 1–2 коротких рекомендаций по улучшению.]",
+              "role": "system"
+            },
+            {
+              "content": "=Транскрипт для анализа:\n{{ $('Loop Over Items1').item.json[\"Транскрибация\"] }}\n\nТекущий контекст:\n{{ $('Loop Over Items1').item.json[\"Текущий контекст\"] }}\n\nВыявил потребность:\n{{ $('Loop Over Items1').item.json[\"Выявил потребность\"] }}\n\nВытащил боли:\n{{ $('Loop Over Items1').item.json[\"Вытащил Боли\"] }}\n\nРезюме:\n{{ $('Loop Over Items1').item.json[\"Резюме\"] }}\n"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 2000
+        }
+      },
+      "id": "8d206f84-bb18-4354-989d-c51ee7364c81",
+      "name": "Презентация + контекст",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        1408,
+        304
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "F7I4qohsosINCyoT",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "Ты — опытный руководитель отдела продаж онлайн-школы, обучающей практическим профессиям (таргетинг, SMM, Excel, аналитика и др.).\n\nПроанализируй часть звонка, где менеджер завершает диалог с клиентом, и оцени, насколько грамотно он **закрывает сделку**.  \nОцени по 4 ключевым критериям, каждый — от 1 до 10 баллов. Используй чёткие шкалы ниже:\n\n---\n\n📌 **1. Попытка закрытия на оплату**  \nПроизвёл ли менеджер активную попытку закрыть на оплату (или бронь)?\n\n**Оцени по шкале:**\n- **10** — Прямо и уверенно предложил оплату: «Готовы оплатить сейчас?», «Давайте зафиксирую место»  \n- **7–9** — Попытка есть, но звучит мягко или неуверенно  \n- **4–6** — Есть намёк на оплату, но без действия  \n- **1–3** — Попытки закрытия не было вовсе\n\n---\n\n📌 **2. Работа с возражениями через контекст**  \nОбработал ли менеджер возражения, опираясь на **боли, цели, мотивацию** клиента?\n\n**Оцени по шкале:**\n- **10** — Возражения отработаны, ссылается на мотивацию и цель клиента: «Вы же говорили, что хотите уйти с работы…»  \n- **7–9** — Использует контекст частично, без дожима  \n- **4–6** — Ответы абстрактные, шаблонные  \n- **1–3** — Возражения не обработаны\n\n---\n\n📌 **3. Усиление боли, FOMO или создание срочности**  \nСоздал ли менеджер мотивацию принять решение сейчас, усилил ли дискомфорт от откладывания?\n\n**Оцени по шкале:**\n- **10** — Явно усилил мотивацию: «А что изменится, если снова отложите?», «Осталось 3 места — можем зафиксировать»  \n- **7–9** — Попытка усиления есть, но слабая  \n- **4–6** — Лёгкий намёк на срочность, но без эффекта  \n- **1–3** — Ничего не усилил, мотивация клиента ослабла\n\n---\n\n📌 **4. Чёткая договорённость по следующему шагу и сроку оплаты**  \nЕсть ли конкретная договорённость, которая ведёт к оплате?\n\n**Оцени по шкале:**\n- **10** — Есть договорённость и **по шагу**, и **по сроку оплаты/предоплаты** (например: «Вы оплачиваете завтра до 12:00»)  \n- **7–9** — Есть чёткий следующий шаг, который **приводит к оплате** (например: консультация, получение счёта), но срок не зафиксирован  \n- **4–6** — Шаг есть, но он не ведёт к оплате или договорённость размыта  \n- **1–3** — Не договорились, что будет дальше\n\n---\n\n🎯 Ответ оформи строго по формату:\n\n**Оценка по критериям:**\n- Попытка закрытия на оплату: [1–10]\n- Работа с возражениями через контекст: [1–10]\n- Усиление боли / FOMO / срочности: [1–10]\n- Договорённость по шагу и сроку оплаты: [1–10]\n\n**Итоговая оценка:** [сумма из 40]\n\n**Комментарий эксперта:**  \n[Краткий и чёткий разбор по каждому пункту. Где менеджер хорошо отработал, а где упустил. Конкретные рекомендации по улучшению.]\n",
+              "role": "system"
+            },
+            {
+              "content": "={{ $('Loop Over Items1').item.json['Транскрибация'] }}"
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 600,
+          "temperature": 1
+        }
+      },
+      "id": "3c820400-159b-46e6-bfef-c6c838c0e0b2",
+      "name": "Закрытие сделки",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        1408,
+        528
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "F7I4qohsosINCyoT",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1FVPV38OrkbDkZ51wNyQaVq-q5lVvaUcwqDwVi6YxPBw",
+          "mode": "list",
+          "cachedResultName": "ОКК ии Qadam v2",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1FVPV38OrkbDkZ51wNyQaVq-q5lVvaUcwqDwVi6YxPBw/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Оценка звонков",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Y12tLHxi9M8DHbPb3OkCf9vwK31XHdtDMaH1X4XM53c/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $(\"Loop Over Items1\").item.json.row_number }}",
+            "Текущий контекст": "={{ $(\"Wait\").item.json.ratings[\"Контекст\"] }}\n",
+            "Выявил потребность": "={{ $(\"Wait\").item.json.ratings[\"Цель и точка Б\"] }}\n",
+            "Вытащил Боли": "={{ $(\"Wait\").item.json.ratings[\"Боли и триггеры\"] }}\n",
+            "Резюме": "={{ $json.ratings['Резюме'] }}",
+            "Презентация": "={{ $(\"Wait\").item.json.ratings[\"Связь с болью и потребностью\"] }}\n",
+            "Точка Б+продукт": "={{ $(\"Wait\").item.json.ratings[\"Описание точки Б через продукт\"] }}\n",
+            "Попытка закрытия": "={{ $(\"Wait\").item.json.ratings[\"Попытка закрытия на оплату\"] }}\n",
+            "Отработка возражения": "={{ $(\"Wait\").item.json.ratings[\"Работа с возражениями через контекст\"] }}\n",
+            "Срочность": "={{ $(\"Wait\").item.json.ratings[\"Договорённость по шагу и сроку оплаты\"] }}\n",
+            "Договоренность след шаг": "={{ $(\"Wait\").item.json.ratings[\"Контекст\"] }}\n",
+            "Комментарии по обучению": "={{ $(\"Wait\").item.json.expertComment }}\n",
+            "контекст": "={{ $(\"Wait\").item.json.ratings[\"Контекст\"] }}\n",
+            "runId": "={{ $json.runId }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Сделка ID",
+              "displayName": "Сделка ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "runId",
+              "displayName": "runId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Менеджер",
+              "displayName": "Менеджер",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Курс",
+              "displayName": "Курс",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Дата",
+              "displayName": "Дата",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "контекст",
+              "displayName": "контекст",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Транскрибация",
+              "displayName": "Транскрибация",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Текущий контекст",
+              "displayName": "Текущий контекст",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Выявил потребность",
+              "displayName": "Выявил потребность",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Вытащил Боли",
+              "displayName": "Вытащил Боли",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Резюме",
+              "displayName": "Резюме",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Презентация",
+              "displayName": "Презентация",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Точка Б+продукт",
+              "displayName": "Точка Б+продукт",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Попытка закрытия",
+              "displayName": "Попытка закрытия",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Отработка возражения",
+              "displayName": "Отработка возражения",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Срочность",
+              "displayName": "Срочность",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Договоренность след шаг",
+              "displayName": "Договоренность след шаг",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Комментарии по обучению",
+              "displayName": "Комментарии по обучению",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Сумма баллов",
+              "displayName": "Сумма баллов",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Менеджер по имени",
+              "displayName": "Менеджер по имени",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Оплатил?",
+              "displayName": "Оплатил?",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3200,
+        304
+      ],
+      "id": "ef25cc20-f76b-4cdf-a10e-bf87716d1174",
+      "name": "Update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uMDDa8dmjMIJgAtP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2976,
+        304
+      ],
+      "id": "617d24e5-4792-432d-b0f4-c94a813ad324",
+      "name": "Wait",
+      "webhookId": "8c7bf825-6395-49f9-99a8-8b208468499b"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3568,
+        304
+      ],
+      "id": "5d723cc0-a58d-4908-830b-84c6fe015062",
+      "name": "Wait4",
+      "webhookId": "f034c693-7f7a-4e31-8835-1b884127baa5"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2736,
+        288
+      ],
+      "id": "a94cca99-4d43-41f3-994f-65c7d5db6fff",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1FVPV38OrkbDkZ51wNyQaVq-q5lVvaUcwqDwVi6YxPBw",
+          "mode": "list",
+          "cachedResultName": "ОКК ии Qadam v2",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1FVPV38OrkbDkZ51wNyQaVq-q5lVvaUcwqDwVi6YxPBw/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Оценка звонков",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Y12tLHxi9M8DHbPb3OkCf9vwK31XHdtDMaH1X4XM53c/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "Сумма баллов": "={{'=СУММ(E'+$('Loop Over Items1').item.json.row_number+':N'+$('Loop Over Items1').item.json.row_number+')'}}",
+            "Менеджер по имени": "={{ \"=ВПР($B\"+$('Loop Over Items1').item.json.row_number+\";'Список менеджеров'!A:B;2;ЛОЖЬ)\" }}",
+            "контекст": "={{ $json['контекст'] }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Сделка ID",
+              "displayName": "Сделка ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "runId",
+              "displayName": "runId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Менеджер",
+              "displayName": "Менеджер",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Курс",
+              "displayName": "Курс",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Дата",
+              "displayName": "Дата",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "контекст",
+              "displayName": "контекст",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Транскрибация",
+              "displayName": "Транскрибация",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Текущий контекст",
+              "displayName": "Текущий контекст",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Выявил потребность",
+              "displayName": "Выявил потребность",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Вытащил Боли",
+              "displayName": "Вытащил Боли",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Резюме",
+              "displayName": "Резюме",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Презентация",
+              "displayName": "Презентация",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Точка Б+продукт",
+              "displayName": "Точка Б+продукт",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Попытка закрытия",
+              "displayName": "Попытка закрытия",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Отработка возражения",
+              "displayName": "Отработка возражения",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Срочность",
+              "displayName": "Срочность",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Договоренность след шаг",
+              "displayName": "Договоренность след шаг",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Комментарии по обучению",
+              "displayName": "Комментарии по обучению",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Сумма баллов",
+              "displayName": "Сумма баллов",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Менеджер по имени",
+              "displayName": "Менеджер по имени",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Оплатил?",
+              "displayName": "Оплатил?",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3392,
+        304
+      ],
+      "id": "bd86fb6d-f3dc-461a-a60f-78fae253d800",
+      "name": "Добавить формулы",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uMDDa8dmjMIJgAtP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "dealId",
+              "type": "number"
+            },
+            {
+              "name": "responsibleID"
+            },
+            {
+              "name": "course"
+            },
+            {
+              "name": "text"
+            },
+            {
+              "name": "date"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "runid",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        256,
+        64
+      ],
+      "id": "a6fe9c97-9c27-4545-bd0c-5f00114b3e2c",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        192,
+        1344
+      ],
+      "id": "602c79bd-96dd-4ad4-ab4f-d7290ee81601",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "dqBaRFXXEgsOLLon",
+          "name": "Google Gemini QADAMEDU"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Ты — эксперт по продажам и анализу звонков.\nПроанализируй данный транскрипт и заполни структуру в формате JSON.\n\nТебе нужно определить следующие поля:\n- Текущий контекст\n- Выявил потребность\n- Вытащил боли\n- Резюме\n- Презентация\n- Точка Б+продукт\n- Попытка закрытия\n- Отработка возражения\n\nЕсли пункт не найден — ставь \"нет данных\".\n\nТранскрипт:\n{{ $json.text }}\n\nОтвет возвращай строго в JSON без пояснений.\n",
+        "messages": {
+          "messageValues": [
+            {
+              "type": "HumanMessagePromptTemplate",
+              "message": "={{ $json.text }}"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        192,
+        1120
+      ],
+      "id": "f49cce27-ad81-4329-841d-534b8d28569d",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      status: \"success\",\n      message: \"OKK/QADAMEDU workflow finished ✅\"\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3776,
+        304
+      ],
+      "id": "6b238917-fa18-496e-aa12-e010f5d37e59",
+      "name": "Финиш \"ок\""
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Получаем текущий элемент\nconst item = $input.item;\n\n// ✅ Если нет текста — возвращаем пустую структуру, чтобы не ломался цикл\nif (!item.json?.message?.content) {\n  return {\n    json: {\n      ...item.json,\n      ratings: {},\n      expertComment: \"\"\n    }\n  };\n}\n\n// Получаем текст из поля content\nconst content = item.json.message.content.trim();\n\n// Инициализируем объект для хранения оценок\nconst ratings = {};\n\n// Регулярные выражения для поиска оценок\nconst regexes = {\n  \"Контекст\": /Контекст:\\s*(\\d+)/,\n  \"Цель и точка Б\": /Цель и точка Б:\\s*(\\d+)/,\n  \"Боли и триггеры\": /Боли и триггеры:\\s*(\\d+)/,\n  \"Резюме\": /Резюме:\\s*(\\d+)/,\n  \"Итоговая оценка\": /Итоговая оценка:\\s*(\\d+)/\n};\n\n// Извлекаем оценки\nfor (const key in regexes) {\n  const match = content.match(regexes[key]);\n  if (match && match[1]) {\n    ratings[key] = parseInt(match[1], 10);\n  }\n}\n\n// Извлекаем комментарий эксперта\nconst expertCommentStart = content.indexOf(\"Комментарий эксперта:\");\nlet expertComment = null;\nif (expertCommentStart !== -1) {\n  expertComment = content\n    .substring(expertCommentStart + \"Комментарий эксперта:\".length)\n    .trim();\n}\n\n// Возвращаем обновлённые данные\nreturn {\n  json: {\n    ...item.json,\n    ratings,\n    expertComment,\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        96
+      ],
+      "id": "e77a92fb-4643-4d3e-b795-22e73b14d244",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🔢 Список полей, где должны быть только числа\nconst numericKeys = [\n  \"Контекст\",\n  \"Цель и точка Б\",\n  \"Боли и триггеры\",\n  \"Резюме\",\n  \"Связь с болью и потребностью\",\n  \"Описание точки Б через продукт\",\n  \"Попытка закрытия на оплату\",\n  \"Работа с возражениями через контекст\",\n  \"Усиление боли / FOMO / срочности\",\n  \"Договорённость по шагу и сроку оплаты\",\n  \"Выявил потребность\",\n  \"Вытащил Боли\",\n  \"Презентация\",\n  \"Точка Б+продукт\",\n  \"Попытка закрытия\",\n  \"Отработка возражения\",\n  \"Срочность\",\n  \"Договоренность след шаг\"\n];\n\n// 🧽 Основная логика\nreturn $input.all().map(item => {\n  const out = { ...item.json };\n\n  for (const key of numericKeys) {\n    if (key in out && typeof out[key] === 'string') {\n      // Убираем все нечисловые символы, пробелы и точки\n      const cleaned = out[key].replace(/[^\\d.-]/g, '').trim();\n\n      // Если пусто — null, если нет — переводим в Number\n      const num = cleaned === '' ? null : Number(cleaned);\n\n      // Только если число валидное\n      out[key] = isNaN(num) ? null : num;\n    }\n  }\n\n  return { json: out };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3440,
+        1680
+      ],
+      "id": "1c5fae90-9244-4bff-85f3-517a84eb3365",
+      "name": "Чистка до цифр"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Разворачиваем объединённые итемы обратно в массив\nconst merged = $input.all();\n\n// Если в Merge пришёл один объект с массивами внутри — раскладываем\nif (merged.length === 1 && Array.isArray(merged[0].json)) {\n  return merged[0].json.map(x => ({ json: x }));\n}\n\n// Если Merge выдал массив объектов\nreturn merged.map(x => ({ json: x.json || x }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        1168
+      ],
+      "id": "77c49b9d-cb4a-45aa-9ad5-92c906f9c743",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "dealId": 23545249,
+          "responsibleID": "13115342",
+          "course": "Uzum kurs",
+          "text": "00:00:00.000 --> 00:02:40.000\nMahsuna Mahsuna opamiz Assalomu alaykum. Assalomu alaykum. Mahsuna opa, yaxshimisiz? Dommisiz? Qadam o'quv markazidan Uzum market kursi bo'yicha sizga aloqaga chiqib o'tayotgan edim. Qaysi o'quv markazdan desiz? Qadam o'quv markazidan. Ha, bo'ldi, bo'ldi, tushunarli. Kurslarimizga qiziqish bildirib, zayka qoldirgan ekansiz, to'g'rimi? Qoldirib edim. Aha, tushunarli. Kurslar narxi qancha deganda, qachondan boshlanadi kurs? Xo'p, Mahsuna opa, meni ismim Durdona, Qadam o'quv markazining menejeri bo'lib ishlayman. Keling, suhbatimizni davom ettirishdan oldin ozgina siz bilan tanishib olaylik, maylimi? Xo'p, bo'ladi. Hozirgi kunda qayerda istiqomat qilasiz, necha yoshdasiz? Men Chirchiqda turaman, yoshim 32da. Qayerda turasiz? Chirchiqda, Chirchiq shahrida. Aha. Tushunarli. Nima faoliyat bilan shug'ullanasiz hozirgi kunda? Uybekasi. Uybekasiz. Aha. Oldin sotuv sohasida ishlab ko'rgansiz? Magazinda ishlaganman, kiyim-kechak magazinda. Aha, tushunarli, xo'p, bo'ladi. Hozir nimalarni sotuvini yo'lga qo'yishga qiziqasiz ko'proq? Bilmasam, shuni men ko'p anaqa qildimda o'sha Uzum marketda. Aha. o'quv markazlarni qoldirdimda, endi ikkita-uchtasiga zayka tashladim. Anaqa qilib, kurs davomida o'rgatiladi-ku, to'g'rimi, qaysi tovar yaxshiroq sotirsa, o'shanga jalb qilinadimi shunda? Shunaqa, shunaqa. Qarang, bizlarda kursimizning davomida siz o'rgansiz mumkin bo'ladi. Tovar tanlashdan tovarlarni Uzum marketga sotuvchi sifatida joylab turib, sotuvizni yo'lga qo'yib, daromadga chiqishingiz uchun ham kerak bo'ladigan bilimlarning hammasini plyam noldan o'rganasiz kurs davomida. Sizga qaysi tarfimiz qulay bo'ladi? Bizlarda uch xil tarif bor. VIP, premium hamda standart tarifimizda bor. Offlayn Toshkentga qatnab o'qiy olmaysiz haftada ikki marta, yoki onlayn masofadan o'rganishingiz yaxshiroq sizga? Yo'q, onlayn yaxshiroq, qatnaganimdan ko'ra. Onlayn yaxshi, tushunarli. Xo'p, bo'ladi. 00:02:40.000 --> 00:06:54.000\nyo'q men yo'q bilmayman. Xo'p, onlayn tariflarimiz haqida men sizga ma'lumotlarni berib o'taman. Mahsuna opa, qarang, onlayn tariflarimizda sizga qadam platformasi bor. Qadam platformasida sizga Uzum market darsliklar uchun dostup ochib beriladi, olti oylik. Ya'ni olti oy davomida siz video darsliklarimizdan foydalanishingiz, bemalol ko'rish imkoniyatingiz bor bo'ladi sizda. Xo'p, qarang, aytganimdek, shu video darsliklarimiz soni 38 ta, 38 ta video darslikni bemalol siz o'rganib turib, darslar davomida natijaga chiqishingiz bo'ladi. Xo'p, 38 ta video darsliklarimizning tegida har bittasini tegida o'zini amaliy jarayonlari bo'ladi. Ya'ni video darslikni ko'rganingizdan keyin, uni tegida amaliyasini bajarganingizdan keyin keyingi darslik ochib beriladi sizga. Xo'p, bu narsa, ya'ni sizga ya'ni bu narsa sizga bilimlaringizni mustahkam bo'lishi, yaxshi tushunchaga ega bo'lishingiz uchun yordam beradi. Xo'p, bizlarda undan tashqari uch oylik kurator xizmati birga beriladi sizga. Video darsliklarni ko'rishingizdan tashqari, video darsliklarni ko'rayotganingizda tushunmayishingiz bo'lgan narsalarni, bunaqangi qandaydir sizga yordamlar kerak bo'ladigan bo'lsa, kuratorlarimizda bemalol ishlab, ular bilan natijaga chiqsangiz bo'ladi. Kurs uchun qancha, necha oy o'qitiladi? Xo'p, kurs qarang, bizlarda xohlasangiz bir oyda o'qib tugatsiz bo'ladi, xohlasangiz 10 kunda, xohlasangiz bir haftada. Endi bu o'zingizni qabul qilishingizga bog'liq. Tushunarli. Anaqa-chi, kurs narxini ham aytib yuboringda, men xo'jayinim bilan maslahatlashaman, agar ular aytdilar keyin, xudo xohlasa. Aha, tushunarli. Xo'p, bo'ladi. Qarang, bizlarda ikki xil to'lov usuli bor. Xohlasangiz naqd to'lovga, xohlasangiz bo'lib to'lashga rasmiylashtirsangiz bo'ladi. Kursimizning narxi 4 million 900 ming so'm. Siz buni agar bo'lib to'lashga rasmiylashtiradigan bo'lsangiz, hech qanaqa foiz, boshlang'ich to'lovlarsiz, olti oyga rasmiylashtirishingiz mumkin bo'ladi. Ya'ni shunda sizni oylik to'lovingiz 816 mingdan to'g'ri keladi. To'lovni keyingi oyi shu sanasidan boshlab amalga oshirasiz. Darslar bo'lsa bugundan boshlab sizga dostoch ochib beriladi. Bu oddiy anaqasi, shunday onlayn, offlayn farqi yo'qmi, hammasi bir xil narxmida kursga? Yo'q, narxlarida ozgina o'zgarishlar bo'lishi mumkin, lekin o'rgatish masalasida hammasida bir xil bo'ladi. Prosta offlayn tariflarimizda ko'proq amaliyga e'tibor qaratilgan bo'ladi va amaliy kuratorlar siz bilan telvezda ishlab anaqa qilayotganligi uchun ozgina narx o'zgaradi. Ha, bo'ldi, bo'ldi, tushunarli. Qarang-chi, men masalan hozir maslahatlashib, aytadigan bo'lsam, kimga murojaat qilishim kerak? Xo'p, telegram nomer yozib ola olasizmi? Ayting-chi. 91 lik, xo'p, tushunarli ekan. 91 lik, aha. Yozdim. 785, 785. 02, 02. Aha. 02, 17. 17. Ha, bo'ldi. Sizga murojaat qilamanmi shunda? Yo'q. Ha, ha, menga tushasiz. Telegramdan mana shu nomerga yozib yuboring. Bo'ldi. Men Mahsuna tezman deb yozib yuborsangiz, men sizga o'zim anaqa qilaman, o'quvchilarimizning natijalarini tashlab beraman, ofisimizning adreslarini tashlab beraman, bemalol ko'rib tanishib chiqasiz o'zingiz. Keyin o'sha yerda javobingizni agar aytadigan bo'lsangiz, to'lov usullarini ham o'sha yerda tushuntirib beraman sizga qanaqa usulda to'lashingiz, qanaqa qilishiz hammasini. Xo'p, mayli. Hozir yozib anaqa qilaman, maslahatlashib olaman. Aha. Mahsuna opa, qachon sizga aloqaga yechishgan bo'ladi? Aniq javobingizni bilish uchun bugunga iloji bormi? Men hali xo'jayinim kech sakkizlarda keladilar. Aha. Kechki payt bo'lsa ham bemalol yozib yuboring. Telegramda biz onlayn bo'lamiz hozir. Kechki payt bo'ladi. Qadi? Telegramdan sizga yozib yuboraman shu nomerga. Bo'ldi, bo'ldi, xo'p, bo'ladi. Yaxshi. Maylimi? Aha, bo'ladi, bo'ladi, bemalol. Charchamang, kuningiz yaxshi o'tsin, o'zingizni ehtiyot qiling. Xo'p, rahmat, sog' bo'ling.00:00:00.000 --> 00:02:40.000\nMahsuna Mahsuna opamiz Assalomu alaykum. Assalomu alaykum. Mahsuna opa, yaxshimisiz? Dommisiz? Qadam o'quv markazidan Uzum market kursi bo'yicha sizga aloqaga chiqib o'tayotgan edim. Qaysi o'quv markazdan desiz? Qadam o'quv markazidan. Ha, bo'ldi, bo'ldi, tushunarli. Kurslarimizga qiziqish bildirib, zayka qoldirgan ekansiz, to'g'rimi? Qoldirib edim. Aha, tushunarli. Kurslar narxi qancha deganda, qachondan boshlanadi kurs? Xo'p, Mahsuna opa, meni ismim Durdona, Qadam o'quv markazining menejeri bo'lib ishlayman. Keling, suhbatimizni davom ettirishdan oldin ozgina siz bilan tanishib olaylik, maylimi? Xo'p, bo'ladi. Hozirgi kunda qayerda istiqomat qilasiz, necha yoshdasiz? Men Chirchiqda turaman, yoshim 32da. Qayerda turasiz? Chirchiqda, Chirchiq shahrida. Aha. Tushunarli. Nima faoliyat bilan shug'ullanasiz hozirgi kunda? Uybekasi. Uybekasiz. Aha. Oldin sotuv sohasida ishlab ko'rgansiz? Magazinda ishlaganman, kiyim-kechak magazinda. Aha, tushunarli, xo'p, bo'ladi. Hozir nimalarni sotuvini yo'lga qo'yishga qiziqasiz ko'proq? Bilmasam, shuni men ko'p anaqa qildimda o'sha Uzum marketda. Aha. o'quv markazlarni qoldirdimda, endi ikkita-uchtasiga zayka tashladim. Anaqa qilib, kurs davomida o'rgatiladi-ku, to'g'rimi, qaysi tovar yaxshiroq sotirsa, o'shanga jalb qilinadimi shunda? Shunaqa, shunaqa. Qarang, bizlarda kursimizning davomida siz o'rgansiz mumkin bo'ladi. Tovar tanlashdan tovarlarni Uzum marketga sotuvchi sifatida joylab turib, sotuvizni yo'lga qo'yib, daromadga chiqishingiz uchun ham kerak bo'ladigan bilimlarning hammasini plyam noldan o'rganasiz kurs davomida. Sizga qaysi tarfimiz qulay bo'ladi? Bizlarda uch xil tarif bor. VIP, premium hamda standart tarifimizda bor. Offlayn Toshkentga qatnab o'qiy olmaysiz haftada ikki marta, yoki onlayn masofadan o'rganishingiz yaxshiroq sizga? Yo'q, onlayn yaxshiroq, qatnaganimdan ko'ra. Onlayn yaxshi, tushunarli. Xo'p, bo'ladi. 00:02:40.000 --> 00:06:54.000\nyo'q men yo'q bilmayman. Xo'p, onlayn tariflarimiz haqida men sizga ma'lumotlarni berib o'taman. Mahsuna opa, qarang, onlayn tariflarimizda sizga qadam platformasi bor. Qadam platformasida sizga Uzum market darsliklar uchun dostup ochib beriladi, olti oylik. Ya'ni olti oy davomida siz video darsliklarimizdan foydalanishingiz, bemalol ko'rish imkoniyatingiz bor bo'ladi sizda. Xo'p, qarang, aytganimdek, shu video darsliklarimiz soni 38 ta, 38 ta video darslikni bemalol siz o'rganib turib, darslar davomida natijaga chiqishingiz bo'ladi. Xo'p, 38 ta video darsliklarimizning tegida har bittasini tegida o'zini amaliy jarayonlari bo'ladi. Ya'ni video darslikni ko'rganingizdan keyin, uni tegida amaliyasini bajarganingizdan keyin keyingi darslik ochib beriladi sizga. Xo'p, bu narsa, ya'ni sizga ya'ni bu narsa sizga bilimlaringizni mustahkam bo'lishi, yaxshi tushunchaga ega bo'lishingiz uchun yordam beradi. Xo'p, bizlarda undan tashqari uch oylik kurator xizmati birga beriladi sizga. Video darsliklarni ko'rishingizdan tashqari, video darsliklarni ko'rayotganingizda tushunmayishingiz bo'lgan narsalarni, bunaqangi qandaydir sizga yordamlar kerak bo'ladigan bo'lsa, kuratorlarimizda bemalol ishlab, ular bilan natijaga chiqsangiz bo'ladi. Kurs uchun qancha, necha oy o'qitiladi? Xo'p, kurs qarang, bizlarda xohlasangiz bir oyda o'qib tugatsiz bo'ladi, xohlasangiz 10 kunda, xohlasangiz bir haftada. Endi bu o'zingizni qabul qilishingizga bog'liq. Tushunarli. Anaqa-chi, kurs narxini ham aytib yuboringda, men xo'jayinim bilan maslahatlashaman, agar ular aytdilar keyin, xudo xohlasa. Aha, tushunarli. Xo'p, bo'ladi. Qarang, bizlarda ikki xil to'lov usuli bor. Xohlasangiz naqd to'lovga, xohlasangiz bo'lib to'lashga rasmiylashtirsangiz bo'ladi. Kursimizning narxi 4 million 900 ming so'm. Siz buni agar bo'lib to'lashga rasmiylashtiradigan bo'lsangiz, hech qanaqa foiz, boshlang'ich to'lovlarsiz, olti oyga rasmiylashtirishingiz mumkin bo'ladi. Ya'ni shunda sizni oylik to'lovingiz 816 mingdan to'g'ri keladi. To'lovni keyingi oyi shu sanasidan boshlab amalga oshirasiz. Darslar bo'lsa bugundan boshlab sizga dostoch ochib beriladi. Bu oddiy anaqasi, shunday onlayn, offlayn farqi yo'qmi, hammasi bir xil narxmida kursga? Yo'q, narxlarida ozgina o'zgarishlar bo'lishi mumkin, lekin o'rgatish masalasida hammasida bir xil bo'ladi. Prosta offlayn tariflarimizda ko'proq amaliyga e'tibor qaratilgan bo'ladi va amaliy kuratorlar siz bilan telvezda ishlab anaqa qilayotganligi uchun ozgina narx o'zgaradi. Ha, bo'ldi, bo'ldi, tushunarli. Qarang-chi, men masalan hozir maslahatlashib, aytadigan bo'lsam, kimga murojaat qilishim kerak? Xo'p, telegram nomer yozib ola olasizmi? Ayting-chi. 91 lik, xo'p, tushunarli ekan. 91 lik, aha. Yozdim. 785, 785. 02, 02. Aha. 02, 17. 17. Ha, bo'ldi. Sizga murojaat qilamanmi shunda? Yo'q. Ha, ha, menga tushasiz. Telegramdan mana shu nomerga yozib yuboring. Bo'ldi. Men Mahsuna tezman deb yozib yuborsangiz, men sizga o'zim anaqa qilaman, o'quvchilarimizning natijalarini tashlab beraman, ofisimizning adreslarini tashlab beraman, bemalol ko'rib tanishib chiqasiz o'zingiz. Keyin o'sha yerda javobingizni agar aytadigan bo'lsangiz, to'lov usullarini ham o'sha yerda tushuntirib beraman sizga qanaqa usulda to'lashingiz, qanaqa qilishiz hammasini. Xo'p, mayli. Hozir yozib anaqa qilaman, maslahatlashib olaman. Aha. Mahsuna opa, qachon sizga aloqaga yechishgan bo'ladi? Aniq javobingizni bilish uchun bugunga iloji bormi? Men hali xo'jayinim kech sakkizlarda keladilar. Aha. Kechki payt bo'lsa ham bemalol yozib yuboring. Telegramda biz onlayn bo'lamiz hozir. Kechki payt bo'ladi. Qadi? Telegramdan sizga yozib yuboraman shu nomerga. Bo'ldi, bo'ldi, xo'p, bo'ladi. Yaxshi. Maylimi? Aha, bo'ladi, bo'ladi, bemalol. Charchamang, kuningiz yaxshi o'tsin, o'zingizni ehtiyot qiling. Xo'p, rahmat, sog' bo'ling.",
+          "context": "Qadam Education — bu O‘zbekiston Respublikasi Maktabgacha va Maktab Ta’limi vazirligi tomonidan litsenziyalangan o‘quv markazidir. Biz “aktual kasblar”, marketing va kompyuter savodxonligi yo‘nalishlarida ta’lim berishga ruxsatga egamiz.   Qadam Edu respublika bo‘yicha TOP-10 ta o‘quv markazlar qatoriga kiradi.  Yo‘nalishlar: 1️⃣ Uzum Marketda 0 dan natijagacha — marketplace’da onlayn savdo qilish, tovar tanlash, Xitoy bilan ishlash va biznesni masshtablashtirish bo‘yicha kurs. 2️⃣ Data Analitika 0 dan Junior’gacha — Excel, SQL, Power BI va Python asosida tahliliy fikrlashni o‘rgatadigan IT yo‘nalish. 3️⃣ Prompt Master: SI siz uchun ishlasin — ChatGPT, Gemini, Midjourney, Voice AI kabi sun’iy intellekt vositalari bilan ishlashni o‘rgatuvchi zamonaviy kurs.  Barcha suhbatlar Qadam Education kurslari doirasida o‘tkaziladi. Javoblar shunga mos tonda va mazmunda bo‘lishi kerak.",
+          "date": "13-11-2025",
+          "runid": 1763038216926
+        }
+      }
+    ]
+  },
+  "connections": {
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait2": {
+      "main": [
+        [
+          {
+            "node": "Презентация + контекст",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait3": {
+      "main": [
+        [
+          {
+            "node": "Закрытие сделки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "фильтруем по наличию транскрипта": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "забираем только те, у которых статус Ready": {
+      "main": [
+        [
+          {
+            "node": "фильтруем по наличию транскрипта",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code2": {
+      "main": [
+        [
+          {
+            "node": "Wait3",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Code3": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Идентификация клиента",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Идентификация клиента": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Презентация + контекст": {
+      "main": [
+        [
+          {
+            "node": "Code2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Закрытие сделки": {
+      "main": [
+        [
+          {
+            "node": "Code3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Добавить формулы",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait4": {
+      "main": [
+        [
+          {
+            "node": "Финиш \"ок\"",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Добавить формулы": {
+      "main": [
+        [
+          {
+            "node": "Wait4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "забираем только те, у которых статус Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        []
+      ]
+    },
+    "Финиш \"ок\"": {
+      "main": [
+        []
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "Wait2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Чистка до цифр": {
+      "main": [
+        []
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ab48a625-1f2b-480b-a254-e79e2b275a69",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2e071fba36900ab548a0191a99cabc15873561cf351f3c0164bd185f0f9d682c"
+  },
+  "id": "42pdlCBCj0QFpJYN",
+  "tags": []
+}

@@ -1,0 +1,152 @@
+import "dotenv/config";
+import { google, sheets_v4 } from "googleapis";
+import { prisma } from "../config/database";
+
+let sheetsClient: sheets_v4.Sheets | null = null;
+
+function getSheetsClient(): sheets_v4.Sheets {
+  if (sheetsClient) return sheetsClient;
+
+  const projectId = process.env.GOOGLE_PROJECT_ID;
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error("Google Sheets credentials are not configured");
+  }
+
+  const auth = new google.auth.JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+
+  sheetsClient = google.sheets({ version: "v4", auth });
+  return sheetsClient;
+}
+
+export async function appendCallRowToSheet(row: (string | number | null)[]) {
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  if (!spreadsheetId) {
+    console.warn("GOOGLE_SHEETS_SPREADSHEET_ID is not set, skipping Sheets sync");
+    return;
+  }
+
+  const sheets = getSheetsClient();
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${process.env.GOOGLE_SHEETS_TAB_NAME || "Sheet1"}!A:Z`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [row],
+    },
+  });
+}
+
+/**
+ * Перезаписывает вкладку менеджеров в Google Sheets.
+ * Читает всех менеджеров из БД и пишет актуальный список.
+ */
+export async function writeManagersToSheet(): Promise<void> {
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  const tabName = process.env.GOOGLE_SHEETS_MANAGERS_TAB || "Менеджеры";
+
+  if (!spreadsheetId) {
+    console.warn("GOOGLE_SHEETS_SPREADSHEET_ID is not set, skipping managers sheet");
+    return;
+  }
+
+  const sheets = getSheetsClient();
+
+  // Гарантируем существование вкладки
+  await ensureSheet(sheets, spreadsheetId, tabName);
+
+  // Получаем всех менеджеров с их активными TelegramLink
+  const managers = await prisma.manager.findMany({
+    orderBy: [{ isActive: "desc" }, { name: "asc" }],
+    include: {
+      // Берём все активные ссылки чтобы выбрать правильную
+      telegramLinks: {
+        where: { status: { in: ["issued", "used"] } },
+        orderBy: { createdAt: "desc" },
+      },
+    },
+  });
+
+  const header = [
+    "Имя",
+    "amoCRM ID",
+    "Внутр. номер АТС",
+    "Код",
+    "Telegram ID",
+    "Статус привязки",
+    "Активен",
+  ];
+
+  const rows = managers.map((m) => {
+    // Приоритет: used > issued (не затирать активацию новым кодом)
+    const usedLink = m.telegramLinks.find((l) => l.status === "used");
+    const issuedLink = m.telegramLinks.find((l) => l.status === "issued");
+    const link = usedLink ?? issuedLink;
+
+    const code = issuedLink ? issuedLink.oneTimeCode : "—";
+    const tg = usedLink?.telegramUserId ?? "—";
+    const linkStatus = usedLink
+      ? "✅ привязан"
+      : issuedLink
+      ? "⏳ ожидает"
+      : "❌ нет кода";
+    const active = m.isActive ? "✅" : "🚫 уволен";
+    void link; // использован выше через usedLink/issuedLink
+
+    return [
+      m.name,
+      m.amoUserId ?? "—",
+      m.internalNumber ?? "—",
+      code,
+      tg,
+      linkStatus,
+      active,
+    ];
+  });
+
+  // Очищаем вкладку и записываем заново
+  const range = `${tabName}!A1:G${rows.length + 1}`;
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${tabName}!A:Z`,
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [header, ...rows],
+    },
+  });
+}
+
+async function ensureSheet(
+  sheets: sheets_v4.Sheets,
+  spreadsheetId: string,
+  title: string
+): Promise<void> {
+  try {
+    const meta = await sheets.spreadsheets.get({ spreadsheetId });
+    const exists = meta.data.sheets?.some((s) => s.properties?.title === title);
+    if (!exists) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [{ addSheet: { properties: { title } } }],
+        },
+      });
+    }
+  } catch {
+    // ignore — вкладка уже может существовать
+  }
+}
+

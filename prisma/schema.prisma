@@ -1,0 +1,205 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Manager {
+  id             Int             @id @default(autoincrement())
+  name           String
+  amoUserId      Int?            @unique
+  internalNumber String?         @unique
+  timezone       String          @default("UTC")
+  isActive       Boolean         @default(true)
+  deactivatedAt  DateTime?
+
+  telegramLinks  TelegramLink[]
+  calls          Call[]
+  dailySummaries DailySummary[]
+  aiSessions     AiTrainerSession[]
+
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model BotAdmin {
+  id             Int      @id @default(autoincrement())
+  telegramUserId String   @unique
+  addedBy        String?
+  createdAt      DateTime @default(now())
+}
+
+model TelegramLink {
+  id             Int       @id @default(autoincrement())
+  manager        Manager   @relation(fields: [managerId], references: [id])
+  managerId      Int
+
+  telegramUserId String?   @unique
+  oneTimeCode    String    @unique
+  status         String    // issued | used | expired
+
+  createdAt      DateTime  @default(now())
+  usedAt         DateTime?
+}
+
+model Contact {
+  id        Int       @id
+  name      String?
+  updatedAt DateTime  @updatedAt
+
+  deals     Deal[]
+  phones    PhoneMapping[]
+}
+
+model Deal {
+  id              Int       @id
+  contact         Contact?  @relation(fields: [contactId], references: [id])
+  contactId       Int?
+
+  pipelineId      Int
+  statusId        Int
+  name            String?
+
+  updatedAt       DateTime  @updatedAt
+
+  calls           Call[]
+  phoneMappings   PhoneMapping[]
+}
+
+model PhoneMapping {
+  id                 Int      @id @default(autoincrement())
+  phoneNormalized    String   @unique
+
+  contact            Contact? @relation(fields: [contactId], references: [id])
+  contactId          Int?
+
+  lastDeal           Deal?    @relation(fields: [lastDealId], references: [id])
+  lastDealId         Int?
+  lastDealUpdatedAt  DateTime?
+
+  updatedAt          DateTime @updatedAt
+}
+
+model Call {
+  id               Int           @id @default(autoincrement())
+  externalId       String
+  source           String        // 'onlinepbx'
+
+  manager          Manager?      @relation(fields: [managerId], references: [id])
+  managerId        Int?
+
+  deal             Deal?         @relation(fields: [dealId], references: [id])
+  dealId           Int?
+
+  direction        String
+  status           String
+
+  startedAt        DateTime
+  endedAt          DateTime
+  durationSeconds  Int
+  recordUrl        String?
+
+  processingStatus String        // received|queued|transcribed|analyzed|sheet_synced|processed|skipped_short|no_deal|error
+  processingAttempts Int        @default(0)
+  lastError        String?
+  manualTriggered  Boolean       @default(false)
+
+  transcript       CallTranscript?
+  analysis         CallAnalysis?
+
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@unique([externalId, source])
+}
+
+model CallTranscript {
+  id        Int      @id @default(autoincrement())
+  call      Call     @relation(fields: [callId], references: [id])
+  callId    Int      @unique
+
+  text      String
+  engine    String?  // "gemini", "whisper", etc.
+  language  String?
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+}
+
+model CallAnalysis {
+  id             Int      @id @default(autoincrement())
+  call           Call     @relation(fields: [callId], references: [id])
+  callId         Int      @unique
+
+  overallScore   Float?
+  criteria       Json?
+  strengths      Json?
+  weaknesses     Json?
+  recommendations Json?
+  summary        String?
+
+  createdAt      DateTime @default(now())
+}
+
+model DailySummary {
+  id               Int      @id @default(autoincrement())
+  manager          Manager  @relation(fields: [managerId], references: [id])
+  managerId        Int
+
+  date             DateTime
+  period           String   // day|week|month
+
+  callsTotal       Int
+  connectedTotal   Int
+  talkTimeSeconds  Int
+  avgScore         Float?
+
+  topStrengths     Json?
+  topMistakes      Json?
+  summaryText      String?
+
+  sentStatus       String   // pending|sent|error
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model AiTrainerSession {
+  id              Int      @id @default(autoincrement())
+  manager         Manager  @relation(fields: [managerId], references: [id])
+  managerId       Int
+
+  question        String
+  answer          String?
+  period          String?
+  contextSnapshot Json?
+
+  createdAt       DateTime @default(now())
+}
+
+model HistorySyncJob {
+  id                Int      @id @default(autoincrement())
+  fromDate          DateTime
+  toDate            DateTime
+  managerId         Int?
+
+  status            String   // pending|in_progress|completed|failed
+  totalCallsScanned Int      @default(0)
+  totalQueued       Int      @default(0)
+  totalSkippedShort Int      @default(0)
+  totalNoDeal       Int      @default(0)
+
+  lastError         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+

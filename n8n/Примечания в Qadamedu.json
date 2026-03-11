@@ -1,0 +1,1591 @@
+{
+  "name": "Примечания в Qadamedu",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "010192ed-48c2-45f8-a264-681334679967",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        96
+      ],
+      "id": "14d58298-22b7-4b98-abd9-3e781eb484fa",
+      "name": "Webhook",
+      "webhookId": "010192ed-48c2-45f8-a264-681334679967"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": []
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "5557dedb-2fbc-4e6e-88fb-76d25b88ff11",
+      "name": "забираем транскрипт",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        944,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "28772b65-3a2f-48e9-a544-cc0c5fecf89c",
+              "name": "ID sdelki",
+              "value": "={{ $json.body['leads[status][0][id]'] ||  $json.body['lead[id]']  || $json.body['leads[update][0][id]'] || $json.body['task[add][0][element_id]'] }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1120,
+        96
+      ],
+      "id": "a0ac8b11-0b4b-4241-87cb-c2906820b755",
+      "name": "Conv ID"
+    },
+    {
+      "parameters": {
+        "url": "=https://qadamsales.amocrm.ru/api/v4/leads/{{ $json[\"ID sdelki\"] }}?with=contacts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1376,
+        368
+      ],
+      "id": "088688cc-aa30-4920-a305-5a1dd2054fba",
+      "name": "HTTP Request",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "XjGH5OQkNFXwbZCf",
+          "name": "amoCRM OAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Распарсиваем строку, как ты и делал. Это правильно для твоего флоу.\nconst dealDataString = items[0].json.data;\nconst deal = JSON.parse(dealDataString);\n\n// --- Собираем все данные, которые тебе были нужны раньше ---\nconst dealId = deal.id || null;\nconst responsibleUserId = deal.responsible_user_id || null;\n\nlet courseValue = null;\nif (deal.custom_fields_values) {\n    const courseField = deal.custom_fields_values.find(f => f.field_name === \"Курс\");\n    if (courseField && courseField.values && courseField.values.length > 0) {\n        courseValue = courseField.values[0].value;\n    }\n}\n\n// 🔥 А вот и главное изменение:\n// Собираем ID ВСЕХ контактов (\"пеналов\") в один массив (список)\nconst contactIds = (deal._embedded?.contacts || []).map(c => c.id);\n\n// --- Возвращаем ОДИН \"пакет\" со ВСЕМИ данными для следующего шага ---\nreturn [{\n    json: {\n        dealId: dealId,\n        responsibleID: responsibleUserId,\n        course: courseValue,\n        // Добавляем наш новый массив с ID контактов.\n        // Он будет выглядеть примерно так: [12345, 67890]\n        contactIds: contactIds\n    }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        368
+      ],
+      "id": "89bade9a-1f34-4f7e-8689-c2e5aec99ecd",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "url": "=https://qadamsales.amocrm.ru/api/v4/leads/{{ $json[\"dealId\"] }}/notes?limit=2000",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -752,
+        704
+      ],
+      "id": "77a066dd-adb3-4452-80b8-d4ce5c924e3d",
+      "name": "HTTP Request2",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "XjGH5OQkNFXwbZCf",
+          "name": "amoCRM OAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "619292fd-85c0-4e9b-9477-111d01d41b8c",
+              "name": "dealId",
+              "value": "={{ $json.dealId }}",
+              "type": "number"
+            },
+            {
+              "id": "62d26feb-29c6-4063-a364-c77a9a868408",
+              "name": "callDuration",
+              "value": "={{ $json.callDuration }}",
+              "type": "string"
+            },
+            {
+              "id": "ad2ec1ad-887a-45c5-b77f-ca559627bf9c",
+              "name": "callLink",
+              "value": "={{ $json.recordUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "67598cac-c6fe-4387-a4c7-12150dbfcc50",
+              "name": "responsibleID",
+              "value": "={{ $json.responsibleID }}",
+              "type": "string"
+            },
+            {
+              "id": "a70e5e24-7b8d-4cc9-a84b-a3536ea03e59",
+              "name": "course",
+              "value": "={{ $json.course }}",
+              "type": "string"
+            },
+            {
+              "id": "8c5de001-1ee3-488d-96b6-9f26e5a5d4a1",
+              "name": "contactID",
+              "value": "={{ $json.contactIds[0] }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -128,
+        512
+      ],
+      "id": "9088589d-8d41-4c8e-8bdc-78ba713172a1",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "content": "Забираем данные из сделки",
+        "height": 1096,
+        "width": 896
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1536,
+        -144
+      ],
+      "typeVersion": 1,
+      "id": "50d40161-7023-4d09-a204-61b76548c6b0",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "Генерируем транскрипт",
+        "height": 1096,
+        "width": 968
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -608,
+        -144
+      ],
+      "typeVersion": 1,
+      "id": "501d495b-ab76-4c47-99c8-6ece1fb86f76",
+      "name": "Sticky Note3",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        688,
+        256
+      ],
+      "id": "96593d2c-769c-4581-ab0b-b55422109ecd",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "content": "Обрабатываем транскрипт\n",
+        "height": 1096,
+        "width": 2296
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        400,
+        -144
+      ],
+      "typeVersion": 1,
+      "id": "d30e5efa-7131-44f6-974f-badb496e8794",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "Ты - опытный аналитик телефонных разговоров и эксперт по продажам. Твоя задача - проанализировать транскрипцию звонка по заданным критериям и предоставить структурированный отчет в соответствии с указанным форматом. Если какая-либо информация отсутствует в транскрипции, указывай \"Неизвестно\" или \"Не обнаружено\"."
+            },
+            {
+              "content": "=Проанализируй следующий телефонный разговор и сформируй заметку для CRM, строго придерживаясь следующего формата и критериев. Если какой-то информации нет, укажи \"Неизвестно\" или \"Не обнаружено\".\n\nВажное уточнение:\nВ поле \"Боли\" указывай только сильное эмоциональное переживание, которое клиент явно или косвенно проявил в разговоре, и которое усиливает его потребность в продукте. Это должно быть чувство, мешающее клиенту чувствовать себя в безопасности или удовлетворённым (страх упустить возможность, тревога за будущее, недовольство своей ситуацией, желание изменений, стыд, усталость от проблем и т.д.).\n\nНе путай с поверхностными отговорками (“надо подумать”) или нейтральными фактами. Если клиент говорит о сомнении или откладывании, ищи за этим эмоциональную причину (например: боится зря потратить деньги, опасается не справиться, переживает за результат, боится упустить выгоду).\n\nФормат заметки:\n🔥 Теплота клиента: [оценка от 1 до 10, где 1 - холодный, 10 - горячий]\n🧠 Портрет клиента:\n– Текущий контекст [чем занимается, кто он]\n– Потребность: [чёткое и краткое описание потребности клиента по JTBD]\n– Боли: [сильное эмоциональное переживание + цитата]\n**Тип боли:** эмоциональная\n– Страхи: [ключевые страхи клиента, связанные с решением или обучением]\n– Ключевые возражения: [основные возражения, высказанные клиентом]\n– Срочность: [оценка срочности и причина]\n\nНа какой следующий шаг договорились: [договорённости и следующий шаг с клиентом]\nПиши кратко, уложись до 500 символов. Ответ напиши на узбекском языке.\n\nТранскрипция звонка:\n{{ $json.text }}\n\nКонтекст звонка:\n{{ $json.context }}"
+            }
+          ]
+        },
+        "jsonOutput": "={{ false }}",
+        "options": {
+          "maxTokens": 500,
+          "temperature": 1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1216,
+        80
+      ],
+      "id": "4354bdb5-272f-4ed7-9bf3-6551aaeb8a7d",
+      "name": "Создает примечание",
+      "alwaysOutputData": false,
+      "credentials": {
+        "openAiApi": {
+          "id": "F7I4qohsosINCyoT",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://qadamsales.amocrm.ru/api/v4/leads/{{ $json.ID }}/notes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([\n  {\n    \"entity_id\": $json.ID,\n    \"note_type\": \"common\",\n    \"params\": {\n      \"text\": $json[\"Примечание\"]\n    }\n  }\n]) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2128,
+        112
+      ],
+      "id": "c652e42d-489b-4647-857d-4797a9f281f3",
+      "name": "HTTP Request3",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "XjGH5OQkNFXwbZCf",
+          "name": "amoCRM OAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Код полностью заменяет содержимое узла Code3 (создание примечания в AmoCRM)\n\nreturn {\n  json: {\n    dealId: $('Edit Fields').first().json.dealId,\n    notes: [\n      {\n        note_type: \"common\",\n        params: {\n          text: `**Анализ звонка:** 🔥\n${$input.first().json.expertComment || $input.first().json.message?.content || \"—\"}\n\n**Оценки:**\nКонтекст — ${$input.first().json.ratings?.[\"Контекст\"] ?? \"-\"}\nПопытка закрытия — ${$input.first().json.ratings?.[\"Попытка закрытия на оплату\"] ?? \"-\"}\nВозражения — ${$input.first().json.ratings?.[\"Работа с возражениями через контекст\"] ?? \"-\"}\nСрочность — ${$input.first().json.ratings?.[\"Усиление боли / FOMO / срочности\"] ?? \"-\"}\nШаг и срок оплаты — ${$input.first().json.ratings?.[\"Договорённость по шагу и сроку оплаты\"] ?? \"-\"}\n\n**Длительность звонка:** ${$('Edit Fields').first().json.callDuration || \"?\"} секунд`\n        }\n      }\n    ]\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1696,
+        112
+      ],
+      "id": "05d9cb6b-f6a6-4eab-8438-0fd3eb594ef6",
+      "name": "Code3"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7c0dc3c7-9f6b-4ef3-9833-e9dcded41bc9",
+              "name": "Примечание",
+              "value": "={{ $json.notes[0].params.text }}",
+              "type": "string"
+            },
+            {
+              "id": "930384df-2f01-4eac-82d9-f8c229eb32ba",
+              "name": "ID",
+              "value": "={{ $('Edit Fields').item.json.dealId }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1936,
+        112
+      ],
+      "id": "1d504cb7-d1c9-462a-992e-f1100e01eb7e",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "url": "=https://qadamsales.amocrm.ru/api/v4/contacts/{{$json.contactIds}}/notes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -752,
+        368
+      ],
+      "id": "b7832012-528c-4dfb-9e8a-63da5ffa6668",
+      "name": "HTTP contact",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "XjGH5OQkNFXwbZCf",
+          "name": "amoCRM OAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const allNotes = [];\nlet dealData = null;\n\n// Проходим по всем пакетам, которые пришли на вход в Code2\nfor (const item of items) {\n  // Проверяем, есть ли поле 'data'. Это данные с заметками.\n  if (item.json.data) {\n    try {\n      const parsedData = JSON.parse(item.json.data);\n      const notes = parsedData._embedded?.notes || [];\n      allNotes.push(...notes);\n    } catch (e) {\n      console.error(\"Failed to parse JSON from 'data' field:\", e);\n    }\n  } \n  // Проверяем, есть ли dealId. Это данные сделки.\n  else if (item.json.dealId) {\n    dealData = item.json;\n  }\n}\n\nlet longestCall = null;\nlet longestDuration = -1;\n\n// Ищем самый длинный звонок среди всех заметок\nfor (const note of allNotes) {\n    const isCall = note.note_type === 'call_in' || note.note_type === 'call_out';\n    const hasLink = note.params && note.params.link;\n\n    if (isCall && hasLink) {\n        const duration = note.params.duration;\n        if (duration > longestDuration) {\n            longestDuration = duration;\n            longestCall = note;\n        }\n    }\n}\n\n// Если dealData не найден, создаем пустой объект\nif (!dealData) {\n    dealData = {};\n}\n\n// Возвращаем один пакет, который содержит данные сделки и самого длинного звонка\nreturn [\n    {\n        json: {\n            ...dealData, // Копируем все поля из dealData\n            recordUrl: longestCall ? longestCall.params.link : null,\n            callDuration: longestCall ? longestCall.params.duration : -1\n        }\n    }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -352,
+        512
+      ],
+      "id": "cb156428-911d-4781-a658-d79f6965d494",
+      "name": "Code2"
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -528,
+        496
+      ],
+      "id": "11b2afd9-bcbc-4c61-b4bd-b05785f6baf5",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.callLink }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "response": {
+            "response": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        16,
+        192
+      ],
+      "id": "dca65405-bc74-43eb-912a-a88227a8dcd2",
+      "name": "HTTP скачивает звонок",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "XjGH5OQkNFXwbZCf",
+          "name": "amoCRM OAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "contactIds",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -912,
+        368
+      ],
+      "id": "6ff14581-f0c9-495f-a0da-f1b8c404889a",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "chatgpt-4o-latest",
+          "mode": "list",
+          "cachedResultName": "CHATGPT-4O-LATEST"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "Роль: Ты — жёсткий, но опытный руководитель отдела продаж, твоя цель — дожать клиента до оплаты.\n\nЗадача: Проанализируй транскрипцию звонка менеджера с клиентом и подготовь конкретный план действий для следующего звонка, чтобы закрыть клиента на оплату.\n\nИнструкция:\n\nПроанализируй, на каком этапе воронки находится клиент (холодный, тёплый, горячий).\n\nОпредели, какие возражения или сомнения остались у клиента.\n\nОпредели, какая информация или аргументы могут их закрыть.\n\nСформируй чёткий список задач для менеджера на следующий звонок, включив:\n\nМатериалы, которые нужно подготовить (презентации, отзывы, кейсы, расчёты, бонусы).\n\nЧто сказать — конкретные фразы, зацепки, формулировки, которые должны прозвучать.\n\nЧто отправить до или после звонка (PDF, видео, примеры работ, отзывы, коммерческое предложение).\n\nПриём закрытия — конкретная техника, которой менеджер должен завершить разговор (альтернативный выбор, ограничение по времени, бонус при оплате сейчас).\n\nПиши конкретно, без воды, с фокусом на результат — чтобы менеджер мог взять и сделать.\n\nФормат ответа:\n\n**📞 План следующего звонка**\n\n**🔥 Цель звонка:**\n(например: закрыть клиента на оплату курса, снять возражение по цене)\n\n**📂 Что подготовить:**\n– ...\n– ...\n\n**🗣️ Что сказать:**\n– ...\n– ...\n(укажи конкретные фразы)\n\n**📤 Что отправить:**\n– ...\n– ...\n\n**🔒 Приём закрытия:**\n(опиши выбранную технику и дай текст, как её применить)\nВажно: Все рекомендации должны быть основаны на содержании конкретной транскрипции, а не общими советами.\n\nОтвет дай на узбекском языке.",
+              "role": "system"
+            },
+            {
+              "content": "=Транскрипт для анализа: {{ $('Transcribe a recording').item.json.content.parts[0].text }}"
+            },
+            {
+              "content": "=Используй этот контекст для формирования ответа:\n{{ $json.context }}",
+              "role": "system"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1600,
+        384
+      ],
+      "id": "69ad0ffe-26a2-4036-9040-b410b45159f6",
+      "name": "Подсказка для след этапа",
+      "credentials": {
+        "openAiApi": {
+          "id": "F7I4qohsosINCyoT",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем текст из поля message.content\nlet tipText = $input.first().json.message.content || \"\";\n\n// Убираем markdown-блоки кода, если есть\n// tipText = tipText.replace(/```[\\s\\S]*?```/g, \"\");\n\n// Заменяем переносы строк на пробелы\n// tipText = tipText.replace(/\\r?\\n+/g, \" \");\n\n// Убираем лишние пробелы\n// tipText = tipText.replace(/\\s+/g, \" \").trim();\n\n// Возвращаем как отдельное поле\nreturn [\n  {\n    json: {\n      nextStepTip: tipText\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1936,
+        384
+      ],
+      "id": "1277edfe-5f11-483c-bf14-a4199985538a",
+      "name": "Code4"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1392,
+        384
+      ],
+      "id": "68c79bd3-f296-4699-9225-11c3fc24e227",
+      "name": "Wait5",
+      "webhookId": "3a6d44f5-645b-418b-90c4-342e949a3b15"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "aecf072d-9467-4abd-8964-1b1684dde975",
+              "name": "",
+              "value": "={{ $json.nextStepTip }}",
+              "type": "string"
+            },
+            {
+              "id": "51426208-fac0-4821-9819-5609f64fc9e2",
+              "name": "ID",
+              "value": "={{ $('Edit Fields').item.json.dealId }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2160,
+        384
+      ],
+      "id": "601ae5e7-4c9e-485f-84ea-b0775e592338",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://qadamsales.amocrm.ru/api/v4/leads/{{ $json.ID }}/notes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([\n  {\n  \"entity_id\": $json.ID,\n    note_type: \"common\",\n    params: {\n      text: $('Подсказка для след этапа').item.json.message.content.replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"')\n    }\n  }\n]) }}\n\n\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2368,
+        384
+      ],
+      "id": "2817001e-2023-420b-b64f-faf9ca243d3c",
+      "name": "HTTP Request1",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "XjGH5OQkNFXwbZCf",
+          "name": "amoCRM OAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "inputType": "binary",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        240,
+        192
+      ],
+      "id": "ae6fd5f5-b326-4680-a0ee-280ced62d184",
+      "name": "Transcribe a recording",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "dqBaRFXXEgsOLLon",
+          "name": "Google Gemini QADAMEDU"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9821ac6a-2e64-4514-b874-9509de741747",
+              "name": "context",
+              "value": "Qadam Education — bu O‘zbekiston Respublikasi Maktabgacha va Maktab Ta’limi vazirligi tomonidan litsenziyalangan o‘quv markazidir. Biz “aktual kasblar”, marketing va kompyuter savodxonligi yo‘nalishlarida ta’lim berishga ruxsatga egamiz.   Qadam Edu respublika bo‘yicha TOP-10 ta o‘quv markazlar qatoriga kiradi.  Yo‘nalishlar: 1️⃣ Uzum Marketda 0 dan natijagacha — marketplace’da onlayn savdo qilish, tovar tanlash, Xitoy bilan ishlash va biznesni masshtablashtirish bo‘yicha kurs. 2️⃣ Data Analitika 0 dan Junior’gacha — Excel, SQL, Power BI va Python asosida tahliliy fikrlashni o‘rgatadigan IT yo‘nalish. 3️⃣ Prompt Master: SI siz uchun ishlasin — ChatGPT, Gemini, Midjourney, Voice AI kabi sun’iy intellekt vositalari bilan ishlashni o‘rgatuvchi zamonaviy kurs.  Barcha suhbatlar Qadam Education kurslari doirasida o‘tkaziladi. Javoblar shunga mos tonda va mazmunda bo‘lishi kerak.",
+              "type": "string"
+            },
+            {
+              "id": "f01e9444-a660-4ffa-afd7-bb78cbfd41af",
+              "name": "text",
+              "value": "={{ $json.content.parts[0].text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        464,
+        192
+      ],
+      "id": "d2a7f8d4-fab1-471d-9655-ded0e431c398",
+      "name": "Edit Fields3"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1424,
+        736
+      ],
+      "id": "a08be957-b3be-48e3-b1fa-0c6987e09bc1",
+      "name": "Wait",
+      "webhookId": "079542cc-3ee8-4d13-9cf3-8af92d397e1b"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1FVPV38OrkbDkZ51wNyQaVq-q5lVvaUcwqDwVi6YxPBw/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Оценка звонков",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1FVPV38OrkbDkZ51wNyQaVq-q5lVvaUcwqDwVi6YxPBw/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Транскрибация": "={{ $json.text }}{{ $json.text }}",
+            "Курс": "={{ $json.course }}",
+            "Менеджер": "={{ $json.responsibleID }}",
+            "Сделка ID": "={{ $json.dealId }}",
+            "Дата": "={{ $today.format('dd-MM-yyyy') }}",
+            "Текущий контекст": "={{ $json.context }}",
+            "runId": "={{ $json.runId }}",
+            "контекст": "={{ $json.context }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Сделка ID",
+              "displayName": "Сделка ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "runId",
+              "displayName": "runId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Менеджер",
+              "displayName": "Менеджер",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Курс",
+              "displayName": "Курс",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Дата",
+              "displayName": "Дата",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "контекст",
+              "displayName": "контекст",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Транскрибация",
+              "displayName": "Транскрибация",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Текущий контекст",
+              "displayName": "Текущий контекст",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Выявил потребность",
+              "displayName": "Выявил потребность",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Вытащил Боли",
+              "displayName": "Вытащил Боли",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Резюме",
+              "displayName": "Резюме",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Презентация",
+              "displayName": "Презентация",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Точка Б+продукт",
+              "displayName": "Точка Б+продукт",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Попытка закрытия",
+              "displayName": "Попытка закрытия",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Отработка возражения",
+              "displayName": "Отработка возражения",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Срочность",
+              "displayName": "Срочность",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Договоренность след шаг",
+              "displayName": "Договоренность след шаг",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Комментарии по обучению",
+              "displayName": "Комментарии по обучению",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Сумма баллов",
+              "displayName": "Сумма баллов",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Менеджер по имени",
+              "displayName": "Менеджер по имени",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Оплатил?",
+              "displayName": "Оплатил?",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b43a9817-bc6d-4af4-ade9-0c798c1df137",
+      "name": "записываем транскрипт",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1824,
+        736
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uMDDa8dmjMIJgAtP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    ...$json,\n    runId: Date.now()\n  }\n}]\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1648,
+        736
+      ],
+      "id": "a6e9dd1a-65ae-4161-8048-d55acb33feb5",
+      "name": "runID"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Выводим содержимое для проверки\nconsole.log($json);\n\n// Возвращаем объект в нужной структуре\nreturn [{\n  json: {\n    dealId: $json[\"Сделка ID\"] || null,\n    responsibleID: $json[\"Менеджер\"] || null,\n    course: $json[\"Курс\"] || null,\n    text: $json[\"Транскрибация\"] || null,\n    context: $json[\"Текущий контекст\"] || null,\n    date: $json[\"Дата\"] || null,\n    runid: $json[\"runId\"] || null \n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        736
+      ],
+      "id": "45fc0fa9-fbfc-48ae-98ce-60b0fee9a085",
+      "name": "Сортировка инфы"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "42pdlCBCj0QFpJYN",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/42pdlCBCj0QFpJYN",
+          "cachedResultName": "ОКК ии QADAMEDU в2"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "runid": "={{ $json.runid }}",
+            "date": "={{ $json.date }}",
+            "context": "={{ $json.context }}",
+            "text": "={{ $json.text }}",
+            "course": "={{ $json.course }}",
+            "responsibleID": "={{ $json.responsibleID }}",
+            "dealId": "={{ $json.dealId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "dealId",
+              "displayName": "dealId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            },
+            {
+              "id": "responsibleID",
+              "displayName": "responsibleID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "course",
+              "displayName": "course",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "context",
+              "displayName": "context",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "runid",
+              "displayName": "runid",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2224,
+        736
+      ],
+      "id": "3986037a-f54d-47ee-879a-ca0a4ad9e80c",
+      "name": "Call 'ОКК ии QADAMEDU'"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "qadamedusalesii.app.n8n.cloud",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+            "content-length": "15383",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "23.111.214.168",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "RU",
+            "cf-ray": "98e89d48f0a4f12e-DME",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/x-www-form-urlencoded",
+            "x-amocrm-request": "Y",
+            "x-forwarded-for": "23.111.214.168, 172.71.184.3",
+            "x-forwarded-host": "qadamedusalesii.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-87-bcb9f59f7-mlcc7",
+            "x-is-trusted": "yes",
+            "x-real-ip": "23.111.214.168"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "lead[id]": "23308671",
+            "lead[name]": "Заявка c формы: Uzum",
+            "lead[date_create]": "1760338064",
+            "lead[created_user_id]": "0",
+            "lead[last_modified]": "1760458402",
+            "lead[account_id]": "31119302",
+            "lead[price]": "4900000",
+            "lead[responsible_user_id]": "12344930",
+            "lead[linked_company_id]": "",
+            "lead[group_id]": "0",
+            "lead[pipeline_id]": "6909890",
+            "lead[date_close]": "",
+            "lead[closest_task]": "1760554740",
+            "lead[loss_reason_id]": "",
+            "lead[modified_user_id]": "11199638",
+            "lead[deleted]": "false",
+            "lead[tags][0][id]": "79519",
+            "lead[tags][0][name]": "tilda",
+            "lead[tags][0][color]": "",
+            "lead[tags][1][id]": "165655",
+            "lead[tags][1][name]": "kurs uzum",
+            "lead[tags][1][color]": "",
+            "lead[status_id]": "58160726",
+            "lead[custom_fields][823473][id]": "823473",
+            "lead[custom_fields][823473][name]": "utm_content",
+            "lead[custom_fields][823473][type_id]": "21",
+            "lead[custom_fields][823473][code]": "UTM_CONTENT",
+            "lead[custom_fields][823473][values][0][value]": "video_v2",
+            "lead[custom_fields][823475][id]": "823475",
+            "lead[custom_fields][823475][name]": "utm_medium",
+            "lead[custom_fields][823475][type_id]": "21",
+            "lead[custom_fields][823475][code]": "UTM_MEDIUM",
+            "lead[custom_fields][823475][values][0][value]": "UZUM_QUIZ_TASH",
+            "lead[custom_fields][823477][id]": "823477",
+            "lead[custom_fields][823477][name]": "utm_campaign",
+            "lead[custom_fields][823477][type_id]": "21",
+            "lead[custom_fields][823477][code]": "UTM_CAMPAIGN",
+            "lead[custom_fields][823477][values][0][value]": "UZUM",
+            "lead[custom_fields][823479][id]": "823479",
+            "lead[custom_fields][823479][name]": "utm_source",
+            "lead[custom_fields][823479][type_id]": "21",
+            "lead[custom_fields][823479][code]": "UTM_SOURCE",
+            "lead[custom_fields][823479][values][0][value]": "FB",
+            "lead[custom_fields][823481][id]": "823481",
+            "lead[custom_fields][823481][name]": "utm_term",
+            "lead[custom_fields][823481][type_id]": "21",
+            "lead[custom_fields][823481][code]": "UTM_TERM",
+            "lead[custom_fields][823481][values][0][value]": "120210303709350190",
+            "lead[custom_fields][823483][id]": "823483",
+            "lead[custom_fields][823483][name]": "utm_referrer",
+            "lead[custom_fields][823483][type_id]": "21",
+            "lead[custom_fields][823483][code]": "UTM_REFERRER",
+            "lead[custom_fields][823483][values][0][value]": "https://qadam.education/uzum?utm_source=FB&utm_medium=UZUM_QUIZ_TASH&utm_campaign=UZUM&utm_content=video_v2&utm_id=120208472712320190&utm_term=120210303709350190&fbclid=PAZXh0bgNhZW0BMABhZGlkAasaqsWNin4Bp2ODz23U5g757XuBz3eSU1ZEBS67tyDSQFudubPHA57IMFQz4mIlaYA0J4tL_aem_plLgDJ9gVZAyPA1DDQjWew#rec706417636",
+            "lead[custom_fields][823501][id]": "823501",
+            "lead[custom_fields][823501][name]": "_ym_uid",
+            "lead[custom_fields][823501][type_id]": "21",
+            "lead[custom_fields][823501][code]": "_YM_UID",
+            "lead[custom_fields][823501][values][0][value]": "1760337869544447042",
+            "lead[custom_fields][823509][id]": "823509",
+            "lead[custom_fields][823509][name]": "fbclid",
+            "lead[custom_fields][823509][type_id]": "21",
+            "lead[custom_fields][823509][code]": "FBCLID",
+            "lead[custom_fields][823509][values][0][value]": "PAZXh0bgNhZW0BMABhZGlkAasaqsWNin4Bp2ODz23U5g757XuBz3eSU1ZEBS67tyDSQFudubPHA57IMFQz4mIlaYA0J4tL_aem_plLgDJ9gVZAyPA1DDQjWew",
+            "lead[custom_fields][936095][id]": "936095",
+            "lead[custom_fields][936095][name]": "Для чего нужен курс",
+            "lead[custom_fields][936095][type_id]": "4",
+            "lead[custom_fields][936095][code]": "",
+            "lead[custom_fields][936095][values][0][value]": "Обучиться новой профессии",
+            "lead[custom_fields][936095][values][0][enum_id]": "497329",
+            "lead[custom_fields][936095][values][0][enum_code]": "",
+            "lead[custom_fields][936097][id]": "936097",
+            "lead[custom_fields][936097][name]": "Пол",
+            "lead[custom_fields][936097][type_id]": "4",
+            "lead[custom_fields][936097][code]": "",
+            "lead[custom_fields][936097][values][0][value]": "Женщина",
+            "lead[custom_fields][936097][values][0][enum_id]": "497337",
+            "lead[custom_fields][936097][values][0][enum_code]": "",
+            "lead[custom_fields][936101][id]": "936101",
+            "lead[custom_fields][936101][name]": "Возраст",
+            "lead[custom_fields][936101][type_id]": "2",
+            "lead[custom_fields][936101][code]": "",
+            "lead[custom_fields][936101][values][0][value]": "30",
+            "lead[custom_fields][936103][id]": "936103",
+            "lead[custom_fields][936103][name]": "Курс",
+            "lead[custom_fields][936103][type_id]": "4",
+            "lead[custom_fields][936103][code]": "",
+            "lead[custom_fields][936103][values][0][value]": "Uzum kurs",
+            "lead[custom_fields][936103][values][0][enum_id]": "667595",
+            "lead[custom_fields][936103][values][0][enum_code]": "",
+            "lead[custom_fields][936105][id]": "936105",
+            "lead[custom_fields][936105][name]": "Тип сделки",
+            "lead[custom_fields][936105][type_id]": "4",
+            "lead[custom_fields][936105][code]": "",
+            "lead[custom_fields][936105][values][0][value]": "Birinchi marta",
+            "lead[custom_fields][936105][values][0][enum_id]": "497345",
+            "lead[custom_fields][936105][values][0][enum_code]": "",
+            "lead[custom_fields][940183][id]": "940183",
+            "lead[custom_fields][940183][name]": "Источник",
+            "lead[custom_fields][940183][type_id]": "4",
+            "lead[custom_fields][940183][code]": "",
+            "lead[custom_fields][940183][values][0][value]": "Таргет",
+            "lead[custom_fields][940183][values][0][enum_id]": "501463",
+            "lead[custom_fields][940183][values][0][enum_code]": "",
+            "lead[custom_fields][949799][id]": "949799",
+            "lead[custom_fields][949799][name]": "TRANID",
+            "lead[custom_fields][949799][type_id]": "9",
+            "lead[custom_fields][949799][code]": "TRANID",
+            "lead[custom_fields][949799][values][0][value]": "6514808:7850969154",
+            "lead[custom_fields][949801][id]": "949801",
+            "lead[custom_fields][949801][name]": "FORMID",
+            "lead[custom_fields][949801][type_id]": "9",
+            "lead[custom_fields][949801][code]": "FORMID",
+            "lead[custom_fields][949801][values][0][value]": "form706417636",
+            "lead[custom_fields][949803][id]": "949803",
+            "lead[custom_fields][949803][name]": "REFERER",
+            "lead[custom_fields][949803][type_id]": "7",
+            "lead[custom_fields][949803][code]": "REFERER",
+            "lead[custom_fields][949803][values][0][value]": "https://qadam.education/uzum?utm_source=FB&utm_medium=UZUM_QUIZ_TASH&utm_campaign=UZUM&utm_content=video_v2&utm_id=120208472712320190&utm_term=120210303709350190&fbclid=PAZXh0bgNhZW0BMABhZGlkAasaqsWNin4Bp2ODz23U5g757XuBz3eSU1ZEBS67tyDSQFudubPHA57IMFQz4mIlaYA0J4tL_aem_plLgDJ9gVZAyPA1DDQjWew#rec706417636",
+            "lead[custom_fields][960259][id]": "960259",
+            "lead[custom_fields][960259][name]": "FORMNAME",
+            "lead[custom_fields][960259][type_id]": "9",
+            "lead[custom_fields][960259][code]": "FORMNAME",
+            "lead[custom_fields][960259][values][0][value]": "Uzum",
+            "lead[custom_fields][967019][id]": "967019",
+            "lead[custom_fields][967019][name]": "Регион",
+            "lead[custom_fields][967019][type_id]": "4",
+            "lead[custom_fields][967019][code]": "",
+            "lead[custom_fields][967019][values][0][value]": "Ташкент",
+            "lead[custom_fields][967019][values][0][enum_id]": "530019",
+            "lead[custom_fields][967019][values][0][enum_code]": "",
+            "lead[custom_fields][973151][id]": "973151",
+            "lead[custom_fields][973151][name]": "YOSHINGIZ",
+            "lead[custom_fields][973151][type_id]": "9",
+            "lead[custom_fields][973151][code]": "YOSHINGIZ",
+            "lead[custom_fields][973151][values][0][value]": "C) 26-35",
+            "lead[custom_fields][991323][id]": "991323",
+            "lead[custom_fields][991323][name]": "YANGI_KASB_VA_BILIMLARNI_ORGANISH_UCHUN_YETARLI_VAQT_VA_MABLAG_SARFLASHGA_TAYYORMISIZ",
+            "lead[custom_fields][991323][type_id]": "9",
+            "lead[custom_fields][991323][code]": "YANGI_KASB_VA_BILIMLARNI_ORGANISH_UCHUN_YETARLI_VAQT_VA_MABLAG_S",
+            "lead[custom_fields][991323][values][0][value]": "1. Ha",
+            "lead[custom_fields][991325][id]": "991325",
+            "lead[custom_fields][991325][name]": "TALIM_UCHUN_MABLAG_VA_YETARLICHA_VAQT_SARFLASHINGIZ_KERAKLIGINI_TUSHUNASIZMI",
+            "lead[custom_fields][991325][type_id]": "9",
+            "lead[custom_fields][991325][code]": "TALIM_UCHUN_MABLAG_VA_YETARLICHA_VAQT_SARFLASHINGIZ_KERAKLIGINI_",
+            "lead[custom_fields][991325][values][0][value]": "1. Ha",
+            "lead[custom_fields][995751][id]": "995751",
+            "lead[custom_fields][995751][name]": "UTM_ID",
+            "lead[custom_fields][995751][type_id]": "9",
+            "lead[custom_fields][995751][code]": "UTM_ID",
+            "lead[custom_fields][995751][values][0][value]": "120208472712320190",
+            "lead[custom_fields][1008983][id]": "1008983",
+            "lead[custom_fields][1008983][name]": "UZUM_MARKET_ORQALI_ISHLAB_QANDAY_DAROMADGA_CHIQISH_MUMKIN_DEB_OYLAYSIZ_QUYIDAGI_VARIANTLARDAN_BIRINI_TANLANG_",
+            "lead[custom_fields][1008983][type_id]": "9",
+            "lead[custom_fields][1008983][code]": "UZUM_MARKET_ORQALI_ISHLAB_QANDAY_DAROMADGA_CHIQISH_MUMKIN_DEB_OY",
+            "lead[custom_fields][1008983][values][0][value]": "1. Daromadga chiqish haqida malumotim yoq, endi organayabman",
+            "lead[custom_fields][1008985][id]": "1008985",
+            "lead[custom_fields][1008985][name]": "NIMA_UCHUN_UZUM_MARKET_ORQALI_DAROMADGA_CHIQMOQCHISIZ",
+            "lead[custom_fields][1008985][type_id]": "9",
+            "lead[custom_fields][1008985][code]": "NIMA_UCHUN_UZUM_MARKET_ORQALI_DAROMADGA_CHIQMOQCHISIZ",
+            "lead[custom_fields][1008985][values][0][value]": "1. Oilamga yordam berish uchun.",
+            "lead[custom_fields][1008987][id]": "1008987",
+            "lead[custom_fields][1008987][name]": "BIZNING_KURSIMIZNI_TUGATGANDAN_SONG_OLGAN_BILIMLARINGIZNI_AMALIYOTDA_QANDAY_QOLLAMOQCHISIZ",
+            "lead[custom_fields][1008987][type_id]": "9",
+            "lead[custom_fields][1008987][code]": "BIZNING_KURSIMIZNI_TUGATGANDAN_SONG_OLGAN_BILIMLARINGIZNI_AMALIY",
+            "lead[custom_fields][1008987][values][0][value]": "C) Mavzuni organishga qiziqaman, lekin yaqin vaqtlarda sotishni boshlashni rejalashtirmayapman.",
+            "lead[custom_fields][1009067][id]": "1009067",
+            "lead[custom_fields][1009067][name]": "UZUM_MARKETDA_SAVDO_QILAYOTGAN_VA_DAROMAD_TOPAYOTGAN_TANISHLARINGIZ_BORMI",
+            "lead[custom_fields][1009067][type_id]": "9",
+            "lead[custom_fields][1009067][code]": "UZUM_MARKETDA_SAVDO_QILAYOTGAN_VA_DAROMAD_TOPAYOTGAN_TANISHLARIN",
+            "lead[custom_fields][1009067][values][0][value]": "A) Ha, bor",
+            "lead[custom_fields][1019478][id]": "1019478",
+            "lead[custom_fields][1019478][name]": "COOKIES",
+            "lead[custom_fields][1019478][type_id]": "9",
+            "lead[custom_fields][1019478][code]": "COOKIES",
+            "lead[custom_fields][1019478][values][0][value]": "__ddg8_=yl9X6qDuYVmhsCWQ; __ddg10_=1760337865; __ddg9_=188.113.198.43; _fbc=fb.1.1760337868357.PAZXh0bgNhZW0BMABhZGlkAasaqsWNin4Bp2ODz23U5g757XuBz3eSU1ZEBS67tyDSQFudubPHA57IMFQz4mIlaYA0J4tL_aem_plLgDJ9gVZAyPA1DDQjWew; _fbp=fb.1.1760337868416.28557091269110028; _ga=GA1.1.1722563245.1760337869; _ym_uid=1760337869544447042; _ym_d=1760337869; previousUrl=qadam.education%2Fuzum; _ym_isad=2; _ym_visorc=w; _ga_PTHDY45413=GS2.1.s1760337868$o1$g1$t1760337893$j35$l0$h0",
+            "lead[custom_fields][1026381][id]": "1026381",
+            "lead[custom_fields][1026381][name]": "Вероятность покупки",
+            "lead[custom_fields][1026381][type_id]": "4",
+            "lead[custom_fields][1026381][code]": "",
+            "lead[custom_fields][1026381][values][0][value]": "50%+-",
+            "lead[custom_fields][1026381][values][0][enum_id]": "679357",
+            "lead[custom_fields][1026381][values][0][enum_code]": "",
+            "lead[custom_fields][1032917][id]": "1032917",
+            "lead[custom_fields][1032917][name]": "ВР лид новый",
+            "lead[custom_fields][1032917][type_id]": "1",
+            "lead[custom_fields][1032917][code]": "",
+            "lead[custom_fields][1032917][values][0][value]": "1",
+            "lead[main_contact_id]": "26910297",
+            "contact[id]": "26910297",
+            "contact[name]": "Nilufar Nazarova",
+            "contact[last_modified]": "1760445079",
+            "contact[account_id]": "31119302",
+            "contact[date_create]": "1760338064",
+            "contact[created_user_id]": "0",
+            "contact[modified_user_id]": "12344930",
+            "contact[responsible_user_id]": "12344930",
+            "contact[group_id]": "0",
+            "contact[closest_task]": "",
+            "contact[linked_company_id]": "",
+            "contact[company_name]": "",
+            "contact[first_name]": "Nilufar",
+            "contact[last_name]": "Nazarova",
+            "contact[tags][0][id]": "79521",
+            "contact[tags][0][name]": "tilda",
+            "contact[tags][0][color]": "",
+            "contact[type]": "contact",
+            "contact[is_unsorted]": "false",
+            "contact[custom_fields][823465][id]": "823465",
+            "contact[custom_fields][823465][name]": "Телефон",
+            "contact[custom_fields][823465][type_id]": "8",
+            "contact[custom_fields][823465][code]": "PHONE",
+            "contact[custom_fields][823465][values][0][value]": "3+998 94-684-0735",
+            "contact[custom_fields][823465][values][0][enum_id]": "438097",
+            "contact[custom_fields][823465][values][0][enum_code]": "WORK",
+            "contact[custom_fields][823465][values][1][value]": "2+998 94-684-0735",
+            "contact[custom_fields][823465][values][1][enum_id]": "438097",
+            "contact[custom_fields][823465][values][1][enum_code]": "WORK",
+            "contact[custom_fields][823465][values][2][value]": "+998 94-684-0735",
+            "contact[custom_fields][823465][values][2][enum_id]": "438107",
+            "contact[custom_fields][823465][values][2][enum_code]": "OTHER",
+            "contact[linked_leads_id][0]": "23308671",
+            "user_button[id]": "9723882",
+            "user_button[full_name]": "Ислам Курбанов",
+            "user_button[phone]": "",
+            "user_button[language]": "ru",
+            "user_button[group_id]": "0",
+            "user_button[is_admin]": "1",
+            "user_button[is_active]": "1",
+            "target": "https://qadamedusalesii.app.n8n.cloud/webhook-test/010192ed-48c2-45f8-a264-681334679967"
+          },
+          "webhookUrl": "https://qadamedusalesii.app.n8n.cloud/webhook-test/010192ed-48c2-45f8-a264-681334679967",
+          "executionMode": "test"
+        }
+      }
+    ],
+    "HTTP Request3": [
+      {
+        "json": {
+          "data": "{\"_links\":{\"self\":{\"href\":\"https://qadamsales.amocrm.ru/api/v4/leads/23308671/notes\"}},\"_embedded\":{\"notes\":[{\"id\":72651045,\"entity_id\":23308671,\"request_id\":\"0\",\"_links\":{\"self\":{\"href\":\"https://qadamsales.amocrm.ru/api/v4/leads/23308671/notes/72651045\"}}}]}}"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Conv ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "забираем транскрипт": {
+      "main": [
+        [
+          {
+            "node": "Создает примечание",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Wait5",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conv ID": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "HTTP Request2": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "HTTP скачивает звонок",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "забираем транскрипт",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Создает примечание": {
+      "main": [
+        [
+          {
+            "node": "Code3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code3": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP contact": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Code2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP скачивает звонок": {
+      "main": [
+        [
+          {
+            "node": "Transcribe a recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "HTTP contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Подсказка для след этапа": {
+      "main": [
+        [
+          {
+            "node": "Code4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code4": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait5": {
+      "main": [
+        [
+          {
+            "node": "Подсказка для след этапа",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe a recording": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields3": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "runID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "записываем транскрипт": {
+      "main": [
+        []
+      ]
+    },
+    "runID": {
+      "main": [
+        [
+          {
+            "node": "записываем транскрипт",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Сортировка инфы": {
+      "main": [
+        [
+          {
+            "node": "Call 'ОКК ии QADAMEDU'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f98482bf-628a-4d02-8bb5-4138e25cd445",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2e071fba36900ab548a0191a99cabc15873561cf351f3c0164bd185f0f9d682c"
+  },
+  "id": "n05hcDH2vVgVPFjK",
+  "tags": []
+}
