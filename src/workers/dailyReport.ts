@@ -12,13 +12,30 @@ function formatDuration(seconds: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Структура данных для одного дневного отчёта
+// ---------------------------------------------------------------------------
+
+interface DailyStats {
+  callsTotal: number;
+  talkTimeSeconds: number;
+  avgScore: number | null;
+  topStrengths: string[];
+  topMistakes: string[];
+}
+
+interface DailyReportResult {
+  text: string;
+  stats: DailyStats;
+}
+
+// ---------------------------------------------------------------------------
 // Генерация ежедневного отчёта для одного менеджера
 // ---------------------------------------------------------------------------
 
-async function buildDailyReportText(
+async function buildDailyReport(
   managerId: number,
   managerName: string
-): Promise<string | null> {
+): Promise<DailyReportResult | null> {
   const now = new Date();
   const from = new Date(now);
   from.setHours(0, 0, 0, 0);
@@ -40,9 +57,10 @@ async function buildDailyReportText(
   const scores = calls
     .map((c) => c.analysis?.overallScore)
     .filter((s): s is number => s !== null && s !== undefined);
-  const avgScore = scores.length
-    ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)
+  const avgScoreNum = scores.length
+    ? scores.reduce((a, b) => a + b, 0) / scores.length
     : null;
+  const avgScoreStr = avgScoreNum !== null ? avgScoreNum.toFixed(1) : null;
   const totalTalk = calls.reduce((a, c) => a + c.durationSeconds, 0);
 
   const weakMap: Record<string, number> = {};
@@ -56,15 +74,14 @@ async function buildDailyReportText(
 
   const topWeak = Object.entries(weakMap)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([w]) => `  • ${w}`)
-    .join("\n");
+    .slice(0, 3);
 
   const topStrong = Object.entries(strongMap)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([s]) => `  • ${s}`)
-    .join("\n");
+    .slice(0, 3);
+
+  const topWeakText = topWeak.map(([w]) => `  • ${w}`).join("\n");
+  const topStrongText = topStrong.map(([s]) => `  • ${s}`).join("\n");
 
   const today = now.toLocaleDateString("ru-RU", {
     day: "numeric",
@@ -76,9 +93,9 @@ async function buildDailyReportText(
     ``,
     `📞 Проанализировано звонков: ${calls.length}`,
     `⏱ Суммарное время: ${formatDuration(totalTalk)}`,
-    avgScore ? `⭐ Средняя оценка: ${avgScore}/10` : "",
-    topStrong ? `\n💪 Сильные стороны:\n${topStrong}` : "",
-    topWeak ? `\n⚠️ Зоны роста:\n${topWeak}` : "",
+    avgScoreStr ? `⭐ Средняя оценка: ${avgScoreStr}/10` : "",
+    topStrongText ? `\n💪 Сильные стороны:\n${topStrongText}` : "",
+    topWeakText ? `\n⚠️ Зоны роста:\n${topWeakText}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -90,9 +107,9 @@ async function buildDailyReportText(
 
 Его статистика за сегодня:
 - Звонков: ${calls.length}
-- Средняя оценка: ${avgScore ?? "нет данных"}/10
-- Сильные стороны: ${topStrong || "нет данных"}
-- Зоны роста: ${topWeak || "нет данных"}
+- Средняя оценка: ${avgScoreStr ?? "нет данных"}/10
+- Сильные стороны: ${topStrongText || "нет данных"}
+- Зоны роста: ${topWeakText || "нет данных"}
 
 Напиши КРАТКИЙ мотивационный комментарий (2-3 предложения):
 - Отметь конкретное достижение или прогресс
@@ -106,11 +123,24 @@ async function buildDailyReportText(
     console.error("[DailyReport] AI comment error:", err.message);
   }
 
-  const parts = [statsText];
-  if (aiComment) parts.push(`\n🤖 ${aiComment}`);
-  parts.push(`\nДля подробностей: /report`);
+  const fullText = [
+    statsText,
+    aiComment ? `\n🤖 ${aiComment}` : "",
+    `\nДля подробностей: /report`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 
-  return parts.join("\n");
+  return {
+    text: fullText,
+    stats: {
+      callsTotal: calls.length,
+      talkTimeSeconds: totalTalk,
+      avgScore: avgScoreNum,
+      topStrengths: topStrong.map(([s]) => s),
+      topMistakes: topWeak.map(([w]) => w),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -120,11 +150,15 @@ async function buildDailyReportText(
 /**
  * Отправляет ежедневные отчёты всем активным менеджерам, у которых
  * есть привязанный Telegram-аккаунт (status="used").
+ * Сохраняет результат в таблицу DailySummary.
  */
 export async function sendDailyReports(
   sendFn: (chatId: string, text: string) => Promise<void>
 ): Promise<{ sent: number; skipped: number; errors: number }> {
   console.log("[DailyReport] Starting daily reports...");
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   const managers = await prisma.manager.findMany({
     where: { isActive: true },
@@ -142,32 +176,87 @@ export async function sendDailyReports(
 
   for (const manager of managers) {
     const link = manager.telegramLinks[0];
+
+    // Строим отчёт даже если нет Telegram (чтобы сохранить в DailySummary)
+    let report: DailyReportResult | null = null;
+    try {
+      report = await buildDailyReport(manager.id, manager.name);
+    } catch (err: any) {
+      console.error(`[DailyReport] Build failed for ${manager.name}:`, err.message);
+      errors++;
+      continue;
+    }
+
+    if (!report) {
+      console.log(`[DailyReport] No calls today for manager ${manager.name}, skipping`);
+      skipped++;
+      continue;
+    }
+
+    // Сохраняем в DailySummary (upsert чтобы не дублировать при повторном запуске)
+    try {
+      await prisma.dailySummary.upsert({
+        where: {
+          // Уникальность по менеджеру + дата + период
+          managerId_date_period: {
+            managerId: manager.id,
+            date: today,
+            period: "day",
+          },
+        },
+        update: {
+          callsTotal: report.stats.callsTotal,
+          connectedTotal: report.stats.callsTotal,
+          talkTimeSeconds: report.stats.talkTimeSeconds,
+          avgScore: report.stats.avgScore,
+          topStrengths: report.stats.topStrengths,
+          topMistakes: report.stats.topMistakes,
+          summaryText: report.text,
+          sentStatus: link?.telegramUserId ? "sent" : "skipped_no_tg",
+          updatedAt: new Date(),
+        },
+        create: {
+          managerId: manager.id,
+          date: today,
+          period: "day",
+          callsTotal: report.stats.callsTotal,
+          connectedTotal: report.stats.callsTotal,
+          talkTimeSeconds: report.stats.talkTimeSeconds,
+          avgScore: report.stats.avgScore,
+          topStrengths: report.stats.topStrengths,
+          topMistakes: report.stats.topMistakes,
+          summaryText: report.text,
+          sentStatus: link?.telegramUserId ? "pending" : "skipped_no_tg",
+        },
+      });
+    } catch (err: any) {
+      console.error(`[DailyReport] DailySummary save failed for ${manager.name}:`, err.message);
+    }
+
+    // Отправка в Telegram (если есть привязка)
     if (!link?.telegramUserId) {
       skipped++;
       continue;
     }
 
     try {
-      const text = await buildDailyReportText(manager.id, manager.name);
-      if (!text) {
-        console.log(
-          `[DailyReport] No calls today for manager ${manager.name}, skipping`
-        );
-        skipped++;
-        continue;
-      }
-
-      await sendFn(link.telegramUserId, text);
+      await sendFn(link.telegramUserId, report.text);
       console.log(`[DailyReport] Sent to ${manager.name} (${link.telegramUserId})`);
-      sent++;
 
-      // Небольшая пауза между отправками
+      // Обновляем статус на "sent"
+      await prisma.dailySummary.updateMany({
+        where: { managerId: manager.id, date: today, period: "day" },
+        data: { sentStatus: "sent" },
+      });
+
+      sent++;
       await new Promise((r) => setTimeout(r, 200));
     } catch (err: any) {
-      console.error(
-        `[DailyReport] Failed to send to ${manager.name}:`,
-        err.message
-      );
+      console.error(`[DailyReport] Failed to send to ${manager.name}:`, err.message);
+      await prisma.dailySummary.updateMany({
+        where: { managerId: manager.id, date: today, period: "day" },
+        data: { sentStatus: "error" },
+      }).catch(() => {});
       errors++;
     }
   }

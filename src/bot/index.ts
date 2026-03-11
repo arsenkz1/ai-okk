@@ -229,15 +229,73 @@ function presetRange(preset: "day" | "week" | "month"): { from: Date; to: Date; 
 // Построение system prompt для AI-коуча (роль + данные звонков)
 // ---------------------------------------------------------------------------
 
-async function buildAiSystemPrompt(managerId: number, managerName: string): Promise<string> {
-  const from = new Date();
-  from.setDate(from.getDate() - 30);
+type AiPeriod = "day" | "week" | "month" | "30days";
+
+/**
+ * Парсит ключевое слово периода из аргумента команды /ask.
+ * Возвращает период и остаток строки (вопрос, если есть).
+ */
+function parseAskArg(arg: string): { period: AiPeriod; question: string } {
+  const trimmed = arg.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (lower === "день" || lower === "сегодня") return { period: "day", question: "" };
+  if (lower === "неделя" || lower === "7 дней") return { period: "week", question: "" };
+  if (lower === "месяц" || lower === "30 дней") return { period: "month", question: "" };
+
+  // Проверяем если слово в начале: "/ask день как дела?" → period=day, question="как дела?"
+  const prefixMatch = trimmed.match(/^(день|сегодня|неделя|месяц)\s+(.+)$/i);
+  if (prefixMatch) {
+    const kw = prefixMatch[1].toLowerCase();
+    const q = prefixMatch[2].trim();
+    if (kw === "день" || kw === "сегодня") return { period: "day", question: q };
+    if (kw === "неделя") return { period: "week", question: q };
+    if (kw === "месяц") return { period: "month", question: q };
+  }
+
+  return { period: "30days", question: trimmed };
+}
+
+function periodLabel(period: AiPeriod): string {
+  switch (period) {
+    case "day":    return "сегодня";
+    case "week":   return "последние 7 дней";
+    case "month":  return "текущий месяц";
+    default:       return "последние 30 дней";
+  }
+}
+
+function periodDateRange(period: AiPeriod): { from: Date; to: Date } {
+  const now = new Date();
+  const to = new Date(now);
+  const from = new Date(now);
+  from.setHours(0, 0, 0, 0);
+
+  if (period === "week") {
+    from.setDate(from.getDate() - 6);
+  } else if (period === "month") {
+    from.setDate(1);
+  } else if (period === "30days") {
+    from.setDate(from.getDate() - 29);
+  }
+  // day — from = начало сегодня (уже установлено)
+
+  return { from, to };
+}
+
+async function buildAiSystemPrompt(
+  managerId: number,
+  managerName: string,
+  period: AiPeriod = "30days"
+): Promise<string> {
+  const { from } = periodDateRange(period);
+  const label = periodLabel(period);
 
   const calls = await prisma.call.findMany({
     where: { managerId, startedAt: { gte: from }, processingStatus: "processed" },
     include: { analysis: true },
     orderBy: { startedAt: "desc" },
-    take: 30,
+    take: 50,
   });
 
   const scores = calls
@@ -264,7 +322,7 @@ async function buildAiSystemPrompt(managerId: number, managerName: string): Prom
           );
         })
         .join("\n")
-    : "  Звонков с анализом за последние 30 дней не найдено.";
+    : `  Звонков с анализом за ${label} не найдено.`;
 
   return `Ты — опытный AI-тренер по продажам. Твоя задача — помогать менеджеру ${managerName} профессионально расти.
 
@@ -277,7 +335,7 @@ async function buildAiSystemPrompt(managerId: number, managerName: string): Prom
 - Если данных недостаточно — честно говоришь об этом
 - ВАЖНО: никогда не используй приветствия ("Привет", "Здравствуй", "Добрый день" и т.п.) в ответах — ты уже в диалоге, приветствие было только один раз при входе
 
-ДАННЫЕ МЕНЕДЖЕРА ЗА ПОСЛЕДНИЕ 30 ДНЕЙ:
+ДАННЫЕ МЕНЕДЖЕРА ЗА ПЕРИОД: ${label.toUpperCase()}
 Имя: ${managerName}
 Звонков с анализом: ${calls.length}
 Средняя оценка: ${avg}/10
@@ -307,7 +365,10 @@ bot.onText(/\/start$/, async (msg) => {
         `/month — месяц\n` +
         `/period — произвольный период\n\n` +
         `🤖 *AI-коуч:*\n` +
-        `/ask — войти в диалог с AI-тренером\n\n` +
+        `/ask — за последние 30 дней\n` +
+        `/ask день — только сегодня\n` +
+        `/ask неделя — за 7 дней\n` +
+        `/ask месяц — за текущий месяц\n\n` +
         `📋 *Другое:*\n` +
         `/errors — мои частые ошибки`,
       { parse_mode: "Markdown" }
@@ -568,13 +629,25 @@ bot.onText(/\/ask(.*)/, async (msg, match) => {
   if (!manager) return;
 
   const userId = msg.from!.id;
-  const inlineQuestion = match![1].trim(); // вопрос прямо в команде: /ask как дела?
+  const rawArg = match![1].trim();
+  const { period, question: inlineQuestion } = parseAskArg(rawArg);
+  const label = periodLabel(period);
 
-  // Загружаем или перезагружаем system prompt с ролью коуча + данными звонков
-  await bot.sendMessage(msg.chat.id, "⏳ Загружаю твои данные по звонкам...");
-  const systemContext = await buildAiSystemPrompt(manager.id, manager.name);
+  // Загружаем system prompt с данными за выбранный период
+  await bot.sendMessage(
+    msg.chat.id,
+    `⏳ Загружаю данные за ${label}...`
+  );
+  const systemContext = await buildAiSystemPrompt(manager.id, manager.name, period);
 
   const history: GeminiMessage[] = [];
+
+  const activationText =
+    `🤖 *AI-коуч активен!*\n\n` +
+    `📅 Период анализа: *${label}*\n` +
+    `Задавай вопросы — я помню весь наш разговор.\n\n` +
+    `Сменить период: /ask день · /ask неделя · /ask месяц\n` +
+    `Выход: /stop\\_ai`;
 
   // Если вопрос передан сразу с командой — задаём его немедленно
   if (inlineQuestion) {
@@ -586,17 +659,13 @@ bot.onText(/\/ask(.*)/, async (msg, match) => {
 
     await bot.sendMessage(
       msg.chat.id,
-      `🤖 *AI-коуч активен.* Можешь продолжать задавать вопросы без команды /ask.\nДля выхода напиши /stop\\_ai\n\n${answer}`,
+      `🤖 *AI-коуч активен* (период: *${label}*).\nДля выхода: /stop\\_ai\n\n${answer}`,
       { parse_mode: "Markdown" }
     );
   } else {
     aiSessions.set(userId, { active: true, history, systemContext });
 
-    await bot.sendMessage(
-      msg.chat.id,
-      `🤖 *AI-коуч активен!*\n\nДанные по твоим звонкам загружены. Задавай вопросы — я помню весь наш разговор.\n\nДля выхода напиши /stop\\_ai`,
-      { parse_mode: "Markdown" }
-    );
+    await bot.sendMessage(msg.chat.id, activationText, { parse_mode: "Markdown" });
   }
 });
 

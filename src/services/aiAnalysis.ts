@@ -45,6 +45,77 @@ async function withGeminiRetry<T>(
 }
 
 // ---------------------------------------------------------------------------
+// Circuit Breaker для Gemini API
+// Защищает от каскадных сбоев: после N подряд ошибок перестаёт делать запросы
+// на время cooldown, затем пробует снова (HALF_OPEN).
+// ---------------------------------------------------------------------------
+
+type CbState = "CLOSED" | "OPEN" | "HALF_OPEN";
+
+const cb = {
+  state: "CLOSED" as CbState,
+  failures: 0,
+  lastFailureAt: 0,
+  threshold: 5,         // 5 подряд ошибок → OPEN
+  cooldownMs: 120_000,  // 2 минуты в OPEN перед попыткой HALF_OPEN
+};
+
+function cbTick(success: boolean): void {
+  if (success) {
+    if (cb.failures > 0) {
+      console.log(`[Gemini CB] Request succeeded, resetting circuit (was: ${cb.state})`);
+    }
+    cb.failures = 0;
+    cb.state = "CLOSED";
+    return;
+  }
+
+  cb.failures++;
+  cb.lastFailureAt = Date.now();
+
+  if (cb.state === "HALF_OPEN" || cb.failures >= cb.threshold) {
+    cb.state = "OPEN";
+    console.warn(
+      `[Gemini CB] Circuit OPEN after ${cb.failures} failures. Cooling down for ${cb.cooldownMs / 1000}s`
+    );
+  }
+}
+
+/**
+ * Выполняет Gemini-запрос через retry + circuit breaker.
+ * Бросает ошибку "Circuit OPEN" немедленно, не совершая HTTP-запрос.
+ */
+async function withGemini<T>(fn: () => Promise<T>): Promise<T> {
+  // Проверяем состояние circuit breaker
+  if (cb.state === "OPEN") {
+    const elapsed = Date.now() - cb.lastFailureAt;
+    if (elapsed >= cb.cooldownMs) {
+      cb.state = "HALF_OPEN";
+      console.log("[Gemini CB] Switching to HALF_OPEN — testing one request");
+    } else {
+      const remaining = Math.ceil((cb.cooldownMs - elapsed) / 1000);
+      throw new Error(
+        `[Gemini CB] Circuit is OPEN. Cooldown remaining: ${remaining}s`
+      );
+    }
+  }
+
+  try {
+    const result = await withGeminiRetry(fn);
+    cbTick(true);
+    return result;
+  } catch (err) {
+    cbTick(false);
+    throw err;
+  }
+}
+
+/** Текущее состояние circuit breaker (для мониторинга/логов) */
+export function getGeminiCircuitStatus(): { state: CbState; failures: number } {
+  return { state: cb.state, failures: cb.failures };
+}
+
+// ---------------------------------------------------------------------------
 // AI Coach: диалог с памятью (используется Telegram-ботом)
 // ---------------------------------------------------------------------------
 
@@ -64,7 +135,7 @@ export async function askGeminiWithHistory(
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   try {
-    const response = await withGeminiRetry(() =>
+    const response = await withGemini(() =>
       axios.post(url, {
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: history,
@@ -101,7 +172,7 @@ export async function askGeminiRaw(
   }
 
   try {
-    const response = await withGeminiRetry(() => axios.post(url, body));
+    const response = await withGemini(() => axios.post(url, body));
     return (
       response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ??
       "Нет ответа от AI."
@@ -153,7 +224,7 @@ export async function transcribeAudioWithGemini(
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-  const response = await withGeminiRetry(() =>
+  const response = await withGemini(() =>
     axios.post(url, {
       contents: [
         {
@@ -257,7 +328,7 @@ ${transcript}
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-    const response = await withGeminiRetry(() =>
+    const response = await withGemini(() =>
       axios.post(url, {
         contents: [{ parts: [{ text: prompt }] }],
       })
