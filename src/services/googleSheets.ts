@@ -37,7 +37,7 @@ export async function appendCallRowToSheet(row: (string | number | null)[]) {
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${process.env.GOOGLE_SHEETS_TAB_NAME || "Sheet1"}!A:Z`,
-    valueInputOption: "RAW",
+    valueInputOption: "USER_ENTERED",
     requestBody: {
       values: [row],
     },

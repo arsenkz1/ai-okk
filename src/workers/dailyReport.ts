@@ -8,8 +8,13 @@ import { askGeminiRaw } from "../services/aiAnalysis";
 function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  return h > 0 ? `${h}ч ${m}м` : `${m}м`;
+  return h > 0 ? `${h}s ${m}d` : `${m}d`;
 }
+
+const UZ_MONTHS = [
+  "yanvar","fevral","mart","aprel","may","iyun",
+  "iyul","avgust","sentabr","oktabr","noyabr","dekabr",
+];
 
 // ---------------------------------------------------------------------------
 // Структура данных для одного дневного отчёта
@@ -83,40 +88,38 @@ async function buildDailyReport(
   const topWeakText = topWeak.map(([w]) => `  • ${w}`).join("\n");
   const topStrongText = topStrong.map(([s]) => `  • ${s}`).join("\n");
 
-  const today = now.toLocaleDateString("ru-RU", {
-    day: "numeric",
-    month: "long",
-  });
+  const today = `${now.getDate()} ${UZ_MONTHS[now.getMonth()]}`;
 
   const statsText = [
-    `📊 Твой отчёт за ${today}`,
+    `📊 Bugungi hisoboting — ${today}`,
     ``,
-    `📞 Проанализировано звонков: ${calls.length}`,
-    `⏱ Суммарное время: ${formatDuration(totalTalk)}`,
-    avgScoreStr ? `⭐ Средняя оценка: ${avgScoreStr}/10` : "",
-    topStrongText ? `\n💪 Сильные стороны:\n${topStrongText}` : "",
-    topWeakText ? `\n⚠️ Зоны роста:\n${topWeakText}` : "",
+    `📞 Tahlil qilingan qo'ng'iroqlar: ${calls.length}`,
+    `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
+    avgScoreStr ? `⭐ O'rtacha ball: ${avgScoreStr}/10` : "",
+    topStrongText ? `\n💪 Kuchli tomonlar:\n${topStrongText}` : "",
+    topWeakText ? `\n⚠️ O'sish sohalari:\n${topWeakText}` : "",
   ]
     .filter(Boolean)
     .join("\n");
 
-  // Генерируем персональный AI-комментарий
+  // Personalлashtirilgan AI sharhi
   let aiComment = "";
   try {
-    const prompt = `Ты — AI-тренер по продажам. Менеджер ${managerName} завершил рабочий день.
+    const prompt = `Sen — AI sotish murabbiysisan. Menejер ${managerName} ish kunini yakunladi.
 
-Его статистика за сегодня:
-- Звонков: ${calls.length}
-- Средняя оценка: ${avgScoreStr ?? "нет данных"}/10
-- Сильные стороны: ${topStrongText || "нет данных"}
-- Зоны роста: ${topWeakText || "нет данных"}
+Bugungi statistikasi:
+- Qo'ng'iroqlar: ${calls.length}
+- O'rtacha ball: ${avgScoreStr ?? "ma'lumot yo'q"}/10
+- Kuchli tomonlar: ${topStrongText || "ma'lumot yo'q"}
+- O'sish sohalari: ${topWeakText || "ma'lumot yo'q"}
 
-Напиши КРАТКИЙ мотивационный комментарий (2-3 предложения):
-- Отметь конкретное достижение или прогресс
-- Дай одну практическую рекомендацию на завтра
-- Говори на "ты", тепло и по-деловому
-- БЕЗ приветствий и обращений к имени
-- Только текст, без форматирования`;
+QISQA motivatsion sharh yoz (2-3 gap):
+- Aniq yutuq yoki rivojlanishni qayd et
+- Ertaga uchun bitta amaliy maslahat ber
+- "Sen" deb murojaat qil, iliq va ishbilarmonlarcha
+- Salomlashuvlarsiz va ism ishlatmasdan
+- Faqat matn, formatirlashsiz
+- O'ZBEK TILIDA yoz (lotin alifbosi)`;
 
     aiComment = await askGeminiRaw(prompt);
   } catch (err: any) {
@@ -126,7 +129,7 @@ async function buildDailyReport(
   const fullText = [
     statsText,
     aiComment ? `\n🤖 ${aiComment}` : "",
-    `\nДля подробностей: /report`,
+    `\nBatafsil: /report`,
   ]
     .filter(Boolean)
     .join("\n");

@@ -1,5 +1,8 @@
 import "dotenv/config";
 import axios from "axios";
+import * as fs from "fs";
+import * as path from "path";
+import * as tarStream from "tar-stream";
 import { prisma } from "../config/database";
 import { callProcessingQueue } from "../queues/callProcessing";
 import type { OnlinePbxWebhookPayload } from "../queues/callProcessing";
@@ -17,14 +20,25 @@ interface PbxHistoryRecord {
   to_host?: string;
   start_stamp?: number;   // unix timestamp (секунды)
   end_stamp?: number;     // unix timestamp (секунды)
-  duration?: number;      // секунды (если возвращается API)
+  duration?: number;      // секунды
+  user_talk_time?: number;
   hangup_cause?: string;
-  direction?: string;
-  // Поле записи звонка — API возвращает одно из них:
-  download_path?: string;
-  record_url?: string;
-  record_path?: string;
-  file?: string;
+  accountcode?: string;
+  gateway?: string;
+  quality_score?: number;
+  events?: unknown[];
+}
+
+// ---------------------------------------------------------------------------
+// Временная директория для MP3-файлов из TAR
+// ---------------------------------------------------------------------------
+
+const TEMP_DIR = path.join(process.cwd(), "tmp", "recordings");
+
+function ensureTempDir(): void {
+  if (!fs.existsSync(TEMP_DIR)) {
+    fs.mkdirSync(TEMP_DIR, { recursive: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -33,37 +47,12 @@ interface PbxHistoryRecord {
 
 /** RFC 2822 дата для OnlinePBX API */
 function toRfc2822(date: Date): string {
-  return date.toUTCString(); // "Mon, 10 Mar 2026 00:00:00 GMT"
+  return date.toUTCString();
 }
 
 /** Определяет — короткий ли это номер (внутренний добавочный АТС) */
 function isInternalNumber(num: string | number): boolean {
   return String(num).trim().replace(/\D/g, "").length <= 5;
-}
-
-/**
- * Извлекает URL записи из объекта звонка.
- * OnlinePBX может возвращать поле под разными именами.
- */
-function extractRecordUrl(record: PbxHistoryRecord): string | null {
-  const raw =
-    record.record_url ??
-    record.download_path ??
-    record.record_path ??
-    record.file ??
-    null;
-
-  if (!raw) return null;
-
-  const str = String(raw).trim();
-  if (!str || str === "null" || str === "false") return null;
-
-  // Если уже полный URL — возвращаем как есть
-  if (str.startsWith("http")) return str;
-
-  // Иначе строим URL через API домен OnlinePBX
-  const domain = process.env.ONLINEPBX_DOMAIN ?? "pbx18476.onpbx.ru";
-  return `https://api2.onlinepbx.ru/${domain}/calls-records/download/${str}`;
 }
 
 /**
@@ -87,18 +76,15 @@ function normalizeHistoryRecord(
   let direction: "in" | "out";
 
   if (isInternalNumber(callerRaw) && !isInternalNumber(destRaw)) {
-    // Исходящий: менеджер звонит клиенту
     internal_number = callerRaw;
     external_number = destRaw;
     direction = "out";
   } else if (!isInternalNumber(callerRaw) && isInternalNumber(destRaw)) {
-    // Входящий: клиент звонит менеджеру
     internal_number = destRaw;
     external_number = callerRaw;
     direction = "in";
   } else {
-    // Оба внутренних или оба внешних — пропускаем (внутренние звонки)
-    return null;
+    return null; // внутренний или непонятный звонок
   }
 
   const startedAt = new Date(startStamp * 1000);
@@ -113,7 +99,6 @@ function normalizeHistoryRecord(
     end_time: new Date(endStamp * 1000).toISOString().replace("T", " ").slice(0, 19),
     duration,
     status: record.hangup_cause === "NORMAL_CLEARING" || !record.hangup_cause ? "completed" : "failed",
-    record_url: extractRecordUrl(record) ?? undefined,
     from_domain: record.from_host,
     to_domain: record.to_host,
     internal_number,
@@ -122,14 +107,9 @@ function normalizeHistoryRecord(
 }
 
 // ---------------------------------------------------------------------------
-// Запрос к OnlinePBX API
+// Запрос к OnlinePBX API: метаданные звонков
 // ---------------------------------------------------------------------------
 
-/**
- * Получает список звонков из OnlinePBX за указанный период.
- * dateFrom/dateTo — границы запроса (включительно).
- * count — максимальное количество записей (до 500).
- */
 export async function fetchPbxHistory(
   dateFrom: Date,
   dateTo: Date,
@@ -142,26 +122,24 @@ export async function fetchPbxHistory(
 
   const url = `https://api2.onlinepbx.ru/${domain}/mongo_history/search.json`;
 
-  const body = {
-    date_from: toRfc2822(dateFrom),
-    date_to: toRfc2822(dateTo),
-    count,
-  };
-
-  console.log("[PbxHistory] Fetching:", {
+  console.log("[PbxHistory] Fetching metadata:", {
     dateFrom: dateFrom.toISOString(),
     dateTo: dateTo.toISOString(),
     count,
   });
 
-  const response = await axios.post(url, body, {
-    headers: {
-      "x-pbx-authentication": auth,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    timeout: 30_000,
-  });
+  const response = await axios.post(
+    url,
+    { date_from: toRfc2822(dateFrom), date_to: toRfc2822(dateTo), count },
+    {
+      headers: {
+        "x-pbx-authentication": auth,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      timeout: 30_000,
+    }
+  );
 
   if (response.data?.status !== "1") {
     throw new Error(
@@ -174,6 +152,127 @@ export async function fetchPbxHistory(
 
   console.log("[PbxHistory] Got", data.length, "records");
   return data as PbxHistoryRecord[];
+}
+
+// ---------------------------------------------------------------------------
+// Запрос к OnlinePBX API: TAR URL (download: true)
+// ---------------------------------------------------------------------------
+
+async function fetchDayTarUrl(dateFrom: Date, dateTo: Date): Promise<string | null> {
+  const auth = process.env.ONLINEPBX_PBX_AUTH;
+  const domain = process.env.ONLINEPBX_DOMAIN ?? "pbx18476.onpbx.ru";
+
+  if (!auth) return null;
+
+  const url = `https://api2.onlinepbx.ru/${domain}/mongo_history/search.json`;
+
+  try {
+    const response = await axios.post(
+      url,
+      { date_from: toRfc2822(dateFrom), date_to: toRfc2822(dateTo), download: true },
+      {
+        headers: {
+          "x-pbx-authentication": auth,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        timeout: 30_000,
+      }
+    );
+
+    if (response.data?.status !== "1") return null;
+
+    const tarUrl = response.data?.data;
+    if (typeof tarUrl !== "string" || !tarUrl.startsWith("http")) return null;
+
+    console.log("[PbxHistory] Got TAR URL:", tarUrl.slice(0, 80) + "...");
+    return tarUrl;
+  } catch (err: any) {
+    console.error("[PbxHistory] Failed to get TAR URL:", err.message);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Скачивание и извлечение нужных MP3 из TAR-архива
+// ---------------------------------------------------------------------------
+
+/**
+ * Скачивает TAR по URL и извлекает MP3-файлы, UUID которых входят в qualifying set.
+ * Filename format: YY.MM.DD-HH_mm_ss_{internal}_{external}_{uuid}.mp3
+ * Возвращает Map: uuid → абсолютный путь к локальному файлу.
+ */
+async function extractQualifyingMp3s(
+  tarUrl: string,
+  qualifyingUuids: Set<string>
+): Promise<Map<string, string>> {
+  ensureTempDir();
+
+  const uuidToPath = new Map<string, string>();
+  const auth = process.env.ONLINEPBX_PBX_AUTH;
+
+  console.log(
+    "[PbxHistory] Downloading TAR archive for",
+    qualifyingUuids.size,
+    "qualifying calls..."
+  );
+
+  const tarResponse = await axios.get(tarUrl, {
+    responseType: "stream",
+    timeout: 180_000,
+    headers: auth ? { "x-pbx-authentication": auth } : {},
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const extractor = tarStream.extract();
+
+    extractor.on("entry", (header, stream, next) => {
+      const entryName = path.basename(header.name ?? "");
+
+      // Матчим UUID в конце имени файла: ..._{uuid}.mp3
+      const uuidMatch = entryName.match(
+        /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.mp3$/i
+      );
+
+      if (uuidMatch && qualifyingUuids.has(uuidMatch[1])) {
+        const uuid = uuidMatch[1];
+        const destPath = path.join(TEMP_DIR, `${uuid}.mp3`);
+        const writeStream = fs.createWriteStream(destPath);
+
+        stream.pipe(writeStream);
+
+        writeStream.on("finish", () => {
+          uuidToPath.set(uuid, destPath);
+          console.log("[PbxHistory] Extracted:", uuid);
+          next();
+        });
+
+        writeStream.on("error", (err) => {
+          console.error("[PbxHistory] Failed to write MP3:", uuid, err.message);
+          next();
+        });
+      } else {
+        // Пропускаем ненужные файлы
+        stream.resume();
+        stream.on("end", next);
+      }
+    });
+
+    extractor.on("finish", resolve);
+    extractor.on("error", reject);
+
+    tarResponse.data.pipe(extractor);
+  });
+
+  console.log(
+    "[PbxHistory] Extraction done:",
+    uuidToPath.size,
+    "/",
+    qualifyingUuids.size,
+    "files extracted"
+  );
+
+  return uuidToPath;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,11 +293,11 @@ const MIN_DURATION_SECONDS = 8 * 60; // 8 минут
 
 /**
  * Синхронизирует звонки за диапазон дат из OnlinePBX в очередь обработки.
- * Итерирует день за днём. Уважает идемпотентность (не дублирует уже обработанные).
- *
- * @param fromDate  Начало диапазона (inclusive)
- * @param toDate    Конец диапазона (inclusive)
- * @param jobId     ID записи HistorySyncJob в БД для обновления прогресса
+ * Для каждого дня:
+ *   1. Получает метаданные звонков
+ *   2. Фильтрует qualifying (длина ≥ 8 мин, внешние, не дубли)
+ *   3. Скачивает TAR-архив и извлекает нужные MP3 во временную папку
+ *   4. Ставит jobs в очередь с localFilePath
  */
 export async function syncHistoryRange(
   fromDate: Date,
@@ -215,7 +314,6 @@ export async function syncHistoryRange(
     errors: 0,
   };
 
-  // Итерация день за днём
   const cursor = new Date(fromDate);
   cursor.setHours(0, 0, 0, 0);
 
@@ -227,13 +325,18 @@ export async function syncHistoryRange(
     const dayEnd = new Date(cursor);
     dayEnd.setHours(23, 59, 59, 999);
 
+    const dayLabel = dayStart.toISOString().slice(0, 10);
+    console.log("[PbxHistory] Processing day:", dayLabel);
+
     try {
       const records = await fetchPbxHistory(dayStart, dayEnd, 500);
       stats.scanned += records.length;
 
+      // ---- Фаза 1: фильтрация qualifying звонков ----
+      const qualifying: Array<{ record: PbxHistoryRecord; normalized: OnlinePbxWebhookPayload }> = [];
+
       for (const record of records) {
         try {
-          // --- Фильтр 1: Длительность >= 8 минут ---
           const startStamp = record.start_stamp ?? 0;
           const endStamp = record.end_stamp ?? startStamp;
           const duration =
@@ -241,19 +344,20 @@ export async function syncHistoryRange(
               ? record.duration
               : Math.max(0, endStamp - startStamp);
 
+          // Фильтр: длительность ≥ 8 минут
           if (duration < MIN_DURATION_SECONDS) {
             stats.skippedShort++;
             continue;
           }
 
-          // --- Фильтр 2: Только внешние звонки (не внутренние) ---
+          // Фильтр: только внешние звонки
           const normalized = normalizeHistoryRecord(record);
           if (!normalized) {
             stats.skippedInternal++;
             continue;
           }
 
-          // --- Фильтр 3: Идемпотентность — пропускаем уже обработанные ---
+          // Фильтр: идемпотентность
           const existing = await prisma.call.findUnique({
             where: {
               externalId_source: {
@@ -268,31 +372,91 @@ export async function syncHistoryRange(
             continue;
           }
 
-          // --- Ставим в очередь обработки ---
+          qualifying.push({ record, normalized });
+        } catch (err: any) {
+          console.error("[PbxHistory] Error filtering record:", record.uuid, err.message);
+          stats.errors++;
+        }
+      }
+
+      console.log(
+        `[PbxHistory] Day ${dayLabel}: ${qualifying.length} qualifying calls (of ${records.length} scanned)`
+      );
+
+      if (qualifying.length === 0) {
+        // Пропускаем TAR-скачивание если нет qualifying звонков
+        cursor.setDate(cursor.getDate() + 1);
+        await new Promise((r) => setTimeout(r, 300));
+        continue;
+      }
+
+      // ---- Фаза 2: скачивание TAR и извлечение MP3 ----
+      const qualifyingUuids = new Set(qualifying.map((q) => q.record.uuid));
+      let uuidToPath = new Map<string, string>();
+
+      const tarUrl = await fetchDayTarUrl(dayStart, dayEnd);
+
+      if (tarUrl) {
+        try {
+          uuidToPath = await extractQualifyingMp3s(tarUrl, qualifyingUuids);
+        } catch (err: any) {
+          console.error(
+            "[PbxHistory] Failed to extract TAR for day",
+            dayLabel,
+            ":",
+            err.message
+          );
+          // Продолжаем без аудио — transcription будет пропущена
+        }
+      } else {
+        console.warn(
+          "[PbxHistory] No TAR URL for day",
+          dayLabel,
+          "— calls will be queued without audio"
+        );
+      }
+
+      // ---- Фаза 3: постановка jobs в очередь ----
+      for (const { record, normalized } of qualifying) {
+        try {
+          const localFilePath = uuidToPath.get(record.uuid);
+
           await callProcessingQueue.add(
-            `history:${record.uuid}`,
+            `history_${record.uuid}`,
             {
               callExternalId: record.uuid,
               source: "onlinepbx" as const,
               payload: normalized,
               receivedAt: new Date().toISOString(),
               manualTriggered: false,
+              localFilePath,
             },
             {
-              jobId: `history:${record.uuid}`,
+              jobId: `history_${record.uuid}`,
               attempts: 3,
               backoff: { type: "exponential", delay: 5000 },
             }
           );
 
           stats.queued++;
+
+          if (localFilePath) {
+            console.log("[PbxHistory] Queued (with audio):", record.uuid);
+          } else {
+            console.log("[PbxHistory] Queued (no audio):", record.uuid);
+          }
         } catch (err: any) {
-          console.error("[PbxHistory] Error processing record:", record.uuid, err.message);
+          console.error("[PbxHistory] Error queuing record:", record.uuid, err.message);
           stats.errors++;
         }
       }
+    } catch (err: any) {
+      console.error("[PbxHistory] Failed to process day:", dayLabel, err.message);
+      stats.errors++;
+    }
 
-      // Обновляем прогресс в БД
+    // Обновляем прогресс в БД
+    try {
       await prisma.historySyncJob.update({
         where: { id: jobId },
         data: {
@@ -303,19 +467,15 @@ export async function syncHistoryRange(
           status: "in_progress",
         },
       });
-    } catch (err: any) {
-      console.error("[PbxHistory] Failed to fetch day:", dayStart.toISOString(), err.message);
-      stats.errors++;
+    } catch (dbErr: any) {
+      console.error("[PbxHistory] DB update error:", dbErr.message);
     }
 
-    // Следующий день
     cursor.setDate(cursor.getDate() + 1);
-
-    // Небольшая пауза между запросами к API (rate-limit OnlinePBX: 5 req/sec)
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 500)); // rate-limit: ~2 req/sec
   }
 
-  // Финальное обновление статуса
+  // Финальный статус
   await prisma.historySyncJob.update({
     where: { id: jobId },
     data: {

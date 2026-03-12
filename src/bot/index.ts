@@ -12,7 +12,7 @@ import { syncHistoryRange } from "../services/pbxHistory";
 import { callProcessingQueue } from "../queues/callProcessing";
 
 // ---------------------------------------------------------------------------
-// Инициализация бота
+// Bot initialization
 // ---------------------------------------------------------------------------
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -22,50 +22,40 @@ export const bot = new TelegramBot(token, { polling: true });
 console.log("[Bot] Telegram bot started (polling)");
 
 // ---------------------------------------------------------------------------
-// Дедупликация через Redis: гарантирует что только ОДИН инстанс бота
-// обработает каждое сообщение, даже если ts-node-dev запустил несколько инстансов
+// Redis deduplication
 // ---------------------------------------------------------------------------
 
-/**
- * Атомарно резервирует апдейт через Redis SET NX.
- * Возвращает true если ЭТОт инстанс должен обрабатывать сообщение,
- * false если уже обрабатывается другим инстансом.
- */
 async function claimUpdate(chatId: number, messageId: number): Promise<boolean> {
   try {
     const key = `bot:dedup:${chatId}:${messageId}`;
     const result = await redisConnection.set(key, "1", "EX", 120, "NX");
     return result === "OK";
   } catch {
-    // Если Redis недоступен — пропускаем дедупликацию (лучше дубль чем пропуск)
     return true;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Состояния пользователей (in-memory, сбрасываются при рестарте)
+// User state (in-memory)
 // ---------------------------------------------------------------------------
 
-// Ждут ввода кода активации после /start
 const awaitingCode = new Set<number>();
 
-// Режим выбора произвольного периода: { step, from }
 interface PeriodState {
   step: "from" | "to";
   from?: Date;
 }
 const periodState = new Map<number, PeriodState>();
 
-// AI-коуч сессии: история диалога + флаг активности
 interface AiSession {
   active: boolean;
   history: GeminiMessage[];
-  systemContext: string; // контекст со звонками, загружается при /ask
+  systemContext: string;
 }
 const aiSessions = new Map<number, AiSession>();
 
 // ---------------------------------------------------------------------------
-// Вспомогательные функции
+// Helpers
 // ---------------------------------------------------------------------------
 
 async function getManager(telegramUserId: string) {
@@ -88,14 +78,14 @@ async function requireManager(msg: TelegramBot.Message) {
   if (!manager) {
     await bot.sendMessage(
       msg.chat.id,
-      "❌ Вы не авторизованы.\nВведите /start и ваш 6-значный код."
+      "❌ Siz avtorizatsiya qilinmagansiz.\n/start kiriting va 6 xonali kodingizni yuboring."
     );
     return null;
   }
   if (!manager.isActive) {
     await bot.sendMessage(
       msg.chat.id,
-      "❌ Ваш аккаунт деактивирован. Обратитесь к администратору."
+      "❌ Hisobingiz deaktivlashtirilgan. Administratorga murojaat qiling."
     );
     return null;
   }
@@ -104,28 +94,26 @@ async function requireManager(msg: TelegramBot.Message) {
 
 async function requireAdmin(msg: TelegramBot.Message): Promise<boolean> {
   const ok = await isAdmin(String(msg.from!.id));
-  if (!ok) await bot.sendMessage(msg.chat.id, "❌ У вас нет прав администратора.");
+  if (!ok) await bot.sendMessage(msg.chat.id, "❌ Sizda administrator huquqlari yo'q.");
   return ok;
 }
 
 function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  return h > 0 ? `${h}ч ${m}м` : `${m}м`;
+  return h > 0 ? `${h}s ${m}d` : `${m}d`;
 }
 
-/** Парсит дату в форматах DD.MM.YYYY или YYYY-MM-DD */
+/** Parses date in DD.MM.YYYY or YYYY-MM-DD format */
 function parseDate(str: string): Date | null {
   str = str.trim();
   let d: Date | null = null;
 
-  // DD.MM.YYYY
   const dmyMatch = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
   if (dmyMatch) {
     d = new Date(`${dmyMatch[3]}-${dmyMatch[2].padStart(2, "0")}-${dmyMatch[1].padStart(2, "0")}`);
   }
 
-  // YYYY-MM-DD
   const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (isoMatch) {
     d = new Date(str);
@@ -134,8 +122,17 @@ function parseDate(str: string): Date | null {
   return d && !isNaN(d.getTime()) ? d : null;
 }
 
+const UZ_MONTHS = [
+  "yanvar","fevral","mart","aprel","may","iyun",
+  "iyul","avgust","sentabr","oktabr","noyabr","dekabr",
+];
+const UZ_MONTHS_CAP = [
+  "Yanvar","Fevral","Mart","Aprel","May","Iyun",
+  "Iyul","Avgust","Sentabr","Oktabr","Noyabr","Dekabr",
+];
+
 // ---------------------------------------------------------------------------
-// Построение отчёта по диапазону дат
+// Build report for date range
 // ---------------------------------------------------------------------------
 
 async function buildReport(
@@ -160,7 +157,7 @@ async function buildReport(
   });
 
   if (!calls.length) {
-    return `📊 Отчёт за ${label}\n\nАнализов звонков не найдено за этот период.`;
+    return `📊 ${label} uchun hisobot\n\nBu davr uchun tahlil qilingan qo'ng'iroqlar topilmadi.`;
   }
 
   const scores = calls
@@ -168,7 +165,7 @@ async function buildReport(
     .filter((s): s is number => s !== null && s !== undefined);
   const avgScore = scores.length
     ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)
-    : "н/д";
+    : "ma'lumot yo'q";
   const totalTalk = calls.reduce((a, c) => a + c.durationSeconds, 0);
 
   const weakMap: Record<string, number> = {};
@@ -193,13 +190,13 @@ async function buildReport(
     .join("\n");
 
   return [
-    `📊 Отчёт за ${label}`,
+    `📊 ${label} uchun hisobot`,
     ``,
-    `📞 Проанализировано звонков: ${calls.length}`,
-    `⏱ Суммарное время: ${formatDuration(totalTalk)}`,
-    `⭐ Средняя оценка: ${avgScore}/10`,
-    topStrong ? `\n💪 Сильные стороны:\n${topStrong}` : "",
-    topWeak ? `\n⚠️ Зоны роста:\n${topWeak}` : "",
+    `📞 Tahlil qilingan qo'ng'iroqlar: ${calls.length}`,
+    `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
+    `⭐ O'rtacha ball: ${avgScore}/10`,
+    topStrong ? `\n💪 Kuchli tomonlar:\n${topStrong}` : "",
+    topWeak ? `\n⚠️ O'sish sohalari:\n${topWeak}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -214,43 +211,45 @@ function presetRange(preset: "day" | "week" | "month"): { from: Date; to: Date; 
   if (preset === "week") from.setDate(from.getDate() - 6);
   else if (preset === "month") from.setDate(1);
 
-  const dayStr = now.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+  const dayStr = `${now.getDate()}-${UZ_MONTHS[now.getMonth()]}`;
   const label =
     preset === "day"
-      ? `сегодня, ${dayStr}`
+      ? `bugun, ${dayStr}`
       : preset === "week"
-      ? "последние 7 дней"
-      : `${now.toLocaleDateString("ru-RU", { month: "long", year: "numeric" })}`;
+      ? "so'nggi 7 kun"
+      : `${UZ_MONTHS_CAP[now.getMonth()]} ${now.getFullYear()}`;
 
   return { from, to, label };
 }
 
 // ---------------------------------------------------------------------------
-// Построение system prompt для AI-коуча (роль + данные звонков)
+// AI-coach system prompt
 // ---------------------------------------------------------------------------
 
 type AiPeriod = "day" | "week" | "month" | "30days";
 
-/**
- * Парсит ключевое слово периода из аргумента команды /ask.
- * Возвращает период и остаток строки (вопрос, если есть).
- */
 function parseAskArg(arg: string): { period: AiPeriod; question: string } {
   const trimmed = arg.trim();
   const lower = trimmed.toLowerCase();
 
+  // Uzbek keywords
+  if (lower === "kun" || lower === "bugun") return { period: "day", question: "" };
+  if (lower === "hafta" || lower === "7 kun") return { period: "week", question: "" };
+  if (lower === "oy" || lower === "30 kun") return { period: "month", question: "" };
+
+  // Russian keywords (backward compat)
   if (lower === "день" || lower === "сегодня") return { period: "day", question: "" };
   if (lower === "неделя" || lower === "7 дней") return { period: "week", question: "" };
   if (lower === "месяц" || lower === "30 дней") return { period: "month", question: "" };
 
-  // Проверяем если слово в начале: "/ask день как дела?" → period=day, question="как дела?"
-  const prefixMatch = trimmed.match(/^(день|сегодня|неделя|месяц)\s+(.+)$/i);
+  // Prefix: "/ask kun savol?" → period=day, question="savol?"
+  const prefixMatch = trimmed.match(/^(kun|bugun|hafta|oy|день|сегодня|неделя|месяц)\s+(.+)$/i);
   if (prefixMatch) {
     const kw = prefixMatch[1].toLowerCase();
     const q = prefixMatch[2].trim();
-    if (kw === "день" || kw === "сегодня") return { period: "day", question: q };
-    if (kw === "неделя") return { period: "week", question: q };
-    if (kw === "месяц") return { period: "month", question: q };
+    if (kw === "kun" || kw === "bugun" || kw === "день" || kw === "сегодня") return { period: "day", question: q };
+    if (kw === "hafta" || kw === "неделя") return { period: "week", question: q };
+    if (kw === "oy" || kw === "месяц") return { period: "month", question: q };
   }
 
   return { period: "30days", question: trimmed };
@@ -258,10 +257,10 @@ function parseAskArg(arg: string): { period: AiPeriod; question: string } {
 
 function periodLabel(period: AiPeriod): string {
   switch (period) {
-    case "day":    return "сегодня";
-    case "week":   return "последние 7 дней";
-    case "month":  return "текущий месяц";
-    default:       return "последние 30 дней";
+    case "day":    return "bugun";
+    case "week":   return "so'nggi 7 kun";
+    case "month":  return "joriy oy";
+    default:       return "so'nggi 30 kun";
   }
 }
 
@@ -278,7 +277,6 @@ function periodDateRange(period: AiPeriod): { from: Date; to: Date } {
   } else if (period === "30days") {
     from.setDate(from.getDate() - 29);
   }
-  // day — from = начало сегодня (уже установлено)
 
   return { from, to };
 }
@@ -303,51 +301,52 @@ async function buildAiSystemPrompt(
     .filter((s): s is number => s !== null && s !== undefined);
   const avg = scores.length
     ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)
-    : "нет данных";
+    : "ma'lumot yo'q";
 
   const callLines = calls.length
     ? calls
         .map((c) => {
           const date = c.startedAt.toLocaleDateString("ru-RU");
-          const score = c.analysis?.overallScore ?? "н/д";
+          const score = c.analysis?.overallScore ?? "—";
           const summary = c.analysis?.summary ?? "";
           const strengths = ((c.analysis?.strengths as string[] | null) ?? []).join(", ");
           const weak = ((c.analysis?.weaknesses as string[] | null) ?? []).join(", ");
           const recs = ((c.analysis?.recommendations as string[] | null) ?? []).join(", ");
           return (
-            `  • ${date} | оценка ${score}/10${summary ? ` | ${summary}` : ""}` +
-            (strengths ? `\n    Сильные стороны: ${strengths}` : "") +
-            (weak ? `\n    Ошибки: ${weak}` : "") +
-            (recs ? `\n    Рекомендации: ${recs}` : "")
+            `  • ${date} | ball ${score}/10${summary ? ` | ${summary}` : ""}` +
+            (strengths ? `\n    Kuchli tomonlar: ${strengths}` : "") +
+            (weak ? `\n    Xatolar: ${weak}` : "") +
+            (recs ? `\n    Tavsiyalar: ${recs}` : "")
           );
         })
         .join("\n")
-    : `  Звонков с анализом за ${label} не найдено.`;
+    : `  ${label} uchun tahlil qilingan qo'ng'iroqlar topilmadi.`;
 
-  return `Ты — опытный AI-тренер по продажам. Твоя задача — помогать менеджеру ${managerName} профессионально расти.
+  return `Sen — tajribali AI sotish murabbiysisan. Sening vazifang — ${managerName} menejerni professional o'sishiga yordam berishdir.
 
-ТВОЯ РОЛЬ И СТИЛЬ:
-- Ты говоришь как наставник: поддерживаешь, но честен и конкретен
-- Даёшь практичные советы с конкретными примерами фраз и техник
-- Основываешься ТОЛЬКО на реальных данных звонков менеджера — не придумывай факты
-- Ответы короткие и по делу (3–6 предложений), без воды
-- Говоришь на "ты", тепло но профессионально
-- Если данных недостаточно — честно говоришь об этом
-- ВАЖНО: никогда не используй приветствия ("Привет", "Здравствуй", "Добрый день" и т.п.) в ответах — ты уже в диалоге, приветствие было только один раз при входе
+ROLING VA USLUBINGIZ:
+- Nastavnik sifatida gapir: qo'llab-quvvatlaysan, lekin halol va aniq bo'l
+- Aniq misollar va texnikalar bilan amaliy maslahatlar ber
+- FAQAT menejerni haqiqiy qo'ng'iroq ma'lumotlariga asoslan — faktlarni to'qima
+- Javoblar qisqa va mazmuнli (3–6 gap), bo'sh gaplarsiz
+- Menejerga "sen" deb murojaat qil, iliq lekin professional tarzda
+- Ma'lumot yetarli bo'lmasa — buni ochiq ayt
+- MUHIM: salomlashuvlarni hech qachon ishlatma ("Salom", "Assalomu alaykum" va h.k.) — sen allaqachon suhbatdasan, salomlashish faqat bir marta bo'ldi
+- MUHIM: har doim O'ZBEK TILIDA (lotin alifbosi) javob ber
 
-ДАННЫЕ МЕНЕДЖЕРА ЗА ПЕРИОД: ${label.toUpperCase()}
-Имя: ${managerName}
-Звонков с анализом: ${calls.length}
-Средняя оценка: ${avg}/10
+MENEJERNI MA'LUMOTLARI: ${label.toUpperCase()}
+Ism: ${managerName}
+Tahlil qilingan qo'ng'iroqlar: ${calls.length}
+O'rtacha ball: ${avg}/10
 
-Детализация по звонкам:
+Qo'ng'iroqlar bo'yicha batafsil:
 ${callLines}
 
-Используй эти данные как основу для всех своих ответов и рекомендаций.`;
+Barcha javob va tavsiyalaring uchun shu ma'lumotlardan foydalан.`;
 }
 
 // ---------------------------------------------------------------------------
-// /start — приветствие и авторизация
+// /start — greeting and authentication
 // ---------------------------------------------------------------------------
 
 bot.onText(/\/start$/, async (msg) => {
@@ -358,19 +357,19 @@ bot.onText(/\/start$/, async (msg) => {
   if (manager) {
     await bot.sendMessage(
       msg.chat.id,
-      `👋 Привет, *${manager.name}*!\n\n` +
-        `📊 *Отчёты:*\n` +
-        `/report — сегодня\n` +
-        `/week — неделя\n` +
-        `/month — месяц\n` +
-        `/period — произвольный период\n\n` +
-        `🤖 *AI-коуч:*\n` +
-        `/ask — за последние 30 дней\n` +
-        `/ask день — только сегодня\n` +
-        `/ask неделя — за 7 дней\n` +
-        `/ask месяц — за текущий месяц\n\n` +
-        `📋 *Другое:*\n` +
-        `/errors — мои частые ошибки`,
+      `👋 Salom, *${manager.name}*!\n\n` +
+        `📊 *Hisobotlar:*\n` +
+        `/report — bugun\n` +
+        `/week — hafta\n` +
+        `/month — oy\n` +
+        `/period — ixtiyoriy davr\n\n` +
+        `🤖 *AI-murabbiy:*\n` +
+        `/ask — so'nggi 30 kun\n` +
+        `/ask kun — faqat bugun\n` +
+        `/ask hafta — 7 kun\n` +
+        `/ask oy — joriy oy\n\n` +
+        `📋 *Boshqa:*\n` +
+        `/errors — mening tez-tez xatolarim`,
       { parse_mode: "Markdown" }
     );
     return;
@@ -379,31 +378,104 @@ bot.onText(/\/start$/, async (msg) => {
   awaitingCode.add(msg.from!.id);
   await bot.sendMessage(
     msg.chat.id,
-    `👋 Привет!\n\nЧтобы начать, введи свой *6-значный код*.\nЕго можно найти в таблице менеджеров (спроси у руководителя).`,
+    `👋 Salom!\n\nBoshlash uchun *6 xonali kodni* kiriting.\nUni menejerlar jadvalidan topishingiz mumkin (rahbaringizdan so'rang).`,
     { parse_mode: "Markdown" }
   );
 });
 
 // ---------------------------------------------------------------------------
-// Единый обработчик текстовых сообщений (не-команды)
-// Обрабатывает: активационный код, ввод дат для /period, диалог с AI-коучем
+// /help — command reference
+// ---------------------------------------------------------------------------
+
+bot.onText(/\/help$/, async (msg) => {
+  if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  const tgId = String(msg.from!.id);
+  const admin = await isAdmin(tgId);
+  const manager = await getManager(tgId);
+
+  if (admin) {
+    await bot.sendMessage(
+      msg.chat.id,
+      `🔑 *Administrator buyruqlari*\n\n` +
+
+        `*Menejerlar:*\n` +
+        `/managers — barcha menejerlar ro'yxati\n` +
+        `/sync\\_managers — OnlinePBX dan sinxronlash va Google Sheet yangilash\n` +
+        `/reset\\_code <amo\\_id> — menejер uchun yangi kod yaratish\n\n` +
+
+        `*Administratorlar:*\n` +
+        `/admins — barcha administratorlarni ko'rish\n` +
+        `/add\\_admin <telegram\\_id> — foydalanuvchini administrator qilish\n` +
+        `/remove\\_admin <telegram\\_id> — administrator huquqlarini olish\n\n` +
+
+        `*Qo'ng'iroqlar tahlili:*\n` +
+        `/analyze\\_deal <deal\\_id> — bitim bo'yicha so'nggi qo'ng'iroqni tahlil qilish\n` +
+        `/sync\\_history — qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)\n` +
+        `/sync\\_history KK.OO.YYYY KK.OO.YYYY — ma'lum davr uchun\n\n` +
+
+        `*Hisobotlar (siz uchun ham ishlaydi):*\n` +
+        `/report — bugungi hisobot\n` +
+        `/week — so'nggi 7 kun\n` +
+        `/month — joriy oy\n` +
+        `/period — ixtiyoriy sana diapazoni\n` +
+        `/errors — 30 kunlik xatolar\n` +
+        `/ask [kun|hafta|oy] — AI-murabbiy\n` +
+        `/stop\\_ai — AI-murabbiy rejimidan chiqish`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+
+  if (manager) {
+    await bot.sendMessage(
+      msg.chat.id,
+      `📋 *Mavjud buyruqlar*\n\n` +
+
+        `*Hisobotlar:*\n` +
+        `/report — bugungi hisobot\n` +
+        `/week — so'nggi 7 kun\n` +
+        `/month — joriy oy\n` +
+        `/period — ixtiyoriy sana diapazoni\n\n` +
+
+        `*Xatolar tahlili:*\n` +
+        `/errors — so'nggi 30 kunlik eng ko'p xatolar\n\n` +
+
+        `*AI-murabbiy:*\n` +
+        `/ask — dialog rejimiga kirish (30 kun ma'lumotlari)\n` +
+        `/ask kun — faqat bugungi ma'lumotlar\n` +
+        `/ask hafta — 7 kunlik ma'lumotlar\n` +
+        `/ask oy — joriy oy ma'lumotlari\n` +
+        `/ask <savol> — savolni darhol berish\n` +
+        `/stop\\_ai — AI-murabbiy rejimidan chiqish`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+
+  await bot.sendMessage(
+    msg.chat.id,
+    `ℹ️ Botga kirish uchun /start kiriting va ko'rsatmalarni bajaring.`
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Text message handler: activation code, /period dates, AI-coach dialog
 // ---------------------------------------------------------------------------
 
 bot.on("message", async (msg) => {
   if (!msg.text || !msg.from) return;
-  if (msg.text.startsWith("/")) return; // команды обрабатываются отдельными onText
+  if (msg.text.startsWith("/")) return;
 
-  // Дедупликация: пропускаем если другой инстанс уже обрабатывает это сообщение
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
 
   const userId = msg.from.id;
   const tgId = String(userId);
 
-  // ── Состояние 1: Ввод кода активации ────────────────────────────────────
+  // ── State 1: Activation code entry ───────────────────────────────────────
   if (awaitingCode.has(userId)) {
     const text = msg.text.trim();
     if (!/^\d{6}$/.test(text)) {
-      await bot.sendMessage(msg.chat.id, "Код должен быть 6-значным числом. Попробуй ещё раз.");
+      await bot.sendMessage(msg.chat.id, "Kod 6 raqamdan iborat bo'lishi kerak. Qayta urinib ko'ring.");
       return;
     }
 
@@ -415,29 +487,26 @@ bot.on("message", async (msg) => {
     if (!link || link.status !== "issued") {
       await bot.sendMessage(
         msg.chat.id,
-        "❌ Код неверный или уже использован. Обратись к администратору для сброса."
+        "❌ Kod noto'g'ri yoki allaqachon ishlatilgan. Yangi kod olish uchun administratorga murojaat qiling."
       );
       return;
     }
 
     if (!link.manager.isActive) {
-      await bot.sendMessage(msg.chat.id, "❌ Этот аккаунт деактивирован.");
+      await bot.sendMessage(msg.chat.id, "❌ Bu hisob deaktivlashtirilgan.");
       awaitingCode.delete(userId);
       return;
     }
 
-    // Проверяем: нет ли уже активной (used) привязки этого Telegram к другому менеджеру
     const existing = await prisma.telegramLink.findFirst({
       where: { telegramUserId: tgId, status: "used" },
     });
     if (existing && existing.managerId !== link.managerId) {
-      await bot.sendMessage(msg.chat.id, "⚠️ Этот Telegram уже привязан к другому менеджеру.");
+      await bot.sendMessage(msg.chat.id, "⚠️ Bu Telegram allaqachon boshqa menejerg bog'langan.");
       awaitingCode.delete(userId);
       return;
     }
 
-    // Очищаем telegramUserId из старых записей этого пользователя (expired/issued),
-    // иначе @unique constraint упадёт при записи нового
     await prisma.telegramLink.updateMany({
       where: { telegramUserId: tgId, id: { not: link.id } },
       data: { telegramUserId: null },
@@ -455,13 +524,13 @@ bot.on("message", async (msg) => {
 
     await bot.sendMessage(
       msg.chat.id,
-      `✅ Готово! Ты вошёл как *${link.manager.name}*.\n\nНапиши /start чтобы увидеть доступные команды.`,
+      `✅ Tayyor! Siz *${link.manager.name}* sifatida kirdingiz.\n\nMavjud buyruqlarni ko'rish uchun /start kiriting.`,
       { parse_mode: "Markdown" }
     );
     return;
   }
 
-  // ── Состояние 2: Ввод дат для /period ────────────────────────────────────
+  // ── State 2: /period date input ───────────────────────────────────────────
   if (periodState.has(userId)) {
     const state = periodState.get(userId)!;
     const date = parseDate(msg.text.trim());
@@ -469,7 +538,7 @@ bot.on("message", async (msg) => {
     if (!date) {
       await bot.sendMessage(
         msg.chat.id,
-        "❌ Не могу распознать дату. Введи в формате *ДД.ММ.ГГГГ*, например: `10.03.2026`",
+        "❌ Sanani aniqlab bo'lmadi. *KK.OO.YYYY* formatida kiriting, masalan: `10.03.2026`",
         { parse_mode: "Markdown" }
       );
       return;
@@ -477,52 +546,51 @@ bot.on("message", async (msg) => {
 
     if (state.step === "from") {
       periodState.set(userId, { step: "to", from: date });
+      const d = date;
+      const dateStr = `${d.getDate().toString().padStart(2,"0")}.${(d.getMonth()+1).toString().padStart(2,"0")}.${d.getFullYear()}`;
       await bot.sendMessage(
         msg.chat.id,
-        `✅ Начало: *${date.toLocaleDateString("ru-RU")}*\n\nТеперь введи *конечную дату*:`,
+        `✅ Boshi: *${dateStr}*\n\nEndi *oxirgi sana* kiriting:`,
         { parse_mode: "Markdown" }
       );
       return;
     }
 
-    // step === "to"
     const from = state.from!;
     const to = date;
     periodState.delete(userId);
 
     if (to < from) {
-      await bot.sendMessage(msg.chat.id, "❌ Конечная дата не может быть раньше начальной.");
+      await bot.sendMessage(msg.chat.id, "❌ Oxirgi sana boshidan oldin bo'la olmaydi.");
       return;
     }
 
     const manager = await getManager(tgId);
     if (!manager) {
-      await bot.sendMessage(msg.chat.id, "❌ Вы не авторизованы.");
+      await bot.sendMessage(msg.chat.id, "❌ Siz avtorizatsiya qilinmagansiz.");
       return;
     }
 
-    await bot.sendMessage(msg.chat.id, "⏳ Формирую отчёт...");
-    const label = `${from.toLocaleDateString("ru-RU")} — ${to.toLocaleDateString("ru-RU")}`;
+    await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
+    const fmt = (d: Date) => `${d.getDate().toString().padStart(2,"0")}.${(d.getMonth()+1).toString().padStart(2,"0")}.${d.getFullYear()}`;
+    const label = `${fmt(from)} — ${fmt(to)}`;
     const text = await buildReport(manager.id, from, to, label);
     await bot.sendMessage(msg.chat.id, text);
     return;
   }
 
-  // ── Состояние 3: Диалог с AI-коучем ──────────────────────────────────────
+  // ── State 3: AI-coach dialog ──────────────────────────────────────────────
   const session = aiSessions.get(userId);
   if (session?.active) {
     const question = msg.text.trim();
     await bot.sendChatAction(msg.chat.id, "typing");
 
-    // Добавляем вопрос пользователя в историю
     session.history.push({ role: "user", parts: [{ text: question }] });
 
     const answer = await askGeminiWithHistory(session.history, session.systemContext);
 
-    // Сохраняем ответ модели в историю
     session.history.push({ role: "model", parts: [{ text: answer }] });
 
-    // Ограничиваем историю: максимум 20 пар (40 сообщений) чтобы не превысить лимит токенов
     if (session.history.length > 40) {
       session.history = session.history.slice(-40);
     }
@@ -533,14 +601,14 @@ bot.on("message", async (msg) => {
 });
 
 // ---------------------------------------------------------------------------
-// /report, /week, /month — отчёты за пресет-периоды
+// /report, /week, /month — preset period reports
 // ---------------------------------------------------------------------------
 
 bot.onText(/\/report$/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
   const manager = await requireManager(msg);
   if (!manager) return;
-  await bot.sendMessage(msg.chat.id, "⏳ Формирую отчёт...");
+  await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
   const { from, to, label } = presetRange("day");
   await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
 });
@@ -549,7 +617,7 @@ bot.onText(/\/week$/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
   const manager = await requireManager(msg);
   if (!manager) return;
-  await bot.sendMessage(msg.chat.id, "⏳ Формирую отчёт...");
+  await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
   const { from, to, label } = presetRange("week");
   await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
 });
@@ -558,13 +626,13 @@ bot.onText(/\/month$/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
   const manager = await requireManager(msg);
   if (!manager) return;
-  await bot.sendMessage(msg.chat.id, "⏳ Формирую отчёт...");
+  await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
   const { from, to, label } = presetRange("month");
   await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
 });
 
 // ---------------------------------------------------------------------------
-// /period — произвольный диапазон дат
+// /period — custom date range
 // ---------------------------------------------------------------------------
 
 bot.onText(/\/period$/, async (msg) => {
@@ -575,13 +643,13 @@ bot.onText(/\/period$/, async (msg) => {
   periodState.set(msg.from!.id, { step: "from" });
   await bot.sendMessage(
     msg.chat.id,
-    `📅 Введи *начальную дату* периода в формате ДД.ММ.ГГГГ:\n\nНапример: \`01.03.2026\``,
+    `📅 Davr *boshlanish sanasini* KK.OO.YYYY formatida kiriting:\n\nMasalan: \`01.03.2026\``,
     { parse_mode: "Markdown" }
   );
 });
 
 // ---------------------------------------------------------------------------
-// /errors — топ ошибок за 30 дней
+// /errors — top mistakes for 30 days
 // ---------------------------------------------------------------------------
 
 bot.onText(/\/errors$/, async (msg) => {
@@ -603,7 +671,7 @@ bot.onText(/\/errors$/, async (msg) => {
       weakMap[w] = (weakMap[w] ?? 0) + 1;
 
   if (!Object.keys(weakMap).length) {
-    await bot.sendMessage(msg.chat.id, "✅ За последние 30 дней ошибок не найдено!");
+    await bot.sendMessage(msg.chat.id, "✅ So'nggi 30 kunda xatolar topilmadi!");
     return;
   }
 
@@ -615,12 +683,12 @@ bot.onText(/\/errors$/, async (msg) => {
 
   await bot.sendMessage(
     msg.chat.id,
-    `⚠️ Частые ошибки за 30 дней (${calls.length} звонков):\n\n${sorted}`
+    `⚠️ 30 kunlik eng ko'p xatolar (${calls.length} qo'ng'iroq):\n\n${sorted}`
   );
 });
 
 // ---------------------------------------------------------------------------
-// /ask — вход в режим диалога с AI-коучем
+// /ask — AI-coach dialog mode
 // ---------------------------------------------------------------------------
 
 bot.onText(/\/ask(.*)/, async (msg, match) => {
@@ -633,23 +701,21 @@ bot.onText(/\/ask(.*)/, async (msg, match) => {
   const { period, question: inlineQuestion } = parseAskArg(rawArg);
   const label = periodLabel(period);
 
-  // Загружаем system prompt с данными за выбранный период
   await bot.sendMessage(
     msg.chat.id,
-    `⏳ Загружаю данные за ${label}...`
+    `⏳ ${label} uchun ma'lumotlar yuklanmoqda...`
   );
   const systemContext = await buildAiSystemPrompt(manager.id, manager.name, period);
 
   const history: GeminiMessage[] = [];
 
   const activationText =
-    `🤖 *AI-коуч активен!*\n\n` +
-    `📅 Период анализа: *${label}*\n` +
-    `Задавай вопросы — я помню весь наш разговор.\n\n` +
-    `Сменить период: /ask день · /ask неделя · /ask месяц\n` +
-    `Выход: /stop\\_ai`;
+    `🤖 *AI-murabbiy faol!*\n\n` +
+    `📅 Tahlil davri: *${label}*\n` +
+    `Savollaringizni bering — men butun suhbatni eslayman.\n\n` +
+    `Davrni o'zgartirish: /ask kun · /ask hafta · /ask oy\n` +
+    `Chiqish: /stop\\_ai`;
 
-  // Если вопрос передан сразу с командой — задаём его немедленно
   if (inlineQuestion) {
     history.push({ role: "user", parts: [{ text: inlineQuestion }] });
     const answer = await askGeminiWithHistory(history, systemContext);
@@ -659,18 +725,17 @@ bot.onText(/\/ask(.*)/, async (msg, match) => {
 
     await bot.sendMessage(
       msg.chat.id,
-      `🤖 *AI-коуч активен* (период: *${label}*).\nДля выхода: /stop\\_ai\n\n${answer}`,
+      `🤖 *AI-murabbiy faol* (davr: *${label}*).\nChiqish uchun: /stop\\_ai\n\n${answer}`,
       { parse_mode: "Markdown" }
     );
   } else {
     aiSessions.set(userId, { active: true, history, systemContext });
-
     await bot.sendMessage(msg.chat.id, activationText, { parse_mode: "Markdown" });
   }
 });
 
 // ---------------------------------------------------------------------------
-// /stop_ai — выход из режима AI-коуча
+// /stop_ai — exit AI-coach mode
 // ---------------------------------------------------------------------------
 
 bot.onText(/\/stop_ai$/, async (msg) => {
@@ -679,7 +744,7 @@ bot.onText(/\/stop_ai$/, async (msg) => {
   const session = aiSessions.get(userId);
 
   if (!session?.active) {
-    await bot.sendMessage(msg.chat.id, "ℹ️ AI-коуч и так не активен.");
+    await bot.sendMessage(msg.chat.id, "ℹ️ AI-murabbiy allaqachon aktiv emas.");
     return;
   }
 
@@ -688,7 +753,7 @@ bot.onText(/\/stop_ai$/, async (msg) => {
 
   await bot.sendMessage(
     msg.chat.id,
-    `✅ Диалог с AI-коучем завершён. Сообщений в сессии: ${msgCount}.\n\nДля нового сеанса введи /ask`
+    `✅ AI-murabbiy bilan suhbat yakunlandi. Sessiyada xabarlar: ${msgCount}.\n\nYangi seans uchun /ask kiriting.`
   );
 });
 
@@ -700,22 +765,22 @@ bot.onText(/\/sync_managers$/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
   if (!(await requireAdmin(msg))) return;
 
-  await bot.sendMessage(msg.chat.id, "⏳ Синхронизирую менеджеров из OnlinePBX...");
+  await bot.sendMessage(msg.chat.id, "⏳ OnlinePBX dan menejerlar sinxronlanmoqda...");
 
   try {
     const result = await syncManagersFromPbx();
     await bot.sendMessage(
       msg.chat.id,
-      `✅ Синхронизация завершена:\n` +
-        `• Создано: ${result.created}\n` +
-        `• Обновлено: ${result.updated}\n` +
-        `• Реактивировано: ${result.reactivated}\n` +
-        `• Деактивировано: ${result.deactivated}\n` +
-        `• Всего в PBX: ${result.total}\n\n` +
-        `Google Sheet обновлён ✓`
+      `✅ Sinxronizatsiya yakunlandi:\n` +
+        `• Yaratildi: ${result.created}\n` +
+        `• Yangilandi: ${result.updated}\n` +
+        `• Qayta faollashtirildi: ${result.reactivated}\n` +
+        `• Deaktivlashtirildi: ${result.deactivated}\n` +
+        `• PBX da jami: ${result.total}\n\n` +
+        `Google Sheet yangilandi ✓`
     );
   } catch (err: any) {
-    await bot.sendMessage(msg.chat.id, `❌ Ошибка синхронизации: ${err.message}`);
+    await bot.sendMessage(msg.chat.id, `❌ Sinxronizatsiya xatosi: ${err.message}`);
   }
 });
 
@@ -728,15 +793,15 @@ bot.onText(/\/admins$/, async (msg) => {
   if (!(await requireAdmin(msg))) return;
 
   const admins = await prisma.botAdmin.findMany({ orderBy: { createdAt: "asc" } });
-  const lines = [`👑 Суперадмин: ${process.env.ADMIN_TELEGRAM_ID}`];
+  const lines = [`👑 Superadmin: ${process.env.ADMIN_TELEGRAM_ID}`];
 
   if (admins.length) {
     lines.push(
-      `\n🔑 Дополнительные:`,
-      ...admins.map((a) => `• ${a.telegramUserId}${a.addedBy ? ` (добавил: ${a.addedBy})` : ""}`)
+      `\n🔑 Qo'shimcha:`,
+      ...admins.map((a) => `• ${a.telegramUserId}${a.addedBy ? ` (qo'shdi: ${a.addedBy})` : ""}`)
     );
   } else {
-    lines.push("\nДополнительных администраторов нет.");
+    lines.push("\nQo'shimcha administratorlar yo'q.");
   }
 
   await bot.sendMessage(msg.chat.id, lines.join("\n"));
@@ -752,7 +817,7 @@ bot.onText(/\/add_admin (\d+)/, async (msg, match) => {
 
   const newId = match![1];
   if (newId === process.env.ADMIN_TELEGRAM_ID) {
-    await bot.sendMessage(msg.chat.id, "ℹ️ Уже суперадмин.");
+    await bot.sendMessage(msg.chat.id, "ℹ️ Allaqachon superadmin.");
     return;
   }
 
@@ -761,7 +826,7 @@ bot.onText(/\/add_admin (\d+)/, async (msg, match) => {
     update: { addedBy: String(msg.from!.id) },
     create: { telegramUserId: newId, addedBy: String(msg.from!.id) },
   });
-  await bot.sendMessage(msg.chat.id, `✅ Пользователь ${newId} назначен администратором.`);
+  await bot.sendMessage(msg.chat.id, `✅ Foydalanuvchi ${newId} administrator qilindi.`);
 });
 
 // ---------------------------------------------------------------------------
@@ -774,14 +839,16 @@ bot.onText(/\/remove_admin (\d+)/, async (msg, match) => {
 
   const targetId = match![1];
   if (targetId === process.env.ADMIN_TELEGRAM_ID) {
-    await bot.sendMessage(msg.chat.id, "❌ Нельзя удалить суперадмина.");
+    await bot.sendMessage(msg.chat.id, "❌ Superadminni o'chirib bo'lmaydi.");
     return;
   }
 
   const deleted = await prisma.botAdmin.deleteMany({ where: { telegramUserId: targetId } });
   await bot.sendMessage(
     msg.chat.id,
-    deleted.count ? `✅ Администратор ${targetId} удалён.` : `ℹ️ Пользователь не является администратором.`
+    deleted.count
+      ? `✅ Administrator ${targetId} o'chirildi.`
+      : `ℹ️ Foydalanuvchi administrator emas.`
   );
 });
 
@@ -795,19 +862,19 @@ bot.onText(/\/reset_code (\d+)/, async (msg, match) => {
 
   const result = await resetManagerCode(parseInt(match![1]));
   if (!result) {
-    await bot.sendMessage(msg.chat.id, `❌ Менеджер с amoCRM ID ${match![1]} не найден.`);
+    await bot.sendMessage(msg.chat.id, `❌ amoCRM ID ${match![1]} bilan menejер topilmadi.`);
     return;
   }
 
   await bot.sendMessage(
     msg.chat.id,
-    `✅ Новый код для *${result.managerName}*:\n\n🔑 \`${result.code}\`\n\nСтарые привязки сброшены.`,
+    `✅ *${result.managerName}* uchun yangi kod:\n\n🔑 \`${result.code}\`\n\nEski bog'lanishlar o'chirildi.`,
     { parse_mode: "Markdown" }
   );
 });
 
 // ---------------------------------------------------------------------------
-// ADMIN: /managers — список менеджеров
+// ADMIN: /managers — manager list
 // ---------------------------------------------------------------------------
 
 bot.onText(/\/managers$/, async (msg) => {
@@ -825,7 +892,7 @@ bot.onText(/\/managers$/, async (msg) => {
   });
 
   if (!managers.length) {
-    await bot.sendMessage(msg.chat.id, "Менеджеров нет. Запустите /sync_managers");
+    await bot.sendMessage(msg.chat.id, "Menejerlar yo'q. /sync_managers ishga tushiring.");
     return;
   }
 
@@ -838,13 +905,12 @@ bot.onText(/\/managers$/, async (msg) => {
   });
 
   for (let i = 0; i < lines.length; i += 30) {
-    await bot.sendMessage(msg.chat.id, `👥 Менеджеры:\n\n${lines.slice(i, i + 30).join("\n")}`);
+    await bot.sendMessage(msg.chat.id, `👥 Menejerlar:\n\n${lines.slice(i, i + 30).join("\n")}`);
   }
 });
 
 // ---------------------------------------------------------------------------
 // ADMIN: /sync_history [from_date] [to_date]
-// Запуск исторической синхронизации звонков из OnlinePBX
 // ---------------------------------------------------------------------------
 
 bot.onText(/\/sync_history(.*)/, async (msg, match) => {
@@ -862,7 +928,7 @@ bot.onText(/\/sync_history(.*)/, async (msg, match) => {
     if (!f || !t) {
       await bot.sendMessage(
         msg.chat.id,
-        "❌ Неверный формат дат. Используй: /sync\\_history ДД.ММ.ГГГГ ДД.ММ.ГГГГ\nНапример: `/sync_history 01.03.2026 10.03.2026`",
+        "❌ Sana formati noto'g'ri. Foydalaning: /sync\\_history KK.OO.YYYY KK.OO.YYYY\nMasalan: `/sync_history 01.03.2026 10.03.2026`",
         { parse_mode: "Markdown" }
       );
       return;
@@ -872,59 +938,53 @@ bot.onText(/\/sync_history(.*)/, async (msg, match) => {
   } else if (args.length === 1) {
     const f = parseDate(args[0]);
     if (!f) {
-      await bot.sendMessage(msg.chat.id, "❌ Неверный формат даты.");
+      await bot.sendMessage(msg.chat.id, "❌ Sana formati noto'g'ri.");
       return;
     }
     fromDate = f;
-    toDate = new Date(); // до сегодня
+    toDate = new Date();
   } else {
-    // По умолчанию — последние 7 дней
     toDate = new Date();
     fromDate = new Date();
     fromDate.setDate(fromDate.getDate() - 7);
   }
 
   if (toDate < fromDate) {
-    await bot.sendMessage(msg.chat.id, "❌ Конечная дата не может быть раньше начальной.");
+    await bot.sendMessage(msg.chat.id, "❌ Oxirgi sana boshlang'ich sanadan oldin bo'la olmaydi.");
     return;
   }
 
-  const fromStr = fromDate.toLocaleDateString("ru-RU");
-  const toStr = toDate.toLocaleDateString("ru-RU");
+  const fmt = (d: Date) => `${d.getDate().toString().padStart(2,"0")}.${(d.getMonth()+1).toString().padStart(2,"0")}.${d.getFullYear()}`;
+  const fromStr = fmt(fromDate);
+  const toStr = fmt(toDate);
 
-  // Создаём запись задачи в БД
   let syncJob;
   try {
     syncJob = await prisma.historySyncJob.create({
-      data: {
-        fromDate,
-        toDate,
-        status: "in_progress",
-      },
+      data: { fromDate, toDate, status: "in_progress" },
     });
   } catch (err: any) {
-    await bot.sendMessage(msg.chat.id, `❌ Ошибка создания задачи: ${err.message}`);
+    await bot.sendMessage(msg.chat.id, `❌ Vazifa yaratishda xato: ${err.message}`);
     return;
   }
 
   await bot.sendMessage(
     msg.chat.id,
-    `⏳ Запускаю синхронизацию истории звонков...\n\n📅 Период: ${fromStr} — ${toStr}\n🆔 Job ID: ${syncJob.id}\n\nЭто может занять несколько минут. Я сообщу о результатах.`
+    `⏳ Qo'ng'iroqlar tarixini sinxronlash boshlandi...\n\n📅 Davr: ${fromStr} — ${toStr}\n🆔 Job ID: ${syncJob.id}\n\nBu bir necha daqiqa olishi mumkin. Natijalar haqida xabar beraman.`
   );
 
-  // Запускаем асинхронно
   syncHistoryRange(fromDate, toDate, syncJob.id)
     .then(async (stats) => {
       try {
         await bot.sendMessage(
           msg.chat.id,
-          `✅ Синхронизация завершена (Job #${syncJob.id}):\n\n` +
-            `📊 Просканировано: ${stats.scanned}\n` +
-            `📥 Добавлено в очередь: ${stats.queued}\n` +
-            `⏭ Пропущено (короткие < 8 мин): ${stats.skippedShort}\n` +
-            `⏭ Пропущено (внутренние): ${stats.skippedInternal}\n` +
-            `⏭ Уже обработаны: ${stats.skippedDuplicate}\n` +
-            (stats.errors > 0 ? `⚠️ Ошибок: ${stats.errors}\n` : "")
+          `✅ Sinxronizatsiya yakunlandi (Job #${syncJob.id}):\n\n` +
+            `📊 Skanerlandi: ${stats.scanned}\n` +
+            `📥 Navbatga qo'shildi: ${stats.queued}\n` +
+            `⏭ O'tkazib yuborildi (< 8 daq): ${stats.skippedShort}\n` +
+            `⏭ O'tkazib yuborildi (ichki): ${stats.skippedInternal}\n` +
+            `⏭ Allaqachon qayta ishlangan: ${stats.skippedDuplicate}\n` +
+            (stats.errors > 0 ? `⚠️ Xatolar: ${stats.errors}\n` : "")
         );
       } catch {}
     })
@@ -933,7 +993,7 @@ bot.onText(/\/sync_history(.*)/, async (msg, match) => {
       try {
         await bot.sendMessage(
           msg.chat.id,
-          `❌ Синхронизация завершилась с ошибкой (Job #${syncJob.id}):\n${err.message}`
+          `❌ Sinxronizatsiya xato bilan yakunlandi (Job #${syncJob.id}):\n${err.message}`
         );
       } catch {}
     });
@@ -941,7 +1001,6 @@ bot.onText(/\/sync_history(.*)/, async (msg, match) => {
 
 // ---------------------------------------------------------------------------
 // ADMIN: /analyze_deal <deal_id>
-// Ручной запуск анализа последнего звонка по сделке
 // ---------------------------------------------------------------------------
 
 bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
@@ -950,7 +1009,6 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
 
   const dealId = parseInt(match![1]);
 
-  // Ищем последний звонок по сделке
   const call = await prisma.call.findFirst({
     where: { dealId },
     orderBy: { startedAt: "desc" },
@@ -960,33 +1018,32 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
   if (!call) {
     await bot.sendMessage(
       msg.chat.id,
-      `❌ Звонки по сделке #${dealId} не найдены в базе данных.\n\nВозможно, сделка ещё не синхронизирована или звонков не было.`
+      `❌ Bitim #${dealId} bo'yicha qo'ng'iroqlar bazada topilmadi.\n\nEhtimol, bitim hali sinxronlashmagan yoki qo'ng'iroqlar bo'lmagan.`
     );
     return;
   }
 
-  // Проверяем что есть URL записи
   if (!call.recordUrl) {
     await bot.sendMessage(
       msg.chat.id,
-      `⚠️ У звонка (ID: ${call.id}) по сделке #${dealId} нет URL записи. Анализ невозможен.`
+      `⚠️ Qo'ng'iroq (ID: ${call.id}) bitim #${dealId} uchun yozuv URL'i yo'q. Tahlil mumkin emas.`
     );
     return;
   }
 
-  const callDate = call.startedAt.toLocaleDateString("ru-RU");
+  const fmt = (d: Date) => `${d.getDate().toString().padStart(2,"0")}.${(d.getMonth()+1).toString().padStart(2,"0")}.${d.getFullYear()}`;
+  const callDate = fmt(call.startedAt);
   const currentStatus = call.processingStatus;
 
   await bot.sendMessage(
     msg.chat.id,
-    `⏳ Ставлю в очередь повторный анализ...\n\n` +
-      `📞 Звонок ID: ${call.id}\n` +
-      `📅 Дата: ${callDate}\n` +
-      `⏱ Длительность: ${formatDuration(call.durationSeconds)}\n` +
-      `📊 Текущий статус: ${currentStatus}`
+    `⏳ Qayta tahlil uchun navbatga qo'yilmoqda...\n\n` +
+      `📞 Qo'ng'iroq ID: ${call.id}\n` +
+      `📅 Sana: ${callDate}\n` +
+      `⏱ Davomiyligi: ${formatDuration(call.durationSeconds)}\n` +
+      `📊 Joriy holat: ${currentStatus}`
   );
 
-  // Сбрасываем статус и ставим в очередь
   try {
     await prisma.call.update({
       where: { id: call.id },
@@ -998,7 +1055,7 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
     });
 
     await callProcessingQueue.add(
-      `manual:${call.externalId}`,
+      `manual_${call.externalId}`,
       {
         callExternalId: call.externalId,
         source: "onlinepbx" as const,
@@ -1020,7 +1077,7 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
         },
       },
       {
-        jobId: `manual:${call.externalId}:${Date.now()}`,
+        jobId: `manual_${call.externalId}_${Date.now()}`,
         attempts: 3,
         backoff: { type: "exponential", delay: 5000 },
       }
@@ -1028,15 +1085,15 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
 
     await bot.sendMessage(
       msg.chat.id,
-      `✅ Звонок поставлен в очередь на анализ.\n\nРезультат появится в Google Sheets и будет добавлен как примечание к сделке #${dealId}.`
+      `✅ Qo'ng'iroq tahlil navbatiga qo'yildi.\n\nNatija Google Sheets da paydo bo'ladi va bitim #${dealId} ga izoh qo'shiladi.`
     );
   } catch (err: any) {
-    await bot.sendMessage(msg.chat.id, `❌ Ошибка: ${err.message}`);
+    await bot.sendMessage(msg.chat.id, `❌ Xato: ${err.message}`);
   }
 });
 
 // ---------------------------------------------------------------------------
-// Обработка ошибок polling + graceful shutdown
+// Polling errors + graceful shutdown
 // ---------------------------------------------------------------------------
 
 bot.on("polling_error", (err) => {

@@ -187,6 +187,48 @@ export async function askGeminiRaw(
 // Транскрибация аудио через Gemini
 // ---------------------------------------------------------------------------
 
+const TRANSCRIBE_PROMPT = `Транскрибируй аудиозапись телефонного разговора.
+Правила:
+- Обозначай реплики как "Менеджер:" и "Клиент:" (определи роли по контексту: менеджер продаёт / отвечает на вопросы, клиент — покупатель).
+- Каждую реплику с новой строки.
+- Передавай речь максимально точно, без правок и сокращений.
+- Верни только текст транскрипции, без комментариев и пояснений.`;
+
+/**
+ * Транскрибация из локального Buffer (для исторических звонков из TAR-архива).
+ */
+export async function transcribeAudioFromBuffer(
+  buffer: Buffer,
+  mimeType = "audio/mpeg"
+): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return "";
+
+  const model = geminiModel("GEMINI_TRANSCRIBE_MODEL", "gemini-2.5-flash");
+  const base64Audio = buffer.toString("base64");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  const response = await withGemini(() =>
+    axios.post(url, {
+      contents: [
+        {
+          parts: [
+            { inline_data: { mime_type: mimeType, data: base64Audio } },
+            { text: TRANSCRIBE_PROMPT },
+          ],
+        },
+      ],
+    })
+  );
+
+  const rawText =
+    response.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  return rawText.trim();
+}
+
+/**
+ * Транскрибация по URL (для real-time звонков из OnlinePBX webhook).
+ */
 export async function transcribeAudioWithGemini(
   recordUrl: string
 ): Promise<string> {
@@ -235,14 +277,7 @@ export async function transcribeAudioWithGemini(
                 data: base64Audio,
               },
             },
-            {
-              text: `Транскрибируй аудиозапись телефонного разговора.
-Правила:
-- Обозначай реплики как "Менеджер:" и "Клиент:" (определи роли по контексту: менеджер продаёт / отвечает на вопросы, клиент — покупатель).
-- Каждую реплику с новой строки.
-- Передавай речь максимально точно, без правок и сокращений.
-- Верни только текст транскрипции, без комментариев и пояснений.`,
-            },
+            { text: TRANSCRIBE_PROMPT },
           ],
         },
       ],
@@ -298,30 +333,31 @@ export async function analyzeCallWithGemini(
   if (!apiKey) return fallback;
 
   const prompt = `
-Ты — AI-контролёр качества звонков.
-Проанализируй диалог по строгой JSON-схеме:
+Sen — qo'ng'iroq sifatini nazorat qiluvchi AI-tizimsan.
+Dialogni qat'iy JSON sxemasi bo'yicha tahlil qil:
 {
   "overallScore": number 0-10,
   "criteria": [
-    { "code": "greeting", "name": "Приветствие", "score": 0-10, "comment": "..." },
-    { "code": "needs", "name": "Выявление потребностей", "score": 0-10, "comment": "..." },
-    { "code": "presentation", "name": "Презентация продукта", "score": 0-10, "comment": "..." },
-    { "code": "objections", "name": "Работа с возражениями", "score": 0-10, "comment": "..." },
-    { "code": "closing", "name": "Завершение сделки", "score": 0-10, "comment": "..." }
+    { "code": "greeting", "name": "Salomlashish", "score": 0-10, "comment": "..." },
+    { "code": "needs", "name": "Ehtiyojlarni aniqlash", "score": 0-10, "comment": "..." },
+    { "code": "presentation", "name": "Mahsulot taqdimoti", "score": 0-10, "comment": "..." },
+    { "code": "objections", "name": "E'tirozlar bilan ishlash", "score": 0-10, "comment": "..." },
+    { "code": "closing", "name": "Bitimni yakunlash", "score": 0-10, "comment": "..." }
   ],
   "strengths": ["...", "..."],
   "weaknesses": ["...", "..."],
   "recommendations": ["...", "..."],
-  "summary": "краткое резюме до 2-3 предложений"
+  "summary": "2-3 gapdan iborat qisqa xulosa"
 }
 
-Верни ТОЛЬКО JSON, без пояснений и форматирования.
+MUHIM: barcha matn maydonlarini (summary, comment, strengths, weaknesses, recommendations) O'ZBEK TILIDA (lotin alifbosi) yoz.
+FAQAT JSON qaytар, tushuntirish va formatirlashsiz.
 
-Метаданные:
-- длительность (сек): ${metadata.durationSeconds}
-- направление: ${metadata.direction}
+Meta-ma'lumotlar:
+- davomiyligi (sek): ${metadata.durationSeconds}
+- yo'nalishi: ${metadata.direction}
 
-Диалог:
+Dialog:
 ${transcript}
 `;
 

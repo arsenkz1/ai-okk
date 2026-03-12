@@ -24,6 +24,8 @@ export interface CallProcessingJobData {
   payload: OnlinePbxWebhookPayload;
   receivedAt: string;
   manualTriggered?: boolean;
+  /** Путь к локальному MP3-файлу, извлечённому из TAR-архива (только для исторической синхронизации) */
+  localFilePath?: string;
 }
 
 export const callProcessingQueue = createQueue("call_processing");

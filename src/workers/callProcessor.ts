@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import { createWorker } from "../config/queue";
 import { prisma } from "../config/database";
 import {
@@ -6,6 +7,7 @@ import {
 } from "../queues/callProcessing";
 import {
   analyzeCallWithGemini,
+  transcribeAudioFromBuffer,
   transcribeAudioWithGemini,
 } from "../services/aiAnalysis";
 import { appendCallRowToSheet } from "../services/googleSheets";
@@ -96,7 +98,7 @@ async function ensureCallRecord(
 }
 
 async function processCallJob(jobData: CallProcessingJobData) {
-  const { payload } = jobData;
+  const { payload, localFilePath } = jobData;
 
   console.log("[CallWorker] Got job:", {
     uuid: payload.uuid,
@@ -129,18 +131,51 @@ async function processCallJob(jobData: CallProcessingJobData) {
 
   // Транскрибация аудио через Gemini
   let transcriptText = "";
-  if (payload.record_url) {
+
+  if (localFilePath) {
+    // Исторический звонок: читаем локальный MP3-файл, извлечённый из TAR
+    console.log("[CallWorker] Transcribing from local file:", { callId, localFilePath });
+    try {
+      if (!fs.existsSync(localFilePath)) {
+        console.warn("[CallWorker] Local file not found (cleaned up or never extracted):", localFilePath);
+      } else {
+        const audioBuffer = fs.readFileSync(localFilePath);
+        transcriptText = await transcribeAudioFromBuffer(audioBuffer);
+
+        // Удаляем temp файл после успешной транскрипции
+        try { fs.unlinkSync(localFilePath); } catch {}
+
+        await prisma.callTranscript.upsert({
+          where: { callId },
+          update: { text: transcriptText },
+          create: { callId, text: transcriptText },
+        });
+        await prisma.callTranscript.update({
+          where: { callId },
+          data: { engine: "gemini" },
+        });
+
+        console.log("[CallWorker] Transcript saved (from file):", {
+          callId,
+          length: transcriptText.length,
+        });
+      }
+    } catch (err) {
+      console.error("[CallWorker] Transcription from file failed:", err);
+      // Удаляем битый файл если он есть
+      try { if (fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath); } catch {}
+    }
+  } else if (payload.record_url) {
+    // Real-time звонок: скачиваем по URL из OnlinePBX
     console.log("[CallWorker] Transcribing audio:", { callId, url: payload.record_url });
     try {
       transcriptText = await transcribeAudioWithGemini(payload.record_url);
 
-      // Сохраняем транскрипт в БД
       await prisma.callTranscript.upsert({
         where: { callId },
         update: { text: transcriptText },
         create: { callId, text: transcriptText },
       });
-      // Отдельный update для поля engine (обходим ограничение Prisma 7 upsert)
       await prisma.callTranscript.update({
         where: { callId },
         data: { engine: "gemini" },
@@ -216,29 +251,31 @@ async function processCallJob(jobData: CallProcessingJobData) {
       analysis.summary,
       (analysis.weaknesses || []).join("; "),
       (analysis.recommendations || []).join("; "),
-      payload.record_url ?? "",
+      payload.record_url
+        ? `=HYPERLINK("${payload.record_url}","▶ Слушать")`
+        : "",
     ]);
     console.log("[CallWorker] Appended to Google Sheets:", { callId });
   } catch (err) {
     console.error("[CallWorker] Failed to append to Google Sheets:", err);
   }
 
-  // Примечание в amoCRM по сделке
+  // amoCRM bitimiga izoh qo'shish
   if (dealId) {
-    const scoreStr = analysis.overallScore !== null ? `${analysis.overallScore}/10` : "н/д";
+    const scoreStr = analysis.overallScore !== null ? `${analysis.overallScore}/10` : "—";
     const weaknesses = (analysis.weaknesses || []).slice(0, 3).join("\n  • ");
     const recommendations = (analysis.recommendations || []).slice(0, 3).join("\n  • ");
 
     const noteText = [
-      `📞 Анализ звонка`,
-      `Дата: ${new Date(payload.start_time ?? Date.now()).toLocaleString("ru-RU")}`,
-      `Оценка: ${scoreStr}`,
+      `📞 Qo'ng'iroq tahlili`,
+      `Sana: ${new Date(payload.start_time ?? Date.now()).toLocaleString("ru-RU")}`,
+      `Ball: ${scoreStr}`,
       ``,
       `📝 ${analysis.summary}`,
-      weaknesses ? `\n⚠️ Ошибки:\n  • ${weaknesses}` : "",
-      recommendations ? `\n💡 Рекомендации:\n  • ${recommendations}` : "",
+      weaknesses ? `\n⚠️ Xatolar:\n  • ${weaknesses}` : "",
+      recommendations ? `\n💡 Tavsiyalar:\n  • ${recommendations}` : "",
       ``,
-      `🔗 Запись: ${payload.record_url ?? "—"}`,
+      `🔗 Yozuv: ${payload.record_url ?? "—"}`,
     ]
       .filter((line) => line !== null)
       .join("\n");
