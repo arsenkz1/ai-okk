@@ -1,4 +1,4 @@
-import { Queue, Worker, JobsOptions, QueueScheduler } from "bullmq";
+import { Queue, Worker, JobsOptions, Processor } from "bullmq";
 import IORedis from "ioredis";
 import dotenv from "dotenv";
 
@@ -10,13 +10,21 @@ const redisHost =
 const redisPort = Number(process.env.REDIS_PORT ?? "6379");
 const redisPassword = process.env.REDIS_PASSWORD || undefined;
 
+// Используется для прямых Redis операций (не BullMQ)
 export const redisConnection = new IORedis({
   host: redisHost,
   port: redisPort,
   password: redisPassword || undefined,
-  // BullMQ требует maxRetriesPerRequest = null, иначе будет бросать ошибку.
   maxRetriesPerRequest: null,
 });
+
+// BullMQ использует собственный ioredis, поэтому передаём plain options
+const bullmqConnection = {
+  host: redisHost,
+  port: redisPort,
+  password: redisPassword || undefined,
+  maxRetriesPerRequest: null as null,
+};
 
 export type QueueName =
   | "call_processing"
@@ -27,23 +35,19 @@ export type QueueName =
 
 export function createQueue(name: QueueName) {
   return new Queue(name, {
-    connection: redisConnection,
+    connection: bullmqConnection,
     defaultJobOptions: defaultJobOptionsByQueue[name],
   });
 }
 
 export function createWorker(
   name: QueueName,
-  processor: Parameters<typeof Worker>[1]
+  processor: Processor
 ) {
   return new Worker(name, processor, {
-    connection: redisConnection,
+    connection: bullmqConnection,
     concurrency: concurrencyByQueue[name],
   });
-}
-
-export function createScheduler(name: QueueName) {
-  return new QueueScheduler(name, { connection: redisConnection });
 }
 
 const defaultJobOptionsByQueue: Record<QueueName, JobsOptions> = {

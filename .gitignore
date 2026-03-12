@@ -1,5 +1,6 @@
 node_modules/
 .env
 /generated/prisma
+src/generated/
 .cursor/
 tmp/
