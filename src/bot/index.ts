@@ -775,6 +775,9 @@ bot.onText(/\/sync_managers$/, async (msg) => {
 
   try {
     const result = await syncManagersFromPbx();
+    const sheetStatus = result.sheetUpdated
+      ? `Google Sheet yangilandi ✓`
+      : `⚠️ Google Sheet yangilanmadi: ${result.sheetError}`;
     await bot.sendMessage(
       msg.chat.id,
       `✅ Sinxronizatsiya yakunlandi:\n` +
@@ -783,7 +786,7 @@ bot.onText(/\/sync_managers$/, async (msg) => {
         `• Qayta faollashtirildi: ${result.reactivated}\n` +
         `• Deaktivlashtirildi: ${result.deactivated}\n` +
         `• PBX da jami: ${result.total}\n\n` +
-        `Google Sheet yangilandi ✓`
+        sheetStatus
     );
   } catch (err: any) {
     await bot.sendMessage(msg.chat.id, `❌ Sinxronizatsiya xatosi: ${err.message}`);

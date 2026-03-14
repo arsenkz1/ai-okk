@@ -20,6 +20,8 @@ export interface ManagerSyncResult {
   deactivated: number;
   reactivated: number;
   total: number;
+  sheetUpdated: boolean;
+  sheetError?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,14 +194,18 @@ export async function syncManagersFromPbx(): Promise<ManagerSyncResult> {
   }
 
   // --- Шаг 3: Обновляем Google Sheet ---
+  let sheetUpdated = false;
+  let sheetError: string | undefined;
   try {
     await writeManagersToSheet();
+    sheetUpdated = true;
     console.log("[ManagerSync] Google Sheet updated");
   } catch (err: any) {
+    sheetError = err.message;
     console.error("[ManagerSync] Failed to update Google Sheet:", err.message);
   }
 
-  const result = { created, updated, deactivated, reactivated, total: mapping.length };
+  const result = { created, updated, deactivated, reactivated, total: mapping.length, sheetUpdated, sheetError };
   console.log("[ManagerSync] Done:", result);
   return result;
 }
