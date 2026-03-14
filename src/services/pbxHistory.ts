@@ -11,7 +11,7 @@ import type { OnlinePbxWebhookPayload } from "../queues/callProcessing";
 // Типы ответа OnlinePBX mongo_history/search.json
 // ---------------------------------------------------------------------------
 
-interface PbxHistoryRecord {
+export interface PbxHistoryRecord {
   uuid: string;
   caller_id_name?: string | number;
   caller_id_number?: string | number;
@@ -28,6 +28,45 @@ interface PbxHistoryRecord {
   quality_score?: number;
   events?: unknown[];
 }
+
+// ---------------------------------------------------------------------------
+// Rate limiter для OnlinePBX API (лимит 3 RPS, используем 2 для запаса)
+// ---------------------------------------------------------------------------
+
+class PbxRateLimiter {
+  private queue: Array<() => void> = [];
+  private lastCallAt = 0;
+  private readonly minInterval: number; // мс между запросами
+  private timer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(requestsPerSecond: number) {
+    this.minInterval = Math.ceil(1000 / requestsPerSecond);
+  }
+
+  /** Вызывай перед каждым HTTP-запросом к OnlinePBX API */
+  throttle(): Promise<void> {
+    return new Promise((resolve) => {
+      this.queue.push(resolve);
+      this.schedule();
+    });
+  }
+
+  private schedule() {
+    if (this.timer !== null) return;
+    const now = Date.now();
+    const wait = Math.max(0, this.lastCallAt + this.minInterval - now);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      if (!this.queue.length) return;
+      this.lastCallAt = Date.now();
+      const next = this.queue.shift()!;
+      next();
+      if (this.queue.length) this.schedule();
+    }, wait);
+  }
+}
+
+const pbxLimiter = new PbxRateLimiter(2); // 2 req/sec (лимит API = 3 RPS)
 
 // ---------------------------------------------------------------------------
 // Временная директория для MP3-файлов из TAR
@@ -128,6 +167,8 @@ export async function fetchPbxHistory(
     count,
   });
 
+  await pbxLimiter.throttle();
+
   const response = await axios.post(
     url,
     { date_from: toRfc2822(dateFrom), date_to: toRfc2822(dateTo), count },
@@ -155,6 +196,46 @@ export async function fetchPbxHistory(
 }
 
 // ---------------------------------------------------------------------------
+// Поиск записи в истории OnlinePBX по дате и телефону
+// ---------------------------------------------------------------------------
+
+function normPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("8")) return "7" + digits.slice(1);
+  if (digits.length === 10) return "7" + digits;
+  return digits;
+}
+
+export async function findPbxRecordByDateAndPhone(
+  date: Date,
+  phone: string
+): Promise<{ uuid: string; duration: number } | null> {
+  const normalizedPhone = normPhone(phone);
+  if (!normalizedPhone || normalizedPhone.length < 7) return null;
+
+  // Ищем ±2 часа вокруг даты звонка
+  const dateFrom = new Date(date.getTime() - 2 * 60 * 60 * 1000);
+  const dateTo = new Date(date.getTime() + 2 * 60 * 60 * 1000);
+
+  try {
+    const records = await fetchPbxHistory(dateFrom, dateTo, 200);
+    for (const record of records) {
+      const callerNorm = normPhone(String(record.caller_id_number ?? ""));
+      const destNorm = normPhone(String(record.destination_number ?? ""));
+      if (callerNorm === normalizedPhone || destNorm === normalizedPhone) {
+        return {
+          uuid: record.uuid,
+          duration: record.duration ?? 0,
+        };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Запрос к OnlinePBX API: TAR URL (download: true)
 // ---------------------------------------------------------------------------
 
@@ -167,6 +248,8 @@ async function fetchDayTarUrl(dateFrom: Date, dateTo: Date): Promise<string | nu
   const url = `https://api2.onlinepbx.ru/${domain}/mongo_history/search.json`;
 
   try {
+    await pbxLimiter.throttle();
+
     const response = await axios.post(
       url,
       { date_from: toRfc2822(dateFrom), date_to: toRfc2822(dateTo), download: true },
