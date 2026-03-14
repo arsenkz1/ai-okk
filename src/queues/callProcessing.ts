@@ -26,6 +26,8 @@ export interface CallProcessingJobData {
   manualTriggered?: boolean;
   /** Путь к локальному MP3-файлу, извлечённому из TAR-архива (только для исторической синхронизации) */
   localFilePath?: string;
+  /** Принудительно привязать к сделке amoCRM (используется при ручном analyze_deal) */
+  forceDealId?: number;
 }
 
 export const callProcessingQueue = createQueue("call_processing");

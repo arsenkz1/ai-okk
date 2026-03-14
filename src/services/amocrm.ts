@@ -40,7 +40,19 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   return chunks;
 }
 
+// ---------------------------------------------------------------------------
+// Rate limiter: не более 2 запросов в секунду к amoCRM
+// ---------------------------------------------------------------------------
+
+let lastAmoRequestAt = 0;
+const AMO_MIN_INTERVAL_MS = 500; // 1000ms / 2 req
+
 async function amoGet(path: string): Promise<any> {
+  const now = Date.now();
+  const wait = lastAmoRequestAt + AMO_MIN_INTERVAL_MS - now;
+  if (wait > 0) await sleep(wait);
+  lastAmoRequestAt = Date.now();
+
   const r = await axios.get(`${AMO_BASE_URL}${path}`, { headers: amoHeaders() });
   return r.data;
 }
@@ -95,6 +107,68 @@ export async function lookupDealByPhone(rawPhone: string): Promise<{
     dealId: mapping.lastDeal.id,
     pipelineId: mapping.lastDeal.pipelineId,
     stageId: mapping.lastDeal.statusId,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Fallback: поиск контакта по телефону напрямую в amoCRM + сохранение в БД
+// ---------------------------------------------------------------------------
+
+export async function lookupDealByPhoneFromAmo(rawPhone: string): Promise<{
+  dealId: number;
+  pipelineId: number;
+  stageId: number;
+} | null> {
+  if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) return null;
+
+  const normalized = normalizePhone(rawPhone);
+  if (!normalized || normalized.length < 7) return null;
+
+  console.log(`[AmoSync] Fallback: searching contact by phone ${normalized} in amoCRM`);
+
+  let contact: any;
+  try {
+    const data = await amoGet(
+      `/api/v4/contacts?query=${encodeURIComponent(normalized)}&with=leads&limit=1`
+    );
+    contact = data?._embedded?.contacts?.[0];
+  } catch (err: any) {
+    console.error("[AmoSync] Fallback phone search failed:", err.message);
+    return null;
+  }
+
+  if (!contact) {
+    console.log(`[AmoSync] Fallback: no contact found for phone ${normalized}`);
+    return null;
+  }
+
+  const contactId: number = contact.id;
+  const contactName: string | null = contact.name ?? null;
+  const phones = extractPhones(contact);
+  const leadIds: number[] = contact._embedded?.leads?.map((l: any) => l.id) ?? [];
+
+  const deals = leadIds.length ? await fetchDealsInfo(leadIds) : [];
+
+  // Сохраняем в локальную БД (lazy-sync)
+  await upsertPhoneMappingForContact(contactId, contactName, phones.length ? phones : [rawPhone], deals);
+
+  const sortedByDate = [...deals].sort(
+    (a, b) => b.amoUpdatedAt.getTime() - a.amoUpdatedAt.getTime()
+  );
+  const bestDeal =
+    sortedByDate.find((d) => isQualifyingDeal(d.pipelineId, d.statusId)) ??
+    sortedByDate.find((d) => QUALIFYING_PIPELINE_IDS.includes(d.pipelineId));
+
+  if (!bestDeal) {
+    console.log(`[AmoSync] Fallback: contact ${contactId} found but no qualifying deal`);
+    return null;
+  }
+
+  console.log(`[AmoSync] Fallback: found deal ${bestDeal.id} for phone ${normalized}`);
+  return {
+    dealId: bestDeal.id,
+    pipelineId: bestDeal.pipelineId,
+    stageId: bestDeal.statusId,
   };
 }
 
@@ -386,6 +460,126 @@ export async function handleAmoCrmWebhook(body: any): Promise<void> {
   for (const contactId of contactIds) {
     await syncContactById(contactId);
     await sleep(150);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Получение примечаний-звонков из сделки amoCRM
+// ---------------------------------------------------------------------------
+
+export interface AmoCrmCallNote {
+  id: number;
+  noteType: string; // "call_in" | "call_out"
+  createdAt: Date;
+  duration: number; // секунды
+  recordUrl: string | null;
+  phone: string | null; // внешний номер телефона
+  uniq: string | null; // UUID от OnlinePBX (если есть)
+  internalNumber: string | null; // внутренний номер менеджера (из URL записи)
+}
+
+/**
+ * Декодирует base64-часть URL записи OnlinePBX и извлекает внутренний номер.
+ * Формат URL: .../download_amocrm/{base64}_{подпись}/rec.mp3
+ * base64 → JSON: {"u":"uuid","f":"101","t":"phone",...}
+ */
+function extractInternalNumberFromRecordUrl(url: string): string | null {
+  try {
+    const match = url.match(/\/download_amocrm\/([A-Za-z0-9+/=]+)_[^/]+\//);
+    if (!match) return null;
+    const parsed = JSON.parse(Buffer.from(match[1], "base64").toString("utf-8"));
+    return parsed.f ? String(parsed.f) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Гарантирует существование сделки в локальной БД (upsert из amoCRM).
+// Используется перед созданием Call с forceDealId.
+export async function ensureDealInDb(dealId: number): Promise<void> {
+  const existing = await prisma.deal.findUnique({ where: { id: dealId } });
+  if (existing) return;
+
+  const deals = await fetchDealsInfo([dealId]);
+  const deal = deals[0];
+  if (!deal) {
+    console.warn(`[AmoCRM] ensureDealInDb: deal ${dealId} not found in amoCRM`);
+    return;
+  }
+
+  await prisma.deal.upsert({
+    where: { id: deal.id },
+    update: { pipelineId: deal.pipelineId, statusId: deal.statusId, name: deal.name },
+    create: { id: deal.id, pipelineId: deal.pipelineId, statusId: deal.statusId, name: deal.name },
+  });
+}
+
+export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote[]> {
+  if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) return [];
+
+  const notes: AmoCrmCallNote[] = [];
+  let page = 1;
+
+  while (true) {
+    let data: any;
+    try {
+      data = await amoGet(
+        `/api/v4/leads/${dealId}/notes?filter[note_type][]=call_in&filter[note_type][]=call_out&limit=250&page=${page}`
+      );
+    } catch (err: any) {
+      const status = err.response?.status;
+      if (status === 204 || status === 404) break;
+      throw err;
+    }
+
+    const items: any[] = data?._embedded?.notes ?? [];
+    if (!items.length) break;
+
+    for (const item of items) {
+      const params = item.params ?? {};
+      const recordUrl: string | null = params.link ?? null;
+      notes.push({
+        id: item.id,
+        noteType: item.note_type ?? "",
+        createdAt: new Date((item.created_at ?? 0) * 1000),
+        duration: Number(params.duration ?? 0),
+        recordUrl,
+        phone: params.phone ?? null,
+        uniq: params.uniq ?? null,
+        internalNumber: recordUrl ? extractInternalNumberFromRecordUrl(recordUrl) : null,
+      });
+    }
+
+    if (items.length < 250) break;
+    page++;
+    await sleep(150);
+  }
+
+  return notes;
+}
+
+// ---------------------------------------------------------------------------
+// Получение телефонов контактов из сделки amoCRM
+// ---------------------------------------------------------------------------
+
+export async function fetchDealContactPhones(dealId: number): Promise<string[]> {
+  if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) return [];
+
+  try {
+    const data = await amoGet(`/api/v4/leads/${dealId}?with=contacts`);
+    const contacts: any[] = data?._embedded?.contacts ?? [];
+
+    const phones: string[] = [];
+    for (const contact of contacts) {
+      try {
+        const contactData = await amoGet(`/api/v4/contacts/${contact.id}`);
+        phones.push(...extractPhones(contactData));
+        await sleep(150);
+      } catch {}
+    }
+    return phones;
+  } catch {
+    return [];
   }
 }
 

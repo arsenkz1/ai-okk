@@ -8,8 +8,9 @@ import {
   GeminiMessage,
 } from "../services/aiAnalysis";
 import { writeManagersToSheet } from "../services/googleSheets";
-import { syncHistoryRange } from "../services/pbxHistory";
+import { syncHistoryRange, findPbxRecordByDateAndPhone } from "../services/pbxHistory";
 import { callProcessingQueue } from "../queues/callProcessing";
+import { fetchDealCallNotes, fetchDealContactPhones } from "../services/amocrm";
 
 // ---------------------------------------------------------------------------
 // Bot initialization
@@ -20,6 +21,12 @@ if (!token) throw new Error("TELEGRAM_BOT_TOKEN is not set");
 
 export const bot = new TelegramBot(token, { polling: true });
 console.log("[Bot] Telegram bot started (polling)");
+
+// ---------------------------------------------------------------------------
+// Admin notifications
+// ---------------------------------------------------------------------------
+
+export { notifyAdmins } from "./notify";
 
 // ---------------------------------------------------------------------------
 // Redis deduplication
@@ -410,8 +417,7 @@ bot.onText(/\/help$/, async (msg) => {
 
         `*Qo'ng'iroqlar tahlili:*\n` +
         `/analyze\\_deal <deal\\_id> — bitim bo'yicha so'nggi qo'ng'iroqni tahlil qilish\n` +
-        `/sync\\_history — qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)\n` +
-        `/sync\\_history KK.OO.YYYY KK.OO.YYYY — ma'lum davr uchun\n\n` +
+        `/sync\\_history — qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)\n\n` +
 
         `*Hisobotlar (siz uchun ham ishlaydi):*\n` +
         `/report — bugungi hisobot\n` +
@@ -910,49 +916,16 @@ bot.onText(/\/managers$/, async (msg) => {
 });
 
 // ---------------------------------------------------------------------------
-// ADMIN: /sync_history [from_date] [to_date]
+// ADMIN: /sync_history — синхронизация последних 7 дней
 // ---------------------------------------------------------------------------
 
-bot.onText(/\/sync_history(.*)/, async (msg, match) => {
+bot.onText(/\/sync_history/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
   if (!(await requireAdmin(msg))) return;
 
-  const args = (match![1] ?? "").trim().split(/\s+/).filter(Boolean);
-
-  let fromDate: Date;
-  let toDate: Date;
-
-  if (args.length >= 2) {
-    const f = parseDate(args[0]);
-    const t = parseDate(args[1]);
-    if (!f || !t) {
-      await bot.sendMessage(
-        msg.chat.id,
-        "❌ Sana formati noto'g'ri. Foydalaning: /sync\\_history KK.OO.YYYY KK.OO.YYYY\nMasalan: `/sync_history 01.03.2026 10.03.2026`",
-        { parse_mode: "Markdown" }
-      );
-      return;
-    }
-    fromDate = f;
-    toDate = t;
-  } else if (args.length === 1) {
-    const f = parseDate(args[0]);
-    if (!f) {
-      await bot.sendMessage(msg.chat.id, "❌ Sana formati noto'g'ri.");
-      return;
-    }
-    fromDate = f;
-    toDate = new Date();
-  } else {
-    toDate = new Date();
-    fromDate = new Date();
-    fromDate.setDate(fromDate.getDate() - 7);
-  }
-
-  if (toDate < fromDate) {
-    await bot.sendMessage(msg.chat.id, "❌ Oxirgi sana boshlang'ich sanadan oldin bo'la olmaydi.");
-    return;
-  }
+  const toDate = new Date();
+  const fromDate = new Date();
+  fromDate.setDate(fromDate.getDate() - 7);
 
   const fmt = (d: Date) => `${d.getDate().toString().padStart(2,"0")}.${(d.getMonth()+1).toString().padStart(2,"0")}.${d.getFullYear()}`;
   const fromStr = fmt(fromDate);
@@ -1009,83 +982,138 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
 
   const dealId = parseInt(match![1]);
 
-  const call = await prisma.call.findFirst({
-    where: { dealId },
-    orderBy: { startedAt: "desc" },
-    include: { analysis: true },
-  });
-
-  if (!call) {
-    await bot.sendMessage(
-      msg.chat.id,
-      `❌ Bitim #${dealId} bo'yicha qo'ng'iroqlar bazada topilmadi.\n\nEhtimol, bitim hali sinxronlashmagan yoki qo'ng'iroqlar bo'lmagan.`
-    );
-    return;
-  }
-
-  if (!call.recordUrl) {
-    await bot.sendMessage(
-      msg.chat.id,
-      `⚠️ Qo'ng'iroq (ID: ${call.id}) bitim #${dealId} uchun yozuv URL'i yo'q. Tahlil mumkin emas.`
-    );
-    return;
-  }
-
-  const fmt = (d: Date) => `${d.getDate().toString().padStart(2,"0")}.${(d.getMonth()+1).toString().padStart(2,"0")}.${d.getFullYear()}`;
-  const callDate = fmt(call.startedAt);
-  const currentStatus = call.processingStatus;
-
   await bot.sendMessage(
     msg.chat.id,
-    `⏳ Qayta tahlil uchun navbatga qo'yilmoqda...\n\n` +
-      `📞 Qo'ng'iroq ID: ${call.id}\n` +
-      `📅 Sana: ${callDate}\n` +
-      `⏱ Davomiyligi: ${formatDuration(call.durationSeconds)}\n` +
-      `📊 Joriy holat: ${currentStatus}`
+    `⏳ Bitim #${dealId} uchun amoCRM dan qo'ng'iroq izlash...`
   );
 
   try {
-    await prisma.call.update({
-      where: { id: call.id },
-      data: {
-        processingStatus: "queued",
-        manualTriggered: true,
-        lastError: null,
-      },
-    });
+    // Шаг 1: получаем примечания-звонки из сделки amoCRM
+    const notes = await fetchDealCallNotes(dealId);
 
-    await callProcessingQueue.add(
-      `manual_${call.externalId}`,
-      {
-        callExternalId: call.externalId,
-        source: "onlinepbx" as const,
-        receivedAt: new Date().toISOString(),
-        manualTriggered: true,
-        payload: {
-          event: "call_end" as const,
-          uuid: call.externalId,
-          direction: (call.direction === "out" ? "out" : "in") as "in" | "out",
-          caller: "",
-          callee: "",
-          start_time: call.startedAt.toISOString().replace("T", " ").slice(0, 19),
-          end_time: call.endedAt.toISOString().replace("T", " ").slice(0, 19),
-          duration: call.durationSeconds,
-          status: call.status,
-          record_url: call.recordUrl ?? undefined,
-          internal_number: "",
-          external_number: "",
-        },
-      },
-      {
-        jobId: `manual_${call.externalId}_${Date.now()}`,
-        attempts: 3,
-        backoff: { type: "exponential", delay: 5000 },
-      }
-    );
+    const MIN_DURATION = 8 * 60; // 480 секунд
+    const qualifying = notes.filter((n) => n.duration >= MIN_DURATION && n.recordUrl);
+
+    if (!qualifying.length) {
+      await bot.sendMessage(
+        msg.chat.id,
+        `❌ Bitim #${dealId} uchun yaroqli qo'ng'iroqlar topilmadi.\n\n` +
+          `Jami izohlar: ${notes.length}\n` +
+          `Shartlar: yozuv URL + davomiyligi ≥ 8 daqiqa`
+      );
+      return;
+    }
+
+    // Сортируем по длительности убывающей, берём топ-3
+    qualifying.sort((a, b) => b.duration - a.duration);
+    const toProcess = qualifying.slice(0, 3);
 
     await bot.sendMessage(
       msg.chat.id,
-      `✅ Qo'ng'iroq tahlil navbatiga qo'yildi.\n\nNatija Google Sheets da paydo bo'ladi va bitim #${dealId} ga izoh qo'shiladi.`
+      `✅ ${qualifying.length} ta yaroqli qo'ng'iroq topildi.\n${toProcess.length} ta navbatga qo'yilmoqda...`
+    );
+
+    // Шаг 2: телефоны контакта (нужны если нет uniq в примечании)
+    let contactPhones: string[] = [];
+
+    let queued = 0;
+    let alreadyExists = 0;
+    let errors = 0;
+
+    for (const note of toProcess) {
+      try {
+        let uuid = note.uniq;
+
+        // Если нет UUID в примечании — ищем в OnlinePBX по дате + телефону
+        if (!uuid) {
+          const phoneToSearch = note.phone;
+          if (phoneToSearch) {
+            const pbxRecord = await findPbxRecordByDateAndPhone(note.createdAt, phoneToSearch);
+            uuid = pbxRecord?.uuid ?? null;
+          } else {
+            // Пробуем контактный телефон
+            if (!contactPhones.length) {
+              contactPhones = await fetchDealContactPhones(dealId);
+            }
+            if (contactPhones.length) {
+              const pbxRecord = await findPbxRecordByDateAndPhone(note.createdAt, contactPhones[0]);
+              uuid = pbxRecord?.uuid ?? null;
+            }
+          }
+        }
+
+        // Генерируем синтетический ID если UUID так и не нашли
+        if (!uuid) {
+          uuid = `deal_${dealId}_note_${note.id}`;
+        }
+
+        // Шаг 3: проверка идемпотентности
+        const existing = await prisma.call.findUnique({
+          where: { externalId_source: { externalId: uuid, source: "onlinepbx" } },
+        });
+
+        if (existing) {
+          alreadyExists++;
+          // Перезапускаем анализ даже если запись существует
+          await prisma.call.update({
+            where: { id: existing.id },
+            data: { processingStatus: "queued", manualTriggered: true, lastError: null },
+          });
+        }
+
+        const externalPhone = note.phone ?? (contactPhones[0] ?? "");
+        const direction = note.noteType === "call_out" ? "out" : ("in" as "in" | "out");
+        const startTime = note.createdAt;
+        const endTime = new Date(startTime.getTime() + note.duration * 1000);
+
+        // Шаг 4: ставим в очередь
+        await callProcessingQueue.add(
+          `manual_deal_${uuid}`,
+          {
+            callExternalId: uuid,
+            source: "onlinepbx" as const,
+            receivedAt: new Date().toISOString(),
+            manualTriggered: true,
+            forceDealId: dealId,
+            payload: {
+              event: "call_end" as const,
+              uuid,
+              direction,
+              caller: direction === "in" ? externalPhone : "",
+              callee: direction === "out" ? externalPhone : "",
+              start_time: startTime.toISOString().replace("T", " ").slice(0, 19),
+              end_time: endTime.toISOString().replace("T", " ").slice(0, 19),
+              duration: note.duration,
+              status: "completed",
+              record_url: note.recordUrl ?? undefined,
+              internal_number: note.internalNumber ?? "",
+              external_number: externalPhone,
+            },
+          },
+          {
+            jobId: `manual_deal_${uuid}_${Date.now()}`,
+            attempts: 3,
+            backoff: { type: "exponential", delay: 5000 },
+          }
+        );
+
+        queued++;
+        console.log(
+          `[Bot] analyze_deal #${dealId}: queued note ${note.id} uuid=${uuid} duration=${note.duration}s`
+        );
+      } catch (err: any) {
+        errors++;
+        console.error(`[Bot] analyze_deal #${dealId} note ${note.id} error:`, err.message);
+      }
+    }
+
+    await bot.sendMessage(
+      msg.chat.id,
+      `📊 Natija:\n` +
+        `✅ Navbatga qo'yildi: ${queued}\n` +
+        `♻️ Mavjud (qayta yuborildi): ${alreadyExists}\n` +
+        `❌ Xatolar: ${errors}\n\n` +
+        `Tahlil natijasi Google Sheets da paydo bo'ladi va bitim #${dealId} ga izoh qo'shiladi.`
     );
   } catch (err: any) {
     await bot.sendMessage(msg.chat.id, `❌ Xato: ${err.message}`);

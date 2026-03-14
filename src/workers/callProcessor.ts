@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import { createWorker } from "../config/queue";
 import { prisma } from "../config/database";
+import { notifyAdmins } from "../bot/notify";
 import {
   CallProcessingJobData,
   OnlinePbxWebhookPayload,
@@ -14,11 +15,14 @@ import { appendCallRowToSheet } from "../services/googleSheets";
 import {
   addNoteToDeal,
   lookupDealByPhone,
+  lookupDealByPhoneFromAmo,
   isQualifyingDeal,
+  ensureDealInDb,
 } from "../services/amocrm";
 
 async function ensureCallRecord(
-  payload: OnlinePbxWebhookPayload
+  payload: OnlinePbxWebhookPayload,
+  forceDealId?: number
 ): Promise<{ id: number; dealId: number | null; pipelineId: number | null; stageId: number | null }> {
   const existing = await prisma.call.findUnique({
     where: {
@@ -31,12 +35,17 @@ async function ensureCallRecord(
   });
 
   if (existing) {
-    return {
-      id: existing.id,
-      dealId: existing.dealId,
-      pipelineId: existing.deal?.pipelineId ?? null,
-      stageId: existing.deal?.statusId ?? null,
-    };
+    // Если сделка уже привязана — возвращаем как есть
+    if (existing.dealId) {
+      return {
+        id: existing.id,
+        dealId: existing.dealId,
+        pipelineId: existing.deal?.pipelineId ?? null,
+        stageId: existing.deal?.statusId ?? null,
+      };
+    }
+    // dealId === null: пробуем найти сделку (могла появиться после первой попытки)
+    // Поиск выполняется ниже, результат запишем в существующую запись
   }
 
   // Ищем менеджера по internal_number (внутренний номер АТС)
@@ -51,26 +60,49 @@ async function ensureCallRecord(
     }
   }
 
-  // Ищем сделку по номеру телефона клиента (external_number)
-  const clientPhone = payload.external_number ?? payload.caller ?? payload.callee;
+  // Ищем сделку: если передан forceDealId — используем его напрямую, иначе ищем по телефону
   let dealId: number | null = null;
   let pipelineId: number | null = null;
   let stageId: number | null = null;
 
-  if (clientPhone) {
-    const found = await lookupDealByPhone(clientPhone);
-    if (found) {
-      dealId = found.dealId;
-      pipelineId = found.pipelineId;
-      stageId = found.stageId;
-      console.log("[CallWorker] Deal found by phone:", {
-        phone: clientPhone,
-        dealId,
-        pipelineId,
-        stageId,
-        qualifying: isQualifyingDeal(pipelineId, stageId),
+  if (forceDealId) {
+    await ensureDealInDb(forceDealId);
+    dealId = forceDealId;
+    console.log("[CallWorker] Deal forced by caller:", { dealId });
+  } else {
+    const clientPhone = payload.external_number ?? payload.caller ?? payload.callee;
+    if (clientPhone) {
+      let found = await lookupDealByPhone(clientPhone);
+
+      if (!found) {
+        console.log("[CallWorker] Phone not in local DB, falling back to amoCRM:", clientPhone);
+        found = await lookupDealByPhoneFromAmo(clientPhone);
+      }
+
+      if (found) {
+        dealId = found.dealId;
+        pipelineId = found.pipelineId;
+        stageId = found.stageId;
+        console.log("[CallWorker] Deal found:", {
+          phone: clientPhone,
+          dealId,
+          pipelineId,
+          stageId,
+          qualifying: isQualifyingDeal(pipelineId, stageId),
+        });
+      }
+    }
+  }
+
+  // Если запись уже существовала (но без сделки) — обновляем dealId и возвращаем
+  if (existing) {
+    if (dealId) {
+      await prisma.call.update({
+        where: { id: existing.id },
+        data: { dealId, processingStatus: "queued" },
       });
     }
+    return { id: existing.id, dealId, pipelineId, stageId };
   }
 
   const now = new Date();
@@ -106,7 +138,7 @@ async function processCallJob(jobData: CallProcessingJobData) {
     direction: payload.direction,
   });
 
-  const { id: callId, dealId, pipelineId, stageId } = await ensureCallRecord(payload);
+  const { id: callId, dealId, pipelineId, stageId } = await ensureCallRecord(payload, jobData.forceDealId);
   console.log("[CallWorker] Call record:", { callId, dealId, pipelineId, stageId });
 
   // Проверяем что сделка в квалифицирующей стадии
@@ -126,8 +158,24 @@ async function processCallJob(jobData: CallProcessingJobData) {
       return;
     }
   }
-  // Если сделка не найдена (dealId=null) — продолжаем анализ без привязки к сделке
-  // (запишем в Sheets, но не добавим примечание в amoCRM)
+  // Если сделка не найдена (dealId=null) — пропускаем анализ и уведомляем админов
+  if (dealId === null && !jobData.forceDealId) {
+    await prisma.call.update({
+      where: { id: callId },
+      data: { processingStatus: "skipped_no_deal" },
+    });
+    console.log("[CallWorker] Skipped: no deal found for call", { callId, uuid: payload.uuid });
+    const duration = Math.round(payload.duration / 60);
+    const phone = payload.external_number ?? payload.caller ?? payload.callee ?? "—";
+    await notifyAdmins(
+      `⚠️ Звонок без сделки (пропущен)\n\n` +
+      `📞 Телефон: ${phone}\n` +
+      `⏱ Длительность: ${duration} мин\n` +
+      `🆔 UUID: ${payload.uuid}\n\n` +
+      `Сделка по этому номеру не найдена в amoCRM. Звонок не проанализирован.`
+    );
+    return;
+  }
 
   // Транскрибация аудио через Gemini
   let transcriptText = "";
@@ -252,7 +300,7 @@ async function processCallJob(jobData: CallProcessingJobData) {
       (analysis.weaknesses || []).join("; "),
       (analysis.recommendations || []).join("; "),
       payload.record_url
-        ? `=HYPERLINK("${payload.record_url}","▶ Слушать")`
+        ? `=HYPERLINK("${payload.record_url}";"▶ Слушать")`
         : "",
     ]);
     console.log("[CallWorker] Appended to Google Sheets:", { callId });

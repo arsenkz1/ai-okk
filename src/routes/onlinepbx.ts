@@ -83,16 +83,31 @@ function normalizeOnlinePbxPayload(raw: any): OnlinePbxWebhookPayload | null {
 
 router.post("/webhooks/onlinepbx/call-end", async (req, res) => {
   const raw = req.body;
+  console.log("[OnlinePBX] Webhook received:", JSON.stringify(raw));
+
+  if (raw?.event === "test_webhook") {
+    console.log(`[OnlinePBX] Test webhook from domain=${raw.domain}`);
+    return res.status(200).json({ ok: true });
+  }
+
   const payload = normalizeOnlinePbxPayload(raw);
 
   if (!payload) {
+    console.warn("[OnlinePBX] Invalid payload, skipping");
     return res.status(400).json({ error: "Invalid payload" });
   }
 
   // Фильтр по длительности: меньше 8 минут — не обрабатываем.
   if (payload.duration < 8 * 60) {
+    console.log(
+      `[OnlinePBX] Short call skipped: uuid=${payload.uuid} duration=${payload.duration}s`
+    );
     return res.status(200).json({ skipped: true, reason: "short_call" });
   }
+
+  console.log(
+    `[OnlinePBX] Queuing call: uuid=${payload.uuid} duration=${payload.duration}s direction=${payload.direction} from=${payload.caller} to=${payload.callee}`
+  );
 
   const jobData = {
     callExternalId: payload.uuid,
@@ -105,6 +120,7 @@ router.post("/webhooks/onlinepbx/call-end", async (req, res) => {
   // здесь просто ставим задачу в очередь.
   await callProcessingQueue.add("process_call", jobData);
 
+  console.log(`[OnlinePBX] Call queued successfully: uuid=${payload.uuid}`);
   res.status(200).json({ queued: true });
 });
 
