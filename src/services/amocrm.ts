@@ -126,31 +126,47 @@ export async function lookupDealByPhoneFromAmo(rawPhone: string): Promise<{
 
   console.log(`[AmoSync] Fallback: searching contact by phone ${normalized} in amoCRM`);
 
-  let contact: any;
+  let contacts: any[];
   try {
     const data = await amoGet(
-      `/api/v4/contacts?query=${encodeURIComponent(normalized)}&with=leads&limit=1`
+      `/api/v4/contacts?query=${encodeURIComponent(normalized)}&with=leads&limit=250`
     );
-    contact = data?._embedded?.contacts?.[0];
+    contacts = data?._embedded?.contacts ?? [];
   } catch (err: any) {
     console.error("[AmoSync] Fallback phone search failed:", err.message);
     return null;
   }
 
-  if (!contact) {
-    console.log(`[AmoSync] Fallback: no contact found for phone ${normalized}`);
+  if (!contacts.length) {
+    console.log(`[AmoSync] Fallback: no contacts found for phone ${normalized}`);
     return null;
   }
 
-  const contactId: number = contact.id;
-  const contactName: string | null = contact.name ?? null;
-  const phones = extractPhones(contact);
-  const leadIds: number[] = contact._embedded?.leads?.map((l: any) => l.id) ?? [];
+  console.log(`[AmoSync] Fallback: found ${contacts.length} contact(s) for phone ${normalized}`);
 
-  const deals = leadIds.length ? await fetchDealsInfo(leadIds) : [];
+  // Собираем все lead_id со всех контактов (дедупликация)
+  const allLeadIds = new Set<number>();
+  for (const c of contacts) {
+    for (const l of c._embedded?.leads ?? []) {
+      allLeadIds.add(l.id);
+    }
+  }
 
-  // Сохраняем в локальную БД (lazy-sync)
-  await upsertPhoneMappingForContact(contactId, contactName, phones.length ? phones : [rawPhone], deals);
+  const deals = allLeadIds.size ? await fetchDealsInfo([...allLeadIds]) : [];
+
+  // Сохраняем каждый контакт в локальную БД (lazy-sync)
+  for (const c of contacts) {
+    const phones = extractPhones(c);
+    const contactDeals = deals.filter((d) =>
+      (c._embedded?.leads ?? []).some((l: any) => l.id === d.id)
+    );
+    await upsertPhoneMappingForContact(
+      c.id,
+      c.name ?? null,
+      phones.length ? phones : [rawPhone],
+      contactDeals
+    );
+  }
 
   const sortedByDate = [...deals].sort(
     (a, b) => b.amoUpdatedAt.getTime() - a.amoUpdatedAt.getTime()
@@ -160,7 +176,7 @@ export async function lookupDealByPhoneFromAmo(rawPhone: string): Promise<{
     sortedByDate.find((d) => QUALIFYING_PIPELINE_IDS.includes(d.pipelineId));
 
   if (!bestDeal) {
-    console.log(`[AmoSync] Fallback: contact ${contactId} found but no qualifying deal`);
+    console.log(`[AmoSync] Fallback: ${contacts.length} contact(s) found but no qualifying deal for phone ${normalized}`);
     return null;
   }
 
