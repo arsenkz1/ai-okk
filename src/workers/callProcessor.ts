@@ -23,7 +23,7 @@ import {
 async function ensureCallRecord(
   payload: OnlinePbxWebhookPayload,
   forceDealId?: number
-): Promise<{ id: number; dealId: number | null; pipelineId: number | null; stageId: number | null }> {
+): Promise<{ id: number; dealId: number | null; pipelineId: number | null; stageId: number | null; skipNotify?: boolean }> {
   const existing = await prisma.call.findUnique({
     where: {
       externalId_source: {
@@ -63,6 +63,7 @@ async function ensureCallRecord(
   let dealId: number | null = null;
   let pipelineId: number | null = null;
   let stageId: number | null = null;
+  let skipNotify = false;
 
   if (forceDealId) {
     await ensureDealInDb(forceDealId);
@@ -73,7 +74,13 @@ async function ensureCallRecord(
       let found = await lookupDealByPhone(clientPhone);
 
       if (!found) {
-        found = await lookupDealByPhoneFromAmo(clientPhone);
+        const amoResult = await lookupDealByPhoneFromAmo(clientPhone);
+        if (amoResult && 'contactFound' in amoResult) {
+          // контакт найден, но сделка не в нужной воронке — пропускаем без уведомления
+          skipNotify = true;
+        } else {
+          found = amoResult;
+        }
       }
 
       if (found) {
@@ -92,7 +99,7 @@ async function ensureCallRecord(
         data: { dealId, processingStatus: "queued" },
       });
     }
-    return { id: existing.id, dealId, pipelineId, stageId };
+    return { id: existing.id, dealId, pipelineId, stageId, skipNotify };
   }
 
   const now = new Date();
@@ -116,7 +123,7 @@ async function ensureCallRecord(
     },
   });
 
-  return { id: call.id, dealId, pipelineId, stageId };
+  return { id: call.id, dealId, pipelineId, stageId, skipNotify };
 }
 
 async function processCallJob(jobData: CallProcessingJobData) {
@@ -128,7 +135,7 @@ async function processCallJob(jobData: CallProcessingJobData) {
     direction: payload.direction,
   });
 
-  const { id: callId, dealId, pipelineId, stageId } = await ensureCallRecord(payload, jobData.forceDealId);
+  const { id: callId, dealId, pipelineId, stageId, skipNotify } = await ensureCallRecord(payload, jobData.forceDealId);
 
   // Проверяем что сделка в квалифицирующей стадии
   // Если сделка найдена, но стадия не квалифицирующая — пропускаем анализ
@@ -147,8 +154,13 @@ async function processCallJob(jobData: CallProcessingJobData) {
       return;
     }
   }
-  // Если сделка не найдена (dealId=null) — пропускаем анализ и уведомляем админов
+  // Если сделка не найдена (dealId=null) — пропускаем анализ
+  // Уведомляем только если контакт вообще не найден в amoCRM (skipNotify=false)
   if (dealId === null && !jobData.forceDealId) {
+    if (skipNotify) {
+      await prisma.call.update({ where: { id: callId }, data: { processingStatus: "skipped_stage" } });
+      return;
+    }
     await prisma.call.update({
       where: { id: callId },
       data: { processingStatus: "skipped_no_deal" },

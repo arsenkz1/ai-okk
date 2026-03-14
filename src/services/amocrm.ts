@@ -118,13 +118,11 @@ export async function lookupDealByPhoneFromAmo(rawPhone: string): Promise<{
   dealId: number;
   pipelineId: number;
   stageId: number;
-} | null> {
+} | { contactFound: true; dealId: null } | null> {
   if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) return null;
 
   const normalized = normalizePhone(rawPhone);
   if (!normalized || normalized.length < 7) return null;
-
-  console.log(`[AmoSync] Fallback: searching contact by phone ${normalized} in amoCRM`);
 
   let contacts: any[];
   try {
@@ -138,8 +136,7 @@ export async function lookupDealByPhoneFromAmo(rawPhone: string): Promise<{
   }
 
   if (!contacts.length) {
-    console.log(`[AmoSync] Fallback: no contacts found for phone ${normalized}`);
-    return null;
+    return null; // контакт не найден → нужно уведомить
   }
 
   console.log(`[AmoSync] Fallback: found ${contacts.length} contact(s) for phone ${normalized}`);
@@ -176,8 +173,7 @@ export async function lookupDealByPhoneFromAmo(rawPhone: string): Promise<{
     sortedByDate.find((d) => QUALIFYING_PIPELINE_IDS.includes(d.pipelineId));
 
   if (!bestDeal) {
-    console.log(`[AmoSync] Fallback: ${contacts.length} contact(s) found but no qualifying deal for phone ${normalized}`);
-    return null;
+    return { contactFound: true, dealId: null }; // контакт есть, но сделка не в нужной воронке
   }
 
   console.log(`[AmoSync] Fallback: found deal ${bestDeal.id} for phone ${normalized}`);
