@@ -280,6 +280,9 @@ async function processCallJob(jobData: CallProcessingJobData) {
       payload.record_url
         ? `=HYPERLINK("${payload.record_url}";"▶ Слушать")`
         : "",
+      dealId
+        ? `=HYPERLINK("https://qadamsales.amocrm.ru/leads/detail/${dealId}";"#${dealId}")`
+        : "",
     ]);
   } catch (err) {
     console.error("[CallWorker] Failed to append to Google Sheets:", err);
