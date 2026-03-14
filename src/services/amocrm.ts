@@ -2,6 +2,7 @@ import "dotenv/config";
 import axios from "axios";
 import { prisma } from "../config/database";
 import { markDealAsWon, markDealAsLost } from "./googleSheets";
+import { callProcessingQueue } from "../queues/callProcessing";
 
 // ---------------------------------------------------------------------------
 // Конфигурация
@@ -405,6 +406,49 @@ export async function syncContactsFromAmoCrm(fromDate: Date): Promise<{
 }
 
 // ---------------------------------------------------------------------------
+// Повторная постановка в очередь пропущенных звонков по сделке
+// ---------------------------------------------------------------------------
+
+async function requeueSkippedCalls(dealId: number): Promise<void> {
+  const calls = await prisma.call.findMany({
+    where: { dealId, processingStatus: "skipped_stage" },
+  });
+
+  if (!calls.length) return;
+
+  console.log(`[AmoWebhook] Requeueing ${calls.length} skipped call(s) for deal ${dealId}`);
+
+  for (const call of calls) {
+    const startedAt = call.startedAt.toISOString().replace("T", " ").slice(0, 19);
+    const endedAt = call.endedAt.toISOString().replace("T", " ").slice(0, 19);
+
+    await callProcessingQueue.add(`requeue_${call.externalId}`, {
+      callExternalId: call.externalId,
+      source: "onlinepbx" as const,
+      receivedAt: new Date().toISOString(),
+      manualTriggered: true,
+      forceDealId: dealId,
+      payload: {
+        event: "call_end" as const,
+        uuid: call.externalId,
+        direction: call.direction as "in" | "out",
+        caller: call.direction === "in" ? "" : "",
+        callee: call.direction === "out" ? "" : "",
+        start_time: startedAt,
+        end_time: endedAt,
+        duration: call.durationSeconds,
+        status: call.status,
+        record_url: call.recordUrl ?? undefined,
+        external_number: "",
+        internal_number: "",
+      },
+    });
+
+    console.log(`[AmoWebhook] Requeued call ${call.externalId} for deal ${dealId}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Обработка вебхука от amoCRM (реалтайм обновление PhoneMapping)
 // amoCRM шлёт URL-encoded тело: contacts[update][0][id]=123
 // ---------------------------------------------------------------------------
@@ -436,6 +480,14 @@ export async function handleAmoCrmWebhook(body: any): Promise<void> {
         console.log(`[AmoWebhook] Deal ${dealId} moved to lost, marking ❌ in Sheets`);
         markDealAsLost(dealId).catch((err) =>
           console.error(`[AmoWebhook] markDealAsLost error for deal ${dealId}:`, err.message)
+        );
+      }
+
+      // Если сделка перешла в квалифицирующую стадию — ставим в очередь
+      // пропущенные ранее звонки (были skipped_stage когда стадия не подходила)
+      if (isQualifyingDeal(pipelineId, statusId)) {
+        requeueSkippedCalls(dealId).catch((err) =>
+          console.error(`[AmoWebhook] requeueSkippedCalls error for deal ${dealId}:`, err.message)
         );
       }
     }
