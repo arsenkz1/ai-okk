@@ -1,7 +1,7 @@
 import "dotenv/config";
 import axios from "axios";
 import { prisma } from "../config/database";
-import { markDealAsWon } from "./googleSheets";
+import { markDealAsWon, markDealAsLost } from "./googleSheets";
 
 // ---------------------------------------------------------------------------
 // Конфигурация
@@ -426,11 +426,18 @@ export async function handleAmoCrmWebhook(body: any): Promise<void> {
     const dealId = Number(lead?.id);
     const statusId = Number(lead?.status_id);
     const pipelineId = Number(lead?.pipeline_id);
-    if (statusId === 142 && QUALIFYING_PIPELINE_IDS.includes(pipelineId)) {
-      console.log(`[AmoWebhook] Deal ${dealId} moved to won, marking in Sheets`);
-      markDealAsWon(dealId).catch((err) =>
-        console.error(`[AmoWebhook] markDealAsWon error for deal ${dealId}:`, err.message)
-      );
+    if (QUALIFYING_PIPELINE_IDS.includes(pipelineId)) {
+      if (statusId === 142) {
+        console.log(`[AmoWebhook] Deal ${dealId} moved to won, marking ✅ in Sheets`);
+        markDealAsWon(dealId).catch((err) =>
+          console.error(`[AmoWebhook] markDealAsWon error for deal ${dealId}:`, err.message)
+        );
+      } else if (statusId === 143) {
+        console.log(`[AmoWebhook] Deal ${dealId} moved to lost, marking ❌ in Sheets`);
+        markDealAsLost(dealId).catch((err) =>
+          console.error(`[AmoWebhook] markDealAsLost error for deal ${dealId}:`, err.message)
+        );
+      }
     }
   }
 

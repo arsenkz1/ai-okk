@@ -73,11 +73,7 @@ export async function ensureSheetHeader(): Promise<void> {
   });
 }
 
-/**
- * Находит строку по dealId в колонке E (HYPERLINK с display "#dealId")
- * и ставит ✅ в колонку T ("Сделка закрыта?").
- */
-export async function markDealAsWon(dealId: number): Promise<void> {
+async function markDealInSheet(dealId: number, mark: string): Promise<void> {
   const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
   const tabName = process.env.GOOGLE_SHEETS_TAB_NAME || "Sheet1";
   if (!spreadsheetId) return;
@@ -93,19 +89,31 @@ export async function markDealAsWon(dealId: number): Promise<void> {
   const rows = res.data.values ?? [];
   const rowIndex = rows.findIndex((r) => r[0] === `#${dealId}`);
   if (rowIndex === -1) {
-    console.log(`[Sheets] markDealAsWon: row for deal ${dealId} not found`);
+    console.log(`[Sheets] markDeal: row for deal ${dealId} not found`);
     return;
   }
 
-  const sheetRow = rowIndex + 1; // 1-based
+  const sheetRow = rowIndex + 1;
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${tabName}!T${sheetRow}`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: [["✅"]] },
+    requestBody: { values: [[mark]] },
   });
 
-  console.log(`[Sheets] markDealAsWon: deal ${dealId} marked ✅ at row ${sheetRow}`);
+  console.log(`[Sheets] deal ${dealId} marked ${mark} at row ${sheetRow}`);
+}
+
+/**
+ * Находит строку по dealId в колонке E (HYPERLINK с display "#dealId")
+ * и ставит ✅ в колонку T ("Сделка закрыта?").
+ */
+export async function markDealAsWon(dealId: number): Promise<void> {
+  await markDealInSheet(dealId, "✅");
+}
+
+export async function markDealAsLost(dealId: number): Promise<void> {
+  await markDealInSheet(dealId, "❌");
 }
 
 export async function appendCallRowToSheet(row: (string | number | null)[]) {
