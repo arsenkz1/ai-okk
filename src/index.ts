@@ -3,11 +3,13 @@ import express from "express";
 import cron from "node-cron";
 import onlinepbxRouter from "./routes/onlinepbx";
 import amocrmRouter from "./routes/amocrm";
-import { syncContactsFromAmoCrm } from "./services/amocrm";
+import { syncContactsFromAmoCrm, checkAndRestoreAmoCrmWebhook } from "./services/amocrm";
 import { syncManagersFromPbx } from "./services/managerSync";
 import { sendDailyReports } from "./workers/dailyReport";
 import "./workers/callProcessor";
 import { bot } from "./bot/index"; // запускает бот в режиме polling
+import { notifyAdmins } from "./bot/notify";
+void bot; // используется через polling
 
 const app = express();
 
@@ -93,6 +95,20 @@ cron.schedule(
       console.log("[Cron] Daily reports done:", result);
     } catch (err: any) {
       console.error("[Cron] Daily reports failed:", err.message);
+    }
+  },
+  { timezone: tz }
+);
+
+// Проверка amoCRM webhook каждые 3 часа
+cron.schedule(
+  "0 */3 * * *",
+  async () => {
+    console.log("[Cron] Checking amoCRM webhook...");
+    try {
+      await checkAndRestoreAmoCrmWebhook(notifyAdmins);
+    } catch (err: any) {
+      console.error("[Cron] amoCRM webhook check failed:", err.message);
     }
   },
   { timezone: tz }

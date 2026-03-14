@@ -669,3 +669,73 @@ export async function addNoteToDeal(dealId: number, text: string): Promise<void>
     { headers: amoHeaders() }
   );
 }
+
+// ---------------------------------------------------------------------------
+// Проверка и восстановление webhook в amoCRM
+// ---------------------------------------------------------------------------
+
+const WEBHOOK_EVENTS = [
+  "leads.update",
+  "contacts.add",
+  "contacts.update",
+];
+
+export async function checkAndRestoreAmoCrmWebhook(
+  notifyFn: (text: string) => Promise<void>
+): Promise<void> {
+  if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) {
+    console.warn("[AmoWebhook] Credentials not configured, skipping check");
+    return;
+  }
+
+  const appBaseUrl = process.env.APP_BASE_URL;
+  if (!appBaseUrl) {
+    console.warn("[AmoWebhook] APP_BASE_URL not set, skipping check");
+    return;
+  }
+
+  const webhookUrl = `${appBaseUrl}/webhooks/amocrm`;
+
+  // Проверяем наличие хука
+  const isRegistered = await isWebhookRegistered(webhookUrl);
+  if (isRegistered) {
+    console.log("[AmoWebhook] Webhook is registered, OK");
+    return;
+  }
+
+  console.warn("[AmoWebhook] Webhook not found, attempting to register...");
+
+  // Две попытки регистрации
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await sleep(attempt * 1000);
+      await axios.post(
+        `${AMO_BASE_URL}/api/v4/webhooks`,
+        { destination: webhookUrl, settings: WEBHOOK_EVENTS },
+        { headers: amoHeaders() }
+      );
+      console.log(`[AmoWebhook] Webhook registered on attempt ${attempt}`);
+      return;
+    } catch (err: any) {
+      console.error(`[AmoWebhook] Register attempt ${attempt} failed:`, err.message);
+    }
+  }
+
+  // Обе попытки провалились
+  console.error("[AmoWebhook] Failed to restore webhook after 2 attempts, notifying admins");
+  await notifyFn(
+    "⚠️ amoCRM webhook не найден и не удалось его зарегистрировать после 2 попыток.\n\n" +
+    `URL: ${webhookUrl}\n\nПроверьте настройки amoCRM вручную.`
+  );
+}
+
+async function isWebhookRegistered(webhookUrl: string): Promise<boolean> {
+  try {
+    const data = await amoGet("/api/v4/webhooks");
+    const hooks: any[] = data?._embedded?.webhooks ?? [];
+    return hooks.some((h) => h.destination === webhookUrl);
+  } catch (err: any) {
+    console.error("[AmoWebhook] Failed to fetch webhooks list:", err.message);
+    return false;
+  }
+}
