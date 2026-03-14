@@ -243,29 +243,38 @@ async function processCallJob(jobData: CallProcessingJobData) {
     direction: payload.direction,
   });
 
-  console.log("[CallWorker] AI analysis result:", {
-    callId,
-    overallScore: analysis.overallScore,
-  });
+  const totalScore =
+    analysis.contextScore + analysis.needsScore + analysis.painScore + analysis.summaryScore +
+    analysis.presentationScore + analysis.pointBScore +
+    analysis.closingScore + analysis.objectionsScore + analysis.urgencyScore + analysis.agreementScore;
+
+  console.log("[CallWorker] AI analysis result:", { callId, totalScore });
+
+  const scoresJson = {
+    contextScore: analysis.contextScore,
+    needsScore: analysis.needsScore,
+    painScore: analysis.painScore,
+    summaryScore: analysis.summaryScore,
+    presentationScore: analysis.presentationScore,
+    pointBScore: analysis.pointBScore,
+    closingScore: analysis.closingScore,
+    objectionsScore: analysis.objectionsScore,
+    urgencyScore: analysis.urgencyScore,
+    agreementScore: analysis.agreementScore,
+  };
 
   await prisma.callAnalysis.upsert({
     where: { callId },
     update: {
-      overallScore: analysis.overallScore,
-      criteria: analysis.criteria,
-      strengths: analysis.strengths,
-      weaknesses: analysis.weaknesses,
-      recommendations: analysis.recommendations,
-      summary: analysis.summary,
+      overallScore: totalScore,
+      criteria: scoresJson,
+      summary: analysis.comment,
     },
     create: {
       callId,
-      overallScore: analysis.overallScore,
-      criteria: analysis.criteria,
-      strengths: analysis.strengths,
-      weaknesses: analysis.weaknesses,
-      recommendations: analysis.recommendations,
-      summary: analysis.summary,
+      overallScore: totalScore,
+      criteria: scoresJson,
+      summary: analysis.comment,
     },
   });
 
@@ -278,23 +287,40 @@ async function processCallJob(jobData: CallProcessingJobData) {
 
   // Google Sheets
   try {
+    const tz = process.env.CRON_TIMEZONE || "Asia/Almaty";
+    const dateStr = new Date().toLocaleString("ru-RU", { timeZone: tz });
+
+    const durationSec = payload.duration;
+    const durationStr = `${Math.floor(durationSec / 60)} мин ${durationSec % 60} сек`;
+
+    const callRecord = await prisma.call.findUnique({ where: { id: callId }, include: { manager: true } });
+    const managerLabel = callRecord?.manager?.name ?? payload.internal_number ?? "";
+
     await appendCallRowToSheet([
-      new Date().toISOString(), // дата записи
-      payload.uuid,
-      payload.internal_number ?? "",
-      payload.external_number ?? "",
-      payload.direction,
-      payload.duration,
-      analysis.overallScore,
-      analysis.summary,
-      (analysis.weaknesses || []).join("; "),
-      (analysis.recommendations || []).join("; "),
-      payload.record_url
-        ? `=HYPERLINK("${payload.record_url}";"▶ Слушать")`
-        : "",
-      dealId
+      dateStr,                                                          // A Дата/Время
+      payload.uuid,                                                     // B UUID
+      payload.external_number ?? "",                                    // C Телефон клиента
+      durationStr,                                                      // D Длительность
+      dealId                                                            // E Сделка ID
         ? `=HYPERLINK("https://qadamsales.amocrm.ru/leads/detail/${dealId}";"#${dealId}")`
         : "",
+      managerLabel,                                                     // F Менеджер
+      analysis.contextScore,                                            // G Текущий контекст
+      analysis.needsScore,                                              // H Выявил потребность
+      analysis.painScore,                                               // I Вытащил Боли
+      analysis.summaryScore,                                            // J Резюме
+      analysis.presentationScore,                                       // K Презентация
+      analysis.pointBScore,                                             // L Точка Б + продукт
+      analysis.closingScore,                                            // M Попытка закрытия
+      analysis.objectionsScore,                                         // N Отработка возражений
+      analysis.urgencyScore,                                            // O Срочность
+      analysis.agreementScore,                                          // P Договорённость след шаг
+      analysis.comment,                                                 // Q Комментарии по обучению
+      totalScore,                                                       // R Сумма баллов
+      payload.record_url                                                // S Ссылка на запись
+        ? `=HYPERLINK("${payload.record_url}";"▶ Слушать")`
+        : "",
+      "",                                                               // T Сделка закрыта?
     ]);
   } catch (err) {
     console.error("[CallWorker] Failed to append to Google Sheets:", err);

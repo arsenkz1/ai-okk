@@ -293,21 +293,24 @@ export async function transcribeAudioWithGemini(
 // Анализ звонка через Gemini (Zod-валидированный ответ)
 // ---------------------------------------------------------------------------
 
-const CriteriaItemSchema = z.object({
-  code: z.string().default(""),
-  name: z.string().default(""),
-  score: z.number().default(0),
-  comment: z.string().default(""),
-});
-
 const CallAnalysisSchema = z.object({
-  overallScore: z.number().nullable().optional().default(null),
-  criteria: z.array(CriteriaItemSchema).default([]),
-  strengths: z.array(z.string()).default([]),
-  weaknesses: z.array(z.string()).default([]),
-  recommendations: z.array(z.string()).default([]),
-  summary: z.string().default(""),
-  clientPortrait: z.string().default(""),
+  // Блок 1: Идентификация клиента (4 × 10 = 40)
+  contextScore:      z.number().min(1).max(10).default(1),
+  needsScore:        z.number().min(1).max(10).default(1),
+  painScore:         z.number().min(1).max(10).default(1),
+  summaryScore:      z.number().min(1).max(10).default(1),
+  // Блок 2: Презентация (2 × 10 = 20)
+  presentationScore: z.number().min(1).max(10).default(1),
+  pointBScore:       z.number().min(1).max(10).default(1),
+  // Блок 3: Закрытие (4 × 10 = 40)
+  closingScore:      z.number().min(1).max(10).default(1),
+  objectionsScore:   z.number().min(1).max(10).default(1),
+  urgencyScore:      z.number().min(1).max(10).default(1),
+  agreementScore:    z.number().min(1).max(10).default(1),
+  // Комментарий эксперта (на русском, подробный)
+  comment:           z.string().default(""),
+  // Портрет клиента (на узбекском, для примечания в amoCRM)
+  clientPortrait:    z.string().default(""),
 });
 
 export type CallAnalysisResult = z.infer<typeof CallAnalysisSchema>;
@@ -323,46 +326,65 @@ export async function analyzeCallWithGemini(
   const model = geminiModel("GEMINI_TEXT_MODEL", "gemini-2.5-flash");
 
   const fallback: CallAnalysisResult = {
-    overallScore: null,
-    criteria: [],
-    strengths: [],
-    weaknesses: [],
-    recommendations: [],
-    summary: "Анализ не выполнен: GEMINI_API_KEY не настроен.",
+    contextScore: 1, needsScore: 1, painScore: 1, summaryScore: 1,
+    presentationScore: 1, pointBScore: 1,
+    closingScore: 1, objectionsScore: 1, urgencyScore: 1, agreementScore: 1,
+    comment: "Анализ не выполнен: GEMINI_API_KEY не настроен.",
     clientPortrait: "",
   };
 
   if (!apiKey) return fallback;
 
-  const prompt = `
-Sen — qo'ng'iroq sifatini nazorat qiluvchi AI-tizimsan.
-Dialogni qat'iy JSON sxemasi bo'yicha tahlil qil:
+  const prompt = `Ты — опытный руководитель отдела продаж онлайн-школы, обучающей практическим профессиям (таргетинг, SMM, Excel, аналитика и др.).
+
+Проанализируй звонок менеджера по 10 критериям и верни строго JSON без пояснений.
+
+БЛОК 1 — Идентификация клиента (каждый критерий 1–10):
+1. contextScore — Контекст клиента: понял ли менеджер чем занимается клиент, его опыт и фон?
+   10: узнал всё (занятость, опыт, пробовал ли раньше). 7–9: 2–3 аспекта поверхностно. 4–6: одна деталь. 1–3: не интересовался.
+2. needsScore — Цель и точка А: выяснил ли менеджер что клиент хочет изменить/достичь?
+   10: клиент назвал цель, менеджер докопался до сути. 7–9: цель названа без глубины. 4–6: менеджер сам сделал вывод. 1–3: цель не выяснена.
+3. painScore — Боли и триггеры: узнал ли менеджер сильное эмоциональное переживание клиента?
+   10: боли чётко озвучены и раскрыты. 7–9: боль упомянута, но не раскрыта. 4–6: предположения без подтверждения. 1–3: боли не обсуждались.
+4. summaryScore — Резюме запроса: сделал ли менеджер итоговое резюме по клиенту?
+   10: кратко повторил суть запроса и уточнил «Я правильно понял?». 7–9: резюме частичное. 4–6: что-то повторил без оформления. 1–3: резюме не было.
+
+БЛОК 2 — Презентация (каждый критерий 1–10):
+5. presentationScore — Связь с болями: привязал ли менеджер курс к болям/потребностям клиента?
+   10: чётко связал курс с озвученными болями. 7–9: привязка есть но слабая. 4–6: презентация оторвана от контекста. 1–3: шаблонный рассказ без индивидуализации.
+6. pointBScore — Точка Б через продукт: показал ли конкретный желаемый результат?
+   10: ясно нарисовал «после» (профессия, доход, навыки). 7–9: намёк на результат. 4–6: говорил о процессе обучения, не о результате. 1–3: не рассказал к чему приведёт курс.
+
+БЛОК 3 — Закрытие (каждый критерий 1–10):
+7. closingScore — Попытка закрытия на оплату: была ли активная попытка закрыть на оплату/бронь?
+   10: прямо и уверенно предложил оплату. 7–9: попытка есть но мягкая. 4–6: намёк без действия. 1–3: попытки не было.
+8. objectionsScore — Работа с возражениями через контекст: обработал ли возражения опираясь на боли/цели клиента?
+   10: возражения обработаны со ссылкой на мотивацию клиента. 7–9: контекст использован частично. 4–6: абстрактные шаблонные ответы. 1–3: возражения не обработаны.
+9. urgencyScore — Срочность / FOMO: создал ли менеджер мотивацию принять решение сейчас?
+   10: явно усилил мотивацию (последствия откладывания, ограничения). 7–9: слабая попытка. 4–6: мягкий намёк без эффекта. 1–3: ничего не усилил.
+10. agreementScore — Договорённость по следующему шагу: есть ли конкретная договорённость ведущая к оплате?
+    10: договорились и по шагу, и по сроку оплаты. 7–9: чёткий следующий шаг но без срока. 4–6: шаг есть но не ведёт к оплате. 1–3: не договорились что будет дальше.
+
+ФОРМАТ ОТВЕТА (только JSON, без markdown):
 {
-  "overallScore": number 0-10,
-  "criteria": [
-    { "code": "greeting", "name": "Salomlashish", "score": 0-10, "comment": "..." },
-    { "code": "needs", "name": "Ehtiyojlarni aniqlash", "score": 0-10, "comment": "..." },
-    { "code": "presentation", "name": "Mahsulot taqdimoti", "score": 0-10, "comment": "..." },
-    { "code": "objections", "name": "E'tirozlar bilan ishlash", "score": 0-10, "comment": "..." },
-    { "code": "closing", "name": "Bitimni yakunlash", "score": 0-10, "comment": "..." }
-  ],
-  "strengths": ["...", "..."],
-  "weaknesses": ["...", "..."],
-  "recommendations": ["...", "..."],
-  "summary": "2-3 gapdan iborat qisqa xulosa",
-  "clientPortrait": "Mijoz portreti: ismi (agar aytilgan bo'lsa), taxminiy yoshi, sohasi/kasbi, asosiy ehtiyoji, munosabati va xulq-atvori haqida 2-4 gapdan iborat qisqa tavsif"
+  "contextScore": <1–10>,
+  "needsScore": <1–10>,
+  "painScore": <1–10>,
+  "summaryScore": <1–10>,
+  "presentationScore": <1–10>,
+  "pointBScore": <1–10>,
+  "closingScore": <1–10>,
+  "objectionsScore": <1–10>,
+  "urgencyScore": <1–10>,
+  "agreementScore": <1–10>,
+  "comment": "<подробный разбор на русском: по каждому критерию номер, название, балл и пояснение — что сделано хорошо, где провал. В конце: Рекомендации по улучшению — 3–4 конкретных пункта>",
+  "clientPortrait": "<портрет клиента на узбекском (lotin): ismi (agar aytilgan bo'lsa), taxminiy yoshi, sohasi, asosiy ehtiyoji, xulq-atvori — 2–4 gap>"
 }
 
-MUHIM: barcha matn maydonlarini (summary, comment, strengths, weaknesses, recommendations, clientPortrait) O'ZBEK TILIDA (lotin alifbosi) yoz.
-FAQAT JSON qaytар, tushuntirish va formatirlashsiz.
+Длительность звонка: ${metadata.durationSeconds} сек. Направление: ${metadata.direction}.
 
-Meta-ma'lumotlar:
-- davomiyligi (sek): ${metadata.durationSeconds}
-- yo'nalishi: ${metadata.direction}
-
-Dialog:
-${transcript}
-`;
+Диалог:
+${transcript}`;
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -376,7 +398,6 @@ ${transcript}
     const rawText =
       response.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
 
-    // Убираем markdown-обёртку ```json ... ```
     const text = rawText
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```\s*$/, "")
@@ -387,21 +408,26 @@ ${transcript}
       parsed = JSON.parse(text);
     } catch {
       console.error("[Gemini] analyzeCall: failed to parse JSON:", text.slice(0, 200));
-      return { ...fallback, summary: "Анализ не выполнен из-за ошибки формата ответа AI." };
+      return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI." };
     }
 
     const validated = CallAnalysisSchema.safeParse(parsed);
     if (!validated.success) {
       console.error("[Gemini] analyzeCall: Zod validation failed:", validated.error.message);
-      // Пробуем частичное восстановление из сырых данных
       const raw = parsed as Record<string, unknown>;
+      const num = (k: string) => typeof raw[k] === "number" ? raw[k] as number : 1;
       return {
-        overallScore: typeof raw.overallScore === "number" ? raw.overallScore : null,
-        criteria: Array.isArray(raw.criteria) ? raw.criteria as any : [],
-        strengths: Array.isArray(raw.strengths) ? raw.strengths as string[] : [],
-        weaknesses: Array.isArray(raw.weaknesses) ? raw.weaknesses as string[] : [],
-        recommendations: Array.isArray(raw.recommendations) ? raw.recommendations as string[] : [],
-        summary: typeof raw.summary === "string" ? raw.summary : "",
+        contextScore: num("contextScore"),
+        needsScore: num("needsScore"),
+        painScore: num("painScore"),
+        summaryScore: num("summaryScore"),
+        presentationScore: num("presentationScore"),
+        pointBScore: num("pointBScore"),
+        closingScore: num("closingScore"),
+        objectionsScore: num("objectionsScore"),
+        urgencyScore: num("urgencyScore"),
+        agreementScore: num("agreementScore"),
+        comment: typeof raw.comment === "string" ? raw.comment : "",
         clientPortrait: typeof raw.clientPortrait === "string" ? raw.clientPortrait : "",
       };
     }
@@ -409,6 +435,6 @@ ${transcript}
     return validated.data;
   } catch (error: any) {
     console.error("[Gemini] analyzeCall error:", error.message ?? error);
-    return { ...fallback, summary: "Анализ не выполнен из-за ошибки AI-сервиса." };
+    return { ...fallback, comment: "Анализ не выполнен из-за ошибки AI-сервиса." };
   }
 }

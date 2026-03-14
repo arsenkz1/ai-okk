@@ -25,8 +25,57 @@ function getSheetsClient(): sheets_v4.Sheets {
   return sheetsClient;
 }
 
+export const SHEET_HEADERS = [
+  "Дата/Время",        // A
+  "UUID",              // B
+  "Телефон клиента",   // C
+  "Длительность",      // D
+  "Сделка ID",         // E
+  "Менеджер",          // F
+  "Текущий контекст",  // G
+  "Выявил потребность",// H
+  "Вытащил Боли",      // I
+  "Резюме",            // J
+  "Презентация",       // K
+  "Точка Б + продукт", // L
+  "Попытка закрытия",  // M
+  "Отработка возражений", // N
+  "Срочность",         // O
+  "Договорённость след шаг", // P
+  "Комментарии по обучению", // Q
+  "Сумма баллов",      // R
+  "Ссылка на запись",  // S
+  "Сделка закрыта?",   // T
+];
+
 /**
- * Находит строку по dealId в колонке L и ставит ✅ в колонку M.
+ * Записывает строку заголовков если лист пустой.
+ */
+export async function ensureSheetHeader(): Promise<void> {
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  const tabName = process.env.GOOGLE_SHEETS_TAB_NAME || "Sheet1";
+  if (!spreadsheetId) return;
+
+  const sheets = getSheetsClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${tabName}!A1:A1`,
+  });
+
+  const firstCell = res.data.values?.[0]?.[0];
+  if (firstCell) return; // заголовок уже есть
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${tabName}!A1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [SHEET_HEADERS] },
+  });
+}
+
+/**
+ * Находит строку по dealId в колонке E (HYPERLINK с display "#dealId")
+ * и ставит ✅ в колонку T ("Сделка закрыта?").
  */
 export async function markDealAsWon(dealId: number): Promise<void> {
   const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
@@ -37,7 +86,7 @@ export async function markDealAsWon(dealId: number): Promise<void> {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${tabName}!L:L`,
+    range: `${tabName}!E:E`,
     valueRenderOption: "FORMATTED_VALUE",
   });
 
@@ -51,7 +100,7 @@ export async function markDealAsWon(dealId: number): Promise<void> {
   const sheetRow = rowIndex + 1; // 1-based
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${tabName}!M${sheetRow}`,
+    range: `${tabName}!T${sheetRow}`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [["✅"]] },
   });
@@ -67,14 +116,15 @@ export async function appendCallRowToSheet(row: (string | number | null)[]) {
   }
 
   const sheets = getSheetsClient();
+  const tabName = process.env.GOOGLE_SHEETS_TAB_NAME || "Sheet1";
+
+  await ensureSheetHeader();
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${process.env.GOOGLE_SHEETS_TAB_NAME || "Sheet1"}!A:Z`,
+    range: `${tabName}!A:T`,
     valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [row],
-    },
+    requestBody: { values: [row] },
   });
 }
 
