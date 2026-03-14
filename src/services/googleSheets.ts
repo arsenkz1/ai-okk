@@ -25,6 +25,40 @@ function getSheetsClient(): sheets_v4.Sheets {
   return sheetsClient;
 }
 
+/**
+ * Находит строку по dealId в колонке L и ставит ✅ в колонку M.
+ */
+export async function markDealAsWon(dealId: number): Promise<void> {
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  const tabName = process.env.GOOGLE_SHEETS_TAB_NAME || "Sheet1";
+  if (!spreadsheetId) return;
+
+  const sheets = getSheetsClient();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${tabName}!L:L`,
+    valueRenderOption: "FORMATTED_VALUE",
+  });
+
+  const rows = res.data.values ?? [];
+  const rowIndex = rows.findIndex((r) => r[0] === `#${dealId}`);
+  if (rowIndex === -1) {
+    console.log(`[Sheets] markDealAsWon: row for deal ${dealId} not found`);
+    return;
+  }
+
+  const sheetRow = rowIndex + 1; // 1-based
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${tabName}!M${sheetRow}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["✅"]] },
+  });
+
+  console.log(`[Sheets] markDealAsWon: deal ${dealId} marked ✅ at row ${sheetRow}`);
+}
+
 export async function appendCallRowToSheet(row: (string | number | null)[]) {
   const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
   if (!spreadsheetId) {
