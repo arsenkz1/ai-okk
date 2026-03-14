@@ -398,16 +398,18 @@ ${transcript}`;
     const rawText =
       response.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
 
-    const text = rawText
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```\s*$/, "")
-      .trim();
+    // Извлекаем JSON: ищем первый { и последний } в ответе
+    const jsonStart = rawText.indexOf("{");
+    const jsonEnd = rawText.lastIndexOf("}");
+    const text = jsonStart !== -1 && jsonEnd > jsonStart
+      ? rawText.slice(jsonStart, jsonEnd + 1)
+      : rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
     } catch {
-      console.error("[Gemini] analyzeCall: failed to parse JSON:", text.slice(0, 200));
+      console.error("[Gemini] analyzeCall: failed to parse JSON:", rawText.slice(0, 300));
       return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI." };
     }
 
