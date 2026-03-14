@@ -56,7 +56,6 @@ async function ensureCallRecord(
     });
     if (mgr?.isActive) {
       managerId = mgr.id;
-      console.log("[CallWorker] Manager found:", { internalNumber: payload.internal_number, managerId, name: mgr.name });
     }
   }
 
@@ -68,14 +67,12 @@ async function ensureCallRecord(
   if (forceDealId) {
     await ensureDealInDb(forceDealId);
     dealId = forceDealId;
-    console.log("[CallWorker] Deal forced by caller:", { dealId });
   } else {
     const clientPhone = payload.external_number ?? payload.caller ?? payload.callee;
     if (clientPhone) {
       let found = await lookupDealByPhone(clientPhone);
 
       if (!found) {
-        console.log("[CallWorker] Phone not in local DB, falling back to amoCRM:", clientPhone);
         found = await lookupDealByPhoneFromAmo(clientPhone);
       }
 
@@ -83,13 +80,6 @@ async function ensureCallRecord(
         dealId = found.dealId;
         pipelineId = found.pipelineId;
         stageId = found.stageId;
-        console.log("[CallWorker] Deal found:", {
-          phone: clientPhone,
-          dealId,
-          pipelineId,
-          stageId,
-          qualifying: isQualifyingDeal(pipelineId, stageId),
-        });
       }
     }
   }
@@ -139,7 +129,6 @@ async function processCallJob(jobData: CallProcessingJobData) {
   });
 
   const { id: callId, dealId, pipelineId, stageId } = await ensureCallRecord(payload, jobData.forceDealId);
-  console.log("[CallWorker] Call record:", { callId, dealId, pipelineId, stageId });
 
   // Проверяем что сделка в квалифицирующей стадии
   // Если сделка найдена, но стадия не квалифицирующая — пропускаем анализ
@@ -182,7 +171,6 @@ async function processCallJob(jobData: CallProcessingJobData) {
 
   if (localFilePath) {
     // Исторический звонок: читаем локальный MP3-файл, извлечённый из TAR
-    console.log("[CallWorker] Transcribing from local file:", { callId, localFilePath });
     try {
       if (!fs.existsSync(localFilePath)) {
         console.warn("[CallWorker] Local file not found (cleaned up or never extracted):", localFilePath);
@@ -203,10 +191,6 @@ async function processCallJob(jobData: CallProcessingJobData) {
           data: { engine: "gemini" },
         });
 
-        console.log("[CallWorker] Transcript saved (from file):", {
-          callId,
-          length: transcriptText.length,
-        });
       }
     } catch (err) {
       console.error("[CallWorker] Transcription from file failed:", err);
@@ -215,7 +199,6 @@ async function processCallJob(jobData: CallProcessingJobData) {
     }
   } else if (payload.record_url) {
     // Real-time звонок: скачиваем по URL из OnlinePBX
-    console.log("[CallWorker] Transcribing audio:", { callId, url: payload.record_url });
     try {
       transcriptText = await transcribeAudioWithGemini(payload.record_url);
 
@@ -229,10 +212,6 @@ async function processCallJob(jobData: CallProcessingJobData) {
         data: { engine: "gemini" },
       });
 
-      console.log("[CallWorker] Transcript saved:", {
-        callId,
-        length: transcriptText.length,
-      });
     } catch (err) {
       console.error("[CallWorker] Transcription failed:", err);
     }
@@ -246,7 +225,6 @@ async function processCallJob(jobData: CallProcessingJobData) {
     },
   });
 
-  console.log("[CallWorker] Marked as transcribed:", { callId });
 
   const analysis = await analyzeCallWithGemini(transcriptText, {
     durationSeconds: payload.duration,
@@ -303,7 +281,6 @@ async function processCallJob(jobData: CallProcessingJobData) {
         ? `=HYPERLINK("${payload.record_url}";"▶ Слушать")`
         : "",
     ]);
-    console.log("[CallWorker] Appended to Google Sheets:", { callId });
   } catch (err) {
     console.error("[CallWorker] Failed to append to Google Sheets:", err);
   }
@@ -330,7 +307,6 @@ async function processCallJob(jobData: CallProcessingJobData) {
 
     try {
       await addNoteToDeal(dealId, noteText);
-      console.log("[CallWorker] Added amo note:", { callId, dealId });
     } catch (err) {
       console.error("[CallWorker] Failed to add amo note:", err);
     }

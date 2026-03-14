@@ -522,12 +522,6 @@ export async function syncHistoryRange(
           );
 
           stats.queued++;
-
-          if (localFilePath) {
-            console.log("[PbxHistory] Queued (with audio):", record.uuid);
-          } else {
-            console.log("[PbxHistory] Queued (no audio):", record.uuid);
-          }
         } catch (err: any) {
           console.error("[PbxHistory] Error queuing record:", record.uuid, err.message);
           stats.errors++;

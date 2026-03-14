@@ -305,25 +305,11 @@ export async function syncContactById(contactId: number): Promise<void> {
   if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) return;
 
   try {
-    console.log(`[AmoSync] Fetching contact ${contactId} from amoCRM...`);
     const data = await amoGet(`/api/v4/contacts/${contactId}?with=leads`);
     const phones = extractPhones(data);
     const leadIds: number[] = data._embedded?.leads?.map((l: any) => l.id) ?? [];
-
-    console.log(`[AmoSync] Contact ${contactId} "${data.name ?? "—"}": phones=${JSON.stringify(phones)}, leadIds=${JSON.stringify(leadIds)}`);
-
     const deals = leadIds.length ? await fetchDealsInfo(leadIds) : [];
-
-    const qualifying = deals.filter((d) => isQualifyingDeal(d.pipelineId, d.statusId));
-    console.log(
-      `[AmoSync] Contact ${contactId}: total deals=${deals.length}, qualifying=${qualifying.length}` +
-        (qualifying.length
-          ? ` [${qualifying.map((d) => `deal#${d.id} p=${d.pipelineId} s=${d.statusId}`).join(", ")}]`
-          : "")
-    );
-
     await upsertPhoneMappingForContact(contactId, data.name ?? null, phones, deals);
-    console.log(`[AmoSync] ✓ PhoneMapping updated for contact ${contactId}`);
   } catch (err: any) {
     console.error(`[AmoSync] Failed to sync contact ${contactId}:`, err.message);
   }
@@ -436,13 +422,11 @@ export async function handleAmoCrmWebhook(body: any): Promise<void> {
   }
 
   if (leadIds.length) {
-    console.log(`[AmoWebhook] Resolving contacts for lead IDs: ${leadIds.join(", ")}`);
     for (const leadId of leadIds) {
       try {
         const data = await amoGet(`/api/v4/leads/${leadId}?with=contacts`);
         const embedded: any[] = data?._embedded?.contacts ?? [];
         embedded.forEach((c) => c?.id && contactIds.add(Number(c.id)));
-        console.log(`[AmoWebhook] Lead ${leadId} → contacts: ${embedded.map((c) => c.id).join(", ") || "none"}`);
       } catch (err: any) {
         console.error(`[AmoWebhook] Failed to resolve contacts for lead ${leadId}:`, err.message);
       }
@@ -450,12 +434,7 @@ export async function handleAmoCrmWebhook(body: any): Promise<void> {
     }
   }
 
-  console.log(`[AmoWebhook] Contacts to sync: [${[...contactIds].join(", ")}] (total: ${contactIds.size})`);
-
-  if (!contactIds.size) {
-    console.log("[AmoWebhook] No contacts found in webhook body, nothing to sync");
-    return;
-  }
+  if (!contactIds.size) return;
 
   for (const contactId of contactIds) {
     await syncContactById(contactId);
