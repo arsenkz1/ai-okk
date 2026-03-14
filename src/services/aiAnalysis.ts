@@ -307,6 +307,7 @@ const CallAnalysisSchema = z.object({
   weaknesses: z.array(z.string()).default([]),
   recommendations: z.array(z.string()).default([]),
   summary: z.string().default(""),
+  clientPortrait: z.string().default(""),
 });
 
 export type CallAnalysisResult = z.infer<typeof CallAnalysisSchema>;
@@ -328,6 +329,7 @@ export async function analyzeCallWithGemini(
     weaknesses: [],
     recommendations: [],
     summary: "Анализ не выполнен: GEMINI_API_KEY не настроен.",
+    clientPortrait: "",
   };
 
   if (!apiKey) return fallback;
@@ -347,10 +349,11 @@ Dialogni qat'iy JSON sxemasi bo'yicha tahlil qil:
   "strengths": ["...", "..."],
   "weaknesses": ["...", "..."],
   "recommendations": ["...", "..."],
-  "summary": "2-3 gapdan iborat qisqa xulosa"
+  "summary": "2-3 gapdan iborat qisqa xulosa",
+  "clientPortrait": "Mijoz portreti: ismi (agar aytilgan bo'lsa), taxminiy yoshi, sohasi/kasbi, asosiy ehtiyoji, munosabati va xulq-atvori haqida 2-4 gapdan iborat qisqa tavsif"
 }
 
-MUHIM: barcha matn maydonlarini (summary, comment, strengths, weaknesses, recommendations) O'ZBEK TILIDA (lotin alifbosi) yoz.
+MUHIM: barcha matn maydonlarini (summary, comment, strengths, weaknesses, recommendations, clientPortrait) O'ZBEK TILIDA (lotin alifbosi) yoz.
 FAQAT JSON qaytар, tushuntirish va formatirlashsiz.
 
 Meta-ma'lumotlar:
@@ -399,6 +402,7 @@ ${transcript}
         weaknesses: Array.isArray(raw.weaknesses) ? raw.weaknesses as string[] : [],
         recommendations: Array.isArray(raw.recommendations) ? raw.recommendations as string[] : [],
         summary: typeof raw.summary === "string" ? raw.summary : "",
+        clientPortrait: typeof raw.clientPortrait === "string" ? raw.clientPortrait : "",
       };
     }
 

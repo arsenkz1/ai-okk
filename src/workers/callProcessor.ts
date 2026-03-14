@@ -300,28 +300,10 @@ async function processCallJob(jobData: CallProcessingJobData) {
     console.error("[CallWorker] Failed to append to Google Sheets:", err);
   }
 
-  // amoCRM bitimiga izoh qo'shish
-  if (dealId) {
-    const scoreStr = analysis.overallScore !== null ? `${analysis.overallScore}/10` : "—";
-    const weaknesses = (analysis.weaknesses || []).slice(0, 3).join("\n  • ");
-    const recommendations = (analysis.recommendations || []).slice(0, 3).join("\n  • ");
-
-    const noteText = [
-      `📞 Qo'ng'iroq tahlili`,
-      `Sana: ${new Date(payload.start_time ?? Date.now()).toLocaleString("ru-RU")}`,
-      `Ball: ${scoreStr}`,
-      ``,
-      `📝 ${analysis.summary}`,
-      weaknesses ? `\n⚠️ Xatolar:\n  • ${weaknesses}` : "",
-      recommendations ? `\n💡 Tavsiyalar:\n  • ${recommendations}` : "",
-      ``,
-      `🔗 Yozuv: ${payload.record_url ?? "—"}`,
-    ]
-      .filter((line) => line !== null)
-      .join("\n");
-
+  // amoCRM bitimiga mijoz portreti izohini qo'shish
+  if (dealId && analysis.clientPortrait) {
     try {
-      await addNoteToDeal(dealId, noteText);
+      await addNoteToDeal(dealId, analysis.clientPortrait);
     } catch (err) {
       console.error("[CallWorker] Failed to add amo note:", err);
     }
