@@ -377,7 +377,7 @@ export async function analyzeCallWithGemini(
   "objectionsScore": <1–10>,
   "urgencyScore": <1–10>,
   "agreementScore": <1–10>,
-  "comment": "<подробный разбор на русском: по каждому критерию номер, название, балл и пояснение — что сделано хорошо, где провал. В конце: Рекомендации по улучшению — 3–4 конкретных пункта>",
+  "comment": "<o'zbek tilida (lotin): har bir mezon uchun raqam, nomi, ball va tushuntirish — yangi qatorda yozing (har bir gap nuqtadan keyin yangi qatordan boshlansin). Oxirida: Tavsiyalar — 3-4 ta aniq tavsiya, har biri yangi qatorda>",
   "clientPortrait": "<портрет клиента на узбекском (lotin): ismi (agar aytilgan bo'lsa), taxminiy yoshi, sohasi, asosiy ehtiyoji, xulq-atvori — 2–4 gap>"
 }
 
