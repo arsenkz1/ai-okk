@@ -139,11 +139,12 @@ export async function appendCallRowToSheet(row: (string | number | null)[]) {
     const rowIndex = rows.findIndex((r) => r[0] === uuid);
     if (rowIndex !== -1) {
       const sheetRow = rowIndex + 1;
+      // Обновляем A:S (без T "Сделка закрыта?") чтобы не затереть ✅/❌
       await sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `${tabName}!A${sheetRow}:T${sheetRow}`,
+        range: `${tabName}!A${sheetRow}:S${sheetRow}`,
         valueInputOption: "USER_ENTERED",
-        requestBody: { values: [row] },
+        requestBody: { values: [row.slice(0, 19)] },
       });
       console.log(`[Sheets] Updated existing row ${sheetRow} for UUID ${uuid}`);
       return;
