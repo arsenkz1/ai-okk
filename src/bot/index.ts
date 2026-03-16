@@ -51,6 +51,7 @@ const awaitingCode = new Set<number>();
 interface PeriodState {
   step: "from" | "to";
   from?: Date;
+  adminMode?: boolean; // true = показывать сводный отчёт по всем менеджерам
 }
 const periodState = new Map<number, PeriodState>();
 
@@ -103,6 +104,51 @@ async function requireAdmin(msg: TelegramBot.Message): Promise<boolean> {
   const ok = await isAdmin(String(msg.from!.id));
   if (!ok) await bot.sendMessage(msg.chat.id, "❌ Sizda administrator huquqlari yo'q.");
   return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Criteria helpers (new analysis schema)
+// ---------------------------------------------------------------------------
+
+const CRITERIA_LABELS: Record<string, string> = {
+  contextScore:     "Kontekst",
+  needsScore:       "Ehtiyojni aniqlash",
+  painScore:        "Og'riqlarni topish",
+  summaryScore:     "Rezyume",
+  presentationScore:"Taqdimot",
+  pointBScore:      "Nuqta B (natija)",
+  closingScore:     "Yopish urinishi",
+  objectionsScore:  "E'tirozlar",
+  urgencyScore:     "Shoshilinchlik",
+  agreementScore:   "Kelishuv",
+};
+
+function getWeakAreas(criteria: unknown): string[] {
+  if (!criteria || typeof criteria !== "object") return [];
+  const c = criteria as Record<string, unknown>;
+  return Object.entries(CRITERIA_LABELS)
+    .filter(([key]) => typeof c[key] === "number" && (c[key] as number) <= 5)
+    .map(([, label]) => label);
+}
+
+function getStrongAreas(criteria: unknown): string[] {
+  if (!criteria || typeof criteria !== "object") return [];
+  const c = criteria as Record<string, unknown>;
+  return Object.entries(CRITERIA_LABELS)
+    .filter(([key]) => typeof c[key] === "number" && (c[key] as number) >= 8)
+    .map(([, label]) => label);
+}
+
+function criteriaLine(criteria: unknown): string {
+  if (!criteria || typeof criteria !== "object") return "";
+  const c = criteria as Record<string, unknown>;
+  return Object.entries(CRITERIA_LABELS)
+    .map(([key, label]) => {
+      const score = typeof c[key] === "number" ? c[key] as number : null;
+      return score !== null ? `${label}: ${score}` : null;
+    })
+    .filter(Boolean)
+    .join(", ");
 }
 
 function formatDuration(seconds: number): string {
@@ -178,9 +224,9 @@ async function buildReport(
   const weakMap: Record<string, number> = {};
   const strongMap: Record<string, number> = {};
   for (const call of calls) {
-    for (const w of (call.analysis?.weaknesses as string[] | null) ?? [])
+    for (const w of getWeakAreas(call.analysis?.criteria))
       weakMap[w] = (weakMap[w] ?? 0) + 1;
-    for (const s of (call.analysis?.strengths as string[] | null) ?? [])
+    for (const s of getStrongAreas(call.analysis?.criteria))
       strongMap[s] = (strongMap[s] ?? 0) + 1;
   }
 
@@ -201,12 +247,69 @@ async function buildReport(
     ``,
     `📞 Tahlil qilingan qo'ng'iroqlar: ${calls.length}`,
     `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
-    `⭐ O'rtacha ball: ${avgScore}/10`,
+    `⭐ O'rtacha ball: ${avgScore}/100`,
     topStrong ? `\n💪 Kuchli tomonlar:\n${topStrong}` : "",
     topWeak ? `\n⚠️ O'sish sohalari:\n${topWeak}` : "",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+async function buildAdminReport(from: Date, to: Date, label: string): Promise<string> {
+  const fromStart = new Date(from); fromStart.setHours(0, 0, 0, 0);
+  const toEnd = new Date(to); toEnd.setHours(23, 59, 59, 999);
+
+  const calls = await prisma.call.findMany({
+    where: { startedAt: { gte: fromStart, lte: toEnd }, processingStatus: "processed" },
+    include: { analysis: true, manager: true },
+    orderBy: { startedAt: "desc" },
+  });
+
+  if (!calls.length) {
+    return `📊 ${label} uchun umumiy hisobot\n\nBu davr uchun tahlil qilingan qo'ng'iroqlar topilmadi.`;
+  }
+
+  const totalTalk = calls.reduce((a, c) => a + c.durationSeconds, 0);
+  const allScores = calls.map(c => c.analysis?.overallScore).filter((s): s is number => s !== null && s !== undefined);
+  const avgScore = allScores.length ? (allScores.reduce((a, b) => a + b, 0) / allScores.length).toFixed(1) : "—";
+
+  // Рейтинг менеджеров
+  const mgrMap = new Map<string, { total: number; count: number }>();
+  for (const call of calls) {
+    const name = call.manager?.name ?? "Noma'lum";
+    const score = call.analysis?.overallScore;
+    if (score === null || score === undefined) continue;
+    const cur = mgrMap.get(name) ?? { total: 0, count: 0 };
+    mgrMap.set(name, { total: cur.total + score, count: cur.count + 1 });
+  }
+  const mgrRating = [...mgrMap.entries()]
+    .map(([name, { total, count }]) => ({ name, avg: total / count, count }))
+    .sort((a, b) => b.avg - a.avg)
+    .map((m, i) => `${i + 1}. ${m.name} — ${m.avg.toFixed(0)}/100 (${m.count} ta)`)
+    .join("\n");
+
+  // Топ слабых критериев
+  const weakMap: Record<string, number> = {};
+  for (const call of calls)
+    for (const w of getWeakAreas(call.analysis?.criteria))
+      weakMap[w] = (weakMap[w] ?? 0) + 1;
+  const topWeak = Object.entries(weakMap)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([w, n]) => `  • ${w} (${n}×)`)
+    .join("\n");
+
+  const managerCount = new Set(calls.map(c => c.managerId).filter(Boolean)).size;
+
+  return [
+    `📊 ${label} uchun umumiy hisobot`,
+    ``,
+    `👥 Menejerlar: ${managerCount} (jami ${calls.length} ta qo'ng'iroq)`,
+    `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
+    `⭐ O'rtacha ball: ${avgScore}/100`,
+    `\n📈 Menejerlar reytingi:\n${mgrRating}`,
+    topWeak ? `\n⚠️ Eng zaif kriteriyalar:\n${topWeak}` : "",
+  ].filter(Boolean).join("\n");
 }
 
 function presetRange(preset: "day" | "week" | "month"): { from: Date; to: Date; label: string } {
@@ -316,14 +419,15 @@ async function buildAiSystemPrompt(
           const date = c.startedAt.toLocaleDateString("ru-RU");
           const score = c.analysis?.overallScore ?? "—";
           const summary = c.analysis?.summary ?? "";
-          const strengths = ((c.analysis?.strengths as string[] | null) ?? []).join(", ");
-          const weak = ((c.analysis?.weaknesses as string[] | null) ?? []).join(", ");
-          const recs = ((c.analysis?.recommendations as string[] | null) ?? []).join(", ");
+          const criteria = criteriaLine(c.analysis?.criteria);
+          const weak = getWeakAreas(c.analysis?.criteria).join(", ");
+          const strong = getStrongAreas(c.analysis?.criteria).join(", ");
           return (
-            `  • ${date} | ball ${score}/10${summary ? ` | ${summary}` : ""}` +
-            (strengths ? `\n    Kuchli tomonlar: ${strengths}` : "") +
-            (weak ? `\n    Xatolar: ${weak}` : "") +
-            (recs ? `\n    Tavsiyalar: ${recs}` : "")
+            `  • ${date} | ball ${score}/100` +
+            (criteria ? `\n    Kriteriyalar: ${criteria}` : "") +
+            (strong ? `\n    Kuchli: ${strong}` : "") +
+            (weak ? `\n    Zaif: ${weak}` : "") +
+            (summary ? `\n    Izoh: ${summary.slice(0, 300)}` : "")
           );
         })
         .join("\n")
@@ -377,6 +481,16 @@ bot.onText(/\/start$/, async (msg) => {
         `/ask oy — joriy oy\n\n` +
         `📋 *Boshqa:*\n` +
         `/errors — mening tez-tez xatolarim`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+
+  // Админам не нужен код — показываем admin меню
+  if (await isAdmin(tgId)) {
+    await bot.sendMessage(
+      msg.chat.id,
+      `👋 Salom, Admin!\n\nBarcha buyruqlarni ko'rish uchun /help kiriting.`,
       { parse_mode: "Markdown" }
     );
     return;
@@ -571,17 +685,21 @@ bot.on("message", async (msg) => {
       return;
     }
 
+    await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
+    const fmt = (d: Date) => `${d.getDate().toString().padStart(2,"0")}.${(d.getMonth()+1).toString().padStart(2,"0")}.${d.getFullYear()}`;
+    const label = `${fmt(from)} — ${fmt(to)}`;
+
+    if (state.adminMode) {
+      await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label));
+      return;
+    }
+
     const manager = await getManager(tgId);
     if (!manager) {
       await bot.sendMessage(msg.chat.id, "❌ Siz avtorizatsiya qilinmagansiz.");
       return;
     }
-
-    await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
-    const fmt = (d: Date) => `${d.getDate().toString().padStart(2,"0")}.${(d.getMonth()+1).toString().padStart(2,"0")}.${d.getFullYear()}`;
-    const label = `${fmt(from)} — ${fmt(to)}`;
-    const text = await buildReport(manager.id, from, to, label);
-    await bot.sendMessage(msg.chat.id, text);
+    await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
     return;
   }
 
@@ -612,28 +730,40 @@ bot.on("message", async (msg) => {
 
 bot.onText(/\/report$/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  const tgId = String(msg.from!.id);
+  const { from, to, label } = presetRange("day");
+  await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
+  if (await isAdmin(tgId) && !(await getManager(tgId))) {
+    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label));
+  }
   const manager = await requireManager(msg);
   if (!manager) return;
-  await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
-  const { from, to, label } = presetRange("day");
   await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
 });
 
 bot.onText(/\/week$/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  const tgId = String(msg.from!.id);
+  const { from, to, label } = presetRange("week");
+  await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
+  if (await isAdmin(tgId) && !(await getManager(tgId))) {
+    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label));
+  }
   const manager = await requireManager(msg);
   if (!manager) return;
-  await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
-  const { from, to, label } = presetRange("week");
   await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
 });
 
 bot.onText(/\/month$/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  const tgId = String(msg.from!.id);
+  const { from, to, label } = presetRange("month");
+  await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
+  if (await isAdmin(tgId) && !(await getManager(tgId))) {
+    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label));
+  }
   const manager = await requireManager(msg);
   if (!manager) return;
-  await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
-  const { from, to, label } = presetRange("month");
   await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
 });
 
@@ -643,10 +773,13 @@ bot.onText(/\/month$/, async (msg) => {
 
 bot.onText(/\/period$/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
-  const manager = await requireManager(msg);
-  if (!manager) return;
-
-  periodState.set(msg.from!.id, { step: "from" });
+  const tgId = String(msg.from!.id);
+  const adminMode = await isAdmin(tgId) && !(await getManager(tgId));
+  if (!adminMode) {
+    const manager = await requireManager(msg);
+    if (!manager) return;
+  }
+  periodState.set(msg.from!.id, { step: "from", adminMode });
   await bot.sendMessage(
     msg.chat.id,
     `📅 Davr *boshlanish sanasini* KK.OO.YYYY formatida kiriting:\n\nMasalan: \`01.03.2026\``,
@@ -660,20 +793,30 @@ bot.onText(/\/period$/, async (msg) => {
 
 bot.onText(/\/errors$/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
-  const manager = await requireManager(msg);
-  if (!manager) return;
+  const tgId = String(msg.from!.id);
+  const adminMode = await isAdmin(tgId) && !(await getManager(tgId));
 
   const from = new Date();
   from.setDate(from.getDate() - 30);
 
-  const calls = await prisma.call.findMany({
-    where: { managerId: manager.id, startedAt: { gte: from }, processingStatus: "processed" },
-    include: { analysis: true },
-  });
+  let calls: Awaited<ReturnType<typeof prisma.call.findMany<{ include: { analysis: true } }>>>;
+  if (adminMode) {
+    calls = await prisma.call.findMany({
+      where: { startedAt: { gte: from }, processingStatus: "processed" },
+      include: { analysis: true },
+    });
+  } else {
+    const manager = await requireManager(msg);
+    if (!manager) return;
+    calls = await prisma.call.findMany({
+      where: { managerId: manager.id, startedAt: { gte: from }, processingStatus: "processed" },
+      include: { analysis: true },
+    });
+  }
 
   const weakMap: Record<string, number> = {};
   for (const call of calls)
-    for (const w of (call.analysis?.weaknesses as string[] | null) ?? [])
+    for (const w of getWeakAreas(call.analysis?.criteria))
       weakMap[w] = (weakMap[w] ?? 0) + 1;
 
   if (!Object.keys(weakMap).length) {
