@@ -533,14 +533,12 @@ bot.onText(/\/help$/, async (msg) => {
         `/analyze\\_deal <deal\\_id> — bitim bo'yicha so'nggi qo'ng'iroqni tahlil qilish\n` +
         `/sync\\_history — qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)\n\n` +
 
-        `*Hisobotlar (siz uchun ham ishlaydi):*\n` +
+        `*Hisobotlar (jamoa bo'yicha):*\n` +
         `/report — bugungi hisobot\n` +
         `/week — so'nggi 7 kun\n` +
         `/month — joriy oy\n` +
         `/period — ixtiyoriy sana diapazoni\n` +
-        `/errors — 30 kunlik xatolar\n` +
-        `/ask [kun|hafta|oy] — AI-murabbiy\n` +
-        `/stop\\_ai — AI-murabbiy rejimidan chiqish`,
+        `/errors — 30 kunlik zaif kriteriyalar`,
       { parse_mode: "Markdown" }
     );
     return;
