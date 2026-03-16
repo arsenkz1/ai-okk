@@ -3,6 +3,7 @@ import axios from "axios";
 import { prisma } from "../config/database";
 import { markDealAsWon, markDealAsLost } from "./googleSheets";
 import { callProcessingQueue } from "../queues/callProcessing";
+import { notifyAdmins } from "../bot/notify";
 
 // ---------------------------------------------------------------------------
 // Конфигурация
@@ -49,14 +50,40 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 let lastAmoRequestAt = 0;
 const AMO_MIN_INTERVAL_MS = 500; // 1000ms / 2 req
 
-async function amoGet(path: string): Promise<any> {
+async function amoRateLimit(): Promise<void> {
   const now = Date.now();
-  const wait = lastAmoRequestAt + AMO_MIN_INTERVAL_MS - now;
+  const nextAllowed = lastAmoRequestAt + AMO_MIN_INTERVAL_MS;
+  lastAmoRequestAt = Math.max(now, nextAllowed); // резервируем слот до sleep
+  const wait = nextAllowed - now;
   if (wait > 0) await sleep(wait);
-  lastAmoRequestAt = Date.now();
+}
 
-  const r = await axios.get(`${AMO_BASE_URL}${path}`, { headers: amoHeaders() });
-  return r.data;
+async function amoGet(path: string): Promise<any> {
+  await amoRateLimit();
+  try {
+    const r = await axios.get(`${AMO_BASE_URL}${path}`, { headers: amoHeaders() });
+    return r.data;
+  } catch (err: any) {
+    if (err?.response?.status === 403) {
+      console.error(`[AmoCRM] 403 Forbidden on GET ${path}`);
+      notifyAdmins(`⛔ amoCRM 403 Forbidden\nGET ${path}\nСкорее всего запросы заблокированы.`).catch(() => {});
+    }
+    throw err;
+  }
+}
+
+async function amoPost(path: string, data: unknown): Promise<any> {
+  await amoRateLimit();
+  try {
+    const r = await axios.post(`${AMO_BASE_URL}${path}`, data, { headers: amoHeaders() });
+    return r.data;
+  } catch (err: any) {
+    if (err?.response?.status === 403) {
+      console.error(`[AmoCRM] 403 Forbidden on POST ${path}`);
+      notifyAdmins(`⛔ amoCRM 403 Forbidden\nPOST ${path}\nСкорее всего запросы заблокированы.`).catch(() => {});
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -663,11 +690,7 @@ export async function addNoteToDeal(dealId: number, text: string): Promise<void>
     return;
   }
 
-  await axios.post(
-    `${AMO_BASE_URL}/api/v4/leads/${dealId}/notes`,
-    [{ note_type: "common", params: { text } }],
-    { headers: amoHeaders() }
-  );
+  await amoPost(`/api/v4/leads/${dealId}/notes`, [{ note_type: "common", params: { text } }]);
 }
 
 // ---------------------------------------------------------------------------
@@ -709,11 +732,7 @@ export async function checkAndRestoreAmoCrmWebhook(
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       await sleep(attempt * 1000);
-      await axios.post(
-        `${AMO_BASE_URL}/api/v4/webhooks`,
-        { destination: webhookUrl, settings: WEBHOOK_EVENTS },
-        { headers: amoHeaders() }
-      );
+      await amoPost("/api/v4/webhooks", { destination: webhookUrl, settings: WEBHOOK_EVENTS });
       console.log(`[AmoWebhook] Webhook registered on attempt ${attempt}`);
       return;
     } catch (err: any) {

@@ -128,6 +128,28 @@ export async function appendCallRowToSheet(row: (string | number | null)[]) {
 
   await ensureSheetHeader();
 
+  // Проверяем есть ли уже строка с этим UUID (колонка B)
+  const uuid = row[1] as string;
+  if (uuid) {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${tabName}!B:B`,
+    });
+    const rows = res.data.values ?? [];
+    const rowIndex = rows.findIndex((r) => r[0] === uuid);
+    if (rowIndex !== -1) {
+      const sheetRow = rowIndex + 1;
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${tabName}!A${sheetRow}:T${sheetRow}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [row] },
+      });
+      console.log(`[Sheets] Updated existing row ${sheetRow} for UUID ${uuid}`);
+      return;
+    }
+  }
+
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${tabName}!A:T`,
