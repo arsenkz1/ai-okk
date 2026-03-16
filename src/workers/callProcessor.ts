@@ -329,7 +329,8 @@ async function processCallJob(jobData: CallProcessingJobData) {
   // amoCRM bitimiga mijoz portreti izohini qo'shish
   if (dealId && analysis.clientPortrait) {
     try {
-      await addNoteToDeal(dealId, analysis.clientPortrait);
+      const portrait = analysis.clientPortrait.replace(/\.\s+/g, ".\n");
+      await addNoteToDeal(dealId, portrait);
     } catch (err) {
       console.error("[CallWorker] Failed to add amo note:", err);
     }
