@@ -11,15 +11,8 @@ const router = Router();
  * Express с extended:true автоматически разбирает вложенную структуру.
  */
 router.post("/webhooks/amocrm", async (req, res) => {
-  console.log("[AmoWebhook] ← Incoming webhook");
-  console.log("[AmoWebhook] Body:", JSON.stringify(req.body, null, 2));
-
-  // Всегда отвечаем 200 сразу, обработку делаем в фоне
   res.status(200).json({ ok: true });
-
-  // Запускаем синхронизацию асинхронно чтобы не блокировать ответ
   handleAmoCrmWebhook(req.body)
-    .then(() => console.log("[AmoWebhook] ✓ Processing complete"))
     .catch((err) => console.error("[AmoWebhook] Handler error:", err));
 });
 
