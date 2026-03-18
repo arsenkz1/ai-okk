@@ -42,9 +42,11 @@ async function buildDailyReport(
   managerName: string
 ): Promise<DailyReportResult | null> {
   const now = new Date();
+  // Отчёт за вчера (крон запускается в 09:00, отчитываемся за предыдущий день)
   const from = new Date(now);
+  from.setDate(from.getDate() - 1);
   from.setHours(0, 0, 0, 0);
-  const to = new Date(now);
+  const to = new Date(from);
   to.setHours(23, 59, 59, 999);
 
   const calls = await prisma.call.findMany({
@@ -88,10 +90,10 @@ async function buildDailyReport(
   const topWeakText = topWeak.map(([w]) => `  • ${w}`).join("\n");
   const topStrongText = topStrong.map(([s]) => `  • ${s}`).join("\n");
 
-  const today = `${now.getDate()} ${UZ_MONTHS[now.getMonth()]}`;
+  const today = `${from.getDate()} ${UZ_MONTHS[from.getMonth()]}`;
 
   const statsText = [
-    `📊 Bugungi hisoboting — ${today}`,
+    `📊 Kechagi hisoboting — ${today}`,
     ``,
     `📞 Tahlil qilingan qo'ng'iroqlar: ${calls.length}`,
     `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,

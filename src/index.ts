@@ -83,9 +83,9 @@ cron.schedule(
   { timezone: tz }
 );
 
-// Ежедневные отчёты менеджерам в 21:00 (Asia/Almaty)
+// Ежедневные отчёты менеджерам в 09:00 (Asia/Almaty) — за вчерашний день
 cron.schedule(
-  "0 21 * * *",
+  "0 9 * * *",
   async () => {
     console.log("[Cron] Sending daily reports...");
     try {
