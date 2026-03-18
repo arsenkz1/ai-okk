@@ -328,11 +328,24 @@ async function processCallJob(jobData: CallProcessingJobData) {
 
   // amoCRM bitimiga mijoz portreti izohini qo'shish
   if (dealId && analysis.clientPortrait) {
-    try {
-      const portrait = analysis.clientPortrait.replace(/\.\s+/g, ".\n");
-      await addNoteToDeal(dealId, portrait);
-    } catch (err) {
-      console.error("[CallWorker] Failed to add amo note:", err);
+    const portrait = analysis.clientPortrait.replace(/\.\s+/g, ".\n");
+    let noteWritten = false;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        if (attempt > 1) await new Promise((r) => setTimeout(r, 4000));
+        await addNoteToDeal(dealId, portrait);
+        noteWritten = true;
+        break;
+      } catch (err) {
+        console.error(`[CallWorker] Failed to add amo note (attempt ${attempt}):`, err);
+      }
+    }
+    if (!noteWritten) {
+      await notifyAdmins(
+        `⚠️ Примечание не записано в сделку #${dealId}\n` +
+        `UUID: ${payload.uuid}\n` +
+        `Две попытки провалились. Проверь amoCRM или логи.`
+      );
     }
   }
 
