@@ -48,7 +48,7 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 // ---------------------------------------------------------------------------
 
 let lastAmoRequestAt = 0;
-const AMO_MIN_INTERVAL_MS = 500; // 1000ms / 2 req
+const AMO_MIN_INTERVAL_MS = 334; // 1000ms / 3 req
 
 async function amoRateLimit(): Promise<void> {
   const now = Date.now();
