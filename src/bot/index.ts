@@ -448,7 +448,7 @@ ROLING VA USLUBINGIZ:
 MENEJERNI MA'LUMOTLARI: ${label.toUpperCase()}
 Ism: ${managerName}
 Tahlil qilingan qo'ng'iroqlar: ${calls.length}
-O'rtacha ball: ${avg}/10
+O'rtacha ball: ${avg}/100
 
 Qo'ng'iroqlar bo'yicha batafsil:
 ${callLines}

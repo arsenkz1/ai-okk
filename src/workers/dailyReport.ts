@@ -97,7 +97,7 @@ async function buildDailyReport(
     ``,
     `📞 Tahlil qilingan qo'ng'iroqlar: ${calls.length}`,
     `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
-    avgScoreStr ? `⭐ O'rtacha ball: ${avgScoreStr}/10` : "",
+    avgScoreStr ? `⭐ O'rtacha ball: ${avgScoreStr}/100` : "",
     topStrongText ? `\n💪 Kuchli tomonlar:\n${topStrongText}` : "",
     topWeakText ? `\n⚠️ O'sish sohalari:\n${topWeakText}` : "",
   ]
@@ -111,7 +111,7 @@ async function buildDailyReport(
 
 Bugungi statistikasi:
 - Qo'ng'iroqlar: ${calls.length}
-- O'rtacha ball: ${avgScoreStr ?? "ma'lumot yo'q"}/10
+- O'rtacha ball: ${avgScoreStr ?? "ma'lumot yo'q"}/100
 - Kuchli tomonlar: ${topStrongText || "ma'lumot yo'q"}
 - O'sish sohalari: ${topWeakText || "ma'lumot yo'q"}
 
