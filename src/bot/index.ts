@@ -224,9 +224,9 @@ async function buildReport(
   const weakMap: Record<string, number> = {};
   const strongMap: Record<string, number> = {};
   for (const call of calls) {
-    for (const w of getWeakAreas(call.analysis?.criteria))
+    for (const w of (call.analysis?.weaknesses as string[] | null) ?? [])
       weakMap[w] = (weakMap[w] ?? 0) + 1;
-    for (const s of getStrongAreas(call.analysis?.criteria))
+    for (const s of (call.analysis?.strengths as string[] | null) ?? [])
       strongMap[s] = (strongMap[s] ?? 0) + 1;
   }
 

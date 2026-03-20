@@ -269,12 +269,16 @@ async function processCallJob(jobData: CallProcessingJobData) {
       overallScore: totalScore,
       criteria: scoresJson,
       summary: analysis.comment,
+      strengths: analysis.strengths,
+      weaknesses: analysis.weaknesses,
     },
     create: {
       callId,
       overallScore: totalScore,
       criteria: scoresJson,
       summary: analysis.comment,
+      strengths: analysis.strengths,
+      weaknesses: analysis.weaknesses,
     },
   });
 

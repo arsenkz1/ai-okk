@@ -307,8 +307,12 @@ const CallAnalysisSchema = z.object({
   objectionsScore:   z.number().min(1).max(10).default(1),
   urgencyScore:      z.number().min(1).max(10).default(1),
   agreementScore:    z.number().min(1).max(10).default(1),
-  // Комментарий эксперта (на русском, подробный)
+  // Комментарий эксперта (подробный)
   comment:           z.string().default(""),
+  // Сильные стороны (2-3 пункта на узбекском)
+  strengths:         z.array(z.string()).default([]),
+  // Зоны роста (2-3 пункта на узбекском)
+  weaknesses:        z.array(z.string()).default([]),
   // Портрет клиента (на узбекском, для примечания в amoCRM)
   clientPortrait:    z.string().default(""),
 });
@@ -330,6 +334,8 @@ export async function analyzeCallWithGemini(
     presentationScore: 1, pointBScore: 1,
     closingScore: 1, objectionsScore: 1, urgencyScore: 1, agreementScore: 1,
     comment: "Анализ не выполнен: GEMINI_API_KEY не настроен.",
+    strengths: [],
+    weaknesses: [],
     clientPortrait: "",
   };
 
@@ -378,6 +384,8 @@ export async function analyzeCallWithGemini(
   "urgencyScore": <1–10>,
   "agreementScore": <1–10>,
   "comment": "<o'zbek tilida (lotin): har bir mezon uchun raqam, nomi, ball va tushuntirish — yangi qatorda yozing (har bir gap nuqtadan keyin yangi qatordan boshlansin). Oxirida: Tavsiyalar — 3-4 ta aniq tavsiya, har biri yangi qatorda>",
+  "strengths": ["<menejer yaxshi qilgan narsa 1>", "<menejer yaxshi qilgan narsa 2>"],
+  "weaknesses": ["<o'sish sohasi 1>", "<o'sish sohasi 2>"],
   "clientPortrait": "<portret o'zbek tilida (lotin). Har bir gap YANGI QATORDAN boshlansin (\\n). Tarkib: ismi (agar aytilgan bo'lsa), taxminiy yoshi, sohasi, asosiy ehtiyoji, xulq-atvori — 2–4 gap>"
 }
 
@@ -430,6 +438,8 @@ ${transcript}`;
         urgencyScore: num("urgencyScore"),
         agreementScore: num("agreementScore"),
         comment: typeof raw.comment === "string" ? raw.comment : "",
+        strengths: Array.isArray(raw.strengths) ? raw.strengths as string[] : [],
+        weaknesses: Array.isArray(raw.weaknesses) ? raw.weaknesses as string[] : [],
         clientPortrait: typeof raw.clientPortrait === "string" ? raw.clientPortrait : "",
       };
     }
