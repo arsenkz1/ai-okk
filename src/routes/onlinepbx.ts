@@ -97,8 +97,8 @@ router.post("/webhooks/onlinepbx/call-end", async (req, res) => {
     return res.status(400).json({ error: "Invalid payload" });
   }
 
-  // Фильтр по длительности: меньше 8 минут — не обрабатываем.
-  if (payload.duration < 8 * 60) {
+  // Фильтр по длительности: меньше 6 минут — не обрабатываем.
+  if (payload.duration < 6 * 60) {
     console.log(
       `[OnlinePBX] Short call skipped: uuid=${payload.uuid} duration=${payload.duration}s`
     );

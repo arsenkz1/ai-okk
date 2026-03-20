@@ -137,23 +137,7 @@ async function processCallJob(jobData: CallProcessingJobData) {
 
   const { id: callId, dealId, pipelineId, stageId, skipNotify } = await ensureCallRecord(payload, jobData.forceDealId);
 
-  // Проверяем что сделка в квалифицирующей стадии
-  // Если сделка найдена, но стадия не квалифицирующая — пропускаем анализ
-  if (dealId !== null && pipelineId !== null && stageId !== null) {
-    if (!isQualifyingDeal(pipelineId, stageId)) {
-      await prisma.call.update({
-        where: { id: callId },
-        data: { processingStatus: "skipped_stage" },
-      });
-      console.log("[CallWorker] Skipped: deal not in qualifying stage", {
-        callId,
-        dealId,
-        pipelineId,
-        stageId,
-      });
-      return;
-    }
-  }
+  // Стадия/воронка больше не фильтруется — обрабатываем все найденные сделки
   // Если сделка не найдена (dealId=null) — пропускаем анализ
   // Уведомляем только если контакт вообще не найден в amoCRM (skipNotify=false)
   if (dealId === null && !jobData.forceDealId) {
