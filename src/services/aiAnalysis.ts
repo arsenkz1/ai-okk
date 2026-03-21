@@ -424,10 +424,10 @@ export async function analyzeCallWithGemini(
   "objectionsScore": <1–10>,
   "urgencyScore": <1–10>,
   "agreementScore": <1–10>,
-  "comment": "<o'zbek tilida (lotin): har bir mezon uchun raqam, nomi, ball va tushuntirish — yangi qatorda yozing (har bir gap nuqtadan keyin yangi qatordan boshlansin). Oxirida: Tavsiyalar — 3-4 ta aniq tavsiya, har biri yangi qatorda>",
+  "comment": "<o'zbek tilida (lotin): har bir mezon uchun raqam, nomi, ball va tushuntirish. Gaplar orasida \\n belgisini ishlat (haqiqiy yangi qator EMAS). Oxirida: Tavsiyalar — 3-4 ta aniq tavsiya, har biri \\n bilan ajratilgan>",
   "strengths": ["<menejer yaxshi qilgan narsa 1>", "<menejer yaxshi qilgan narsa 2>"],
   "weaknesses": ["<o'sish sohasi 1>", "<o'sish sohasi 2>"],
-  "clientPortrait": "<portret o'zbek tilida (lotin). Har bir gap YANGI QATORDAN boshlansin (\\n). Tarkib: ismi (agar aytilgan bo'lsa), taxminiy yoshi, sohasi, asosiy ehtiyoji, xulq-atvori — 2–4 gap>"
+  "clientPortrait": "<portret o'zbek tilida (lotin). Gaplar orasida \\n belgisini ishlat (haqiqiy yangi qator EMAS). Tarkib: ismi (agar aytilgan bo'lsa), taxminiy yoshi, sohasi, asosiy ehtiyoji, xulq-atvori — 2–4 gap>"
 }
 
 Длительность звонка: ${metadata.durationSeconds} сек. Направление: ${metadata.direction}.
