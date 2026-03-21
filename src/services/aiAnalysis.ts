@@ -11,6 +11,13 @@ function geminiModel(envVar: string, fallback: string): string {
   return raw.startsWith("gemini-") ? raw : `gemini-${raw}`;
 }
 
+/** Собирает текст из всех parts ответа Gemini (thought + response могут быть раздельно) */
+function extractGeminiText(response: any): string {
+  const parts: { text?: string }[] =
+    response.data?.candidates?.[0]?.content?.parts ?? [];
+  return parts.map((p) => p.text ?? "").join("").trim();
+}
+
 /**
  * Обёртка с retry для 429 (rate-limit).
  * До 4 попыток с экспоненциальной задержкой: 2s, 4s, 8s, 16s.
@@ -141,10 +148,7 @@ export async function askGeminiWithHistory(
         contents: history,
       })
     );
-    return (
-      response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ??
-      "Нет ответа от AI."
-    );
+    return extractGeminiText(response) || "Нет ответа от AI.";
   } catch (err: any) {
     console.error("[Gemini] askGeminiWithHistory error:", err.message);
     return "Ошибка при обращении к AI. Попробуй позже.";
@@ -173,10 +177,7 @@ export async function askGeminiRaw(
 
   try {
     const response = await withGemini(() => axios.post(url, body));
-    return (
-      response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ??
-      "Нет ответа от AI."
-    );
+    return extractGeminiText(response) || "Нет ответа от AI.";
   } catch (err: any) {
     console.error("[Gemini] askGeminiRaw error:", err.message);
     return "Ошибка при обращении к AI. Попробуй позже.";
@@ -221,9 +222,7 @@ export async function transcribeAudioFromBuffer(
     })
   );
 
-  const rawText =
-    response.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  return rawText.trim();
+  return extractGeminiText(response);
 }
 
 /**
@@ -284,9 +283,7 @@ export async function transcribeAudioWithGemini(
     })
   );
 
-  const rawText =
-    response.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  return rawText.trim();
+  return extractGeminiText(response);
 }
 
 // ---------------------------------------------------------------------------
@@ -403,8 +400,8 @@ ${transcript}`;
       })
     );
 
-    const rawText =
-      response.data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+    // Собираем текст из всех parts (Gemini 2.5 может вернуть thought + response)
+    const rawText = extractGeminiText(response) || "{}";
 
     // Извлекаем JSON: ищем первый { и последний } в ответе
     const jsonStart = rawText.indexOf("{");
