@@ -416,8 +416,17 @@ ${transcript}`;
     try {
       parsed = JSON.parse(text);
     } catch {
-      console.error("[Gemini] analyzeCall: failed to parse JSON. Full raw response:", rawText);
-      return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI.", rawGeminiResponse: rawText };
+      // Gemini иногда вставляет литеральные переносы строк внутри JSON-строк.
+      // Заменяем их на \n и пробуем снова.
+      try {
+        const fixed = text.replace(/("(?:[^"\\]|\\.)*")/g, (m) =>
+          m.replace(/\n/g, "\\n").replace(/\r/g, "\\r")
+        );
+        parsed = JSON.parse(fixed);
+      } catch {
+        console.error("[Gemini] analyzeCall: failed to parse JSON. Full raw response:", rawText);
+        return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI.", rawGeminiResponse: rawText };
+      }
     }
 
     const validated = CallAnalysisSchema.safeParse(parsed);
