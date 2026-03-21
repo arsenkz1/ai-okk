@@ -14,6 +14,31 @@ function getNotifyBot(): TelegramBot | null {
   return notifyBot;
 }
 
+export async function notifyAdminsWithFile(
+  caption: string,
+  content: string,
+  filename: string
+): Promise<void> {
+  const bot = getNotifyBot();
+  if (!bot) return;
+
+  const ids: string[] = [];
+  if (process.env.ADMIN_TELEGRAM_ID) ids.push(process.env.ADMIN_TELEGRAM_ID);
+  const dbAdmins = await prisma.botAdmin.findMany({ select: { telegramUserId: true } });
+  for (const a of dbAdmins) {
+    if (!ids.includes(a.telegramUserId)) ids.push(a.telegramUserId);
+  }
+
+  const buffer = Buffer.from(content, "utf-8");
+  for (const id of ids) {
+    try {
+      await bot.sendDocument(id, buffer, { caption }, { filename, contentType: "text/plain" });
+    } catch (err: any) {
+      console.error(`[Bot] notifyAdminsWithFile failed for ${id}:`, err.message);
+    }
+  }
+}
+
 export async function notifyAdmins(text: string): Promise<void> {
   const bot = getNotifyBot();
   if (!bot) return;

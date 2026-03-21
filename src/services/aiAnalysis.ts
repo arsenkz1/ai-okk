@@ -314,7 +314,9 @@ const CallAnalysisSchema = z.object({
   clientPortrait:    z.string().default(""),
 });
 
-export type CallAnalysisResult = z.infer<typeof CallAnalysisSchema>;
+export type CallAnalysisResult = z.infer<typeof CallAnalysisSchema> & {
+  rawGeminiResponse?: string; // заполняется только при ошибке парсинга
+};
 
 export async function analyzeCallWithGemini(
   transcript: string,
@@ -415,7 +417,7 @@ ${transcript}`;
       parsed = JSON.parse(text);
     } catch {
       console.error("[Gemini] analyzeCall: failed to parse JSON. Full raw response:", rawText);
-      return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI." };
+      return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI.", rawGeminiResponse: rawText };
     }
 
     const validated = CallAnalysisSchema.safeParse(parsed);

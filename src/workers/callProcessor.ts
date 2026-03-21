@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import { createWorker } from "../config/queue";
 import { prisma } from "../config/database";
-import { notifyAdmins } from "../bot/notify";
+import { notifyAdmins, notifyAdminsWithFile } from "../bot/notify";
 import {
   CallProcessingJobData,
   OnlinePbxWebhookPayload,
@@ -233,6 +233,12 @@ async function processCallJob(jobData: CallProcessingJobData) {
     analysis.closingScore + analysis.objectionsScore + analysis.urgencyScore + analysis.agreementScore;
 
   console.log("[CallWorker] AI analysis result:", { callId, totalScore });
+
+  if (analysis.rawGeminiResponse) {
+    const filename = `gemini_error_${payload.uuid}.txt`;
+    const content = `UUID: ${payload.uuid}\nDeal: ${dealId ?? "null"}\n\n--- RAW GEMINI RESPONSE ---\n${analysis.rawGeminiResponse}`;
+    await notifyAdminsWithFile(`⚠️ Gemini вернул неверный JSON\nUUID: ${payload.uuid}`, content, filename).catch(() => {});
+  }
 
   const scoresJson = {
     contextScore: analysis.contextScore,
