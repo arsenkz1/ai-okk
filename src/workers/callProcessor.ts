@@ -74,13 +74,7 @@ async function ensureCallRecord(
       let found = await lookupDealByPhone(clientPhone);
 
       if (!found) {
-        const amoResult = await lookupDealByPhoneFromAmo(clientPhone);
-        if (amoResult && 'contactFound' in amoResult) {
-          // контакт найден, но сделка не в нужной воронке — пропускаем без уведомления
-          skipNotify = true;
-        } else {
-          found = amoResult;
-        }
+        found = await lookupDealByPhoneFromAmo(clientPhone);
       }
 
       if (found) {
