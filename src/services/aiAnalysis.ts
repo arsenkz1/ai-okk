@@ -1,6 +1,7 @@
 import "dotenv/config";
 import axios, { AxiosError } from "axios";
 import { z } from "zod";
+import { jsonrepair } from "jsonrepair";
 
 // ---------------------------------------------------------------------------
 // Gemini helpers
@@ -457,12 +458,13 @@ ${transcript}`;
     try {
       parsed = JSON.parse(text);
     } catch {
-      // Gemini иногда вставляет литеральные переносы строк внутри JSON-строк.
-      // Используем state machine (O(n)) вместо regex, чтобы избежать катастрофического backtracking.
+      // Gemini иногда возвращает невалидный JSON: литеральные переносы строк,
+      // неэкранированные кавычки внутри строк и т.п.
+      // jsonrepair умеет чинить все эти случаи.
       try {
-        parsed = JSON.parse(fixJsonNewlines(text));
+        parsed = JSON.parse(jsonrepair(text));
       } catch {
-        console.error("[Gemini] analyzeCall: failed to parse JSON. Full raw response:", rawText);
+        console.error("[Gemini] analyzeCall: failed to parse JSON even after repair. Full raw response:", rawText);
         return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI.", rawGeminiResponse: rawText };
       }
     }

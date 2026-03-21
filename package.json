@@ -24,6 +24,7 @@
     "express": "^5.2.1",
     "googleapis": "^171.4.0",
     "ioredis": "^5.10.0",
+    "jsonrepair": "^3.13.3",
     "node-cron": "^4.2.1",
     "node-telegram-bot-api": "^0.67.0",
     "pg": "^8.20.0",
