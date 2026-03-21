@@ -292,6 +292,42 @@ export async function transcribeAudioWithGemini(
 }
 
 // ---------------------------------------------------------------------------
+// Утилита: заменяет литеральные переносы строк внутри JSON-строк на \n/\r
+// Простой state machine O(n), без regex — избегает катастрофического backtracking
+// ---------------------------------------------------------------------------
+
+function fixJsonNewlines(text: string): string {
+  let result = "";
+  let inString = false;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === "\\") {
+        // escape-последовательность — копируем оба символа как есть
+        result += ch + (text[i + 1] ?? "");
+        i += 2;
+        continue;
+      } else if (ch === '"') {
+        inString = false;
+        result += ch;
+      } else if (ch === "\n") {
+        result += "\\n";
+      } else if (ch === "\r") {
+        result += "\\r";
+      } else {
+        result += ch;
+      }
+    } else {
+      if (ch === '"') inString = true;
+      result += ch;
+    }
+    i++;
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Анализ звонка через Gemini (Zod-валидированный ответ)
 // ---------------------------------------------------------------------------
 
@@ -422,12 +458,9 @@ ${transcript}`;
       parsed = JSON.parse(text);
     } catch {
       // Gemini иногда вставляет литеральные переносы строк внутри JSON-строк.
-      // Заменяем их на \n и пробуем снова.
+      // Используем state machine (O(n)) вместо regex, чтобы избежать катастрофического backtracking.
       try {
-        const fixed = text.replace(/("(?:[^"\\]|\\.)*")/g, (m) =>
-          m.replace(/\n/g, "\\n").replace(/\r/g, "\\r")
-        );
-        parsed = JSON.parse(fixed);
+        parsed = JSON.parse(fixJsonNewlines(text));
       } catch {
         console.error("[Gemini] analyzeCall: failed to parse JSON. Full raw response:", rawText);
         return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI.", rawGeminiResponse: rawText };
