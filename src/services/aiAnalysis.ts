@@ -13,9 +13,14 @@ function geminiModel(envVar: string, fallback: string): string {
 
 /** Собирает текст из всех parts ответа Gemini (thought + response могут быть раздельно) */
 function extractGeminiText(response: any): string {
-  const parts: { text?: string }[] =
+  const parts: { text?: string; thought?: boolean }[] =
     response.data?.candidates?.[0]?.content?.parts ?? [];
-  return parts.map((p) => p.text ?? "").join("").trim();
+  // Пропускаем thinking-части (thought: true) — они могут содержать { } и ломать JSON-экстракцию
+  return parts
+    .filter((p) => !p.thought)
+    .map((p) => p.text ?? "")
+    .join("")
+    .trim();
 }
 
 /**
