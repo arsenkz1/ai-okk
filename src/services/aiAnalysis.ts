@@ -414,7 +414,7 @@ ${transcript}`;
     try {
       parsed = JSON.parse(text);
     } catch {
-      console.error("[Gemini] analyzeCall: failed to parse JSON:", rawText.slice(0, 300));
+      console.error("[Gemini] analyzeCall: failed to parse JSON. Full raw response:", rawText);
       return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI." };
     }
 
