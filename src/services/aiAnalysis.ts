@@ -329,6 +329,103 @@ function fixJsonNewlines(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Ручной экстрактор полей — резервный парсер когда JSON.parse и jsonrepair оба провалились.
+// Не пытается парсить JSON структурно — извлекает каждое поле по позиции между известными ключами.
+// Устойчив к неэкранированным кавычкам, одинарным кавычкам и другим нарушениям структуры.
+// ---------------------------------------------------------------------------
+
+function manualExtract(text: string): Record<string, unknown> | null {
+  try {
+    // Числовое поле: ищем по имени ключа (с учётом одинарных/двойных кавычек)
+    const num = (field: string): number => {
+      const m = text.match(new RegExp(`["']?${field}["']?\\s*:\\s*(\\d+(?:\\.\\d+)?)`));
+      return m ? parseFloat(m[1]) : 1;
+    };
+
+    // Строковое поле между двумя ключами: берём всё от открывающей кавычки до следующего ключа
+    const strBetween = (field: string, nextField: string): string => {
+      const keyPat = new RegExp(`["']?${field}["']?\\s*:\\s*["']`);
+      const keyMatch = keyPat.exec(text);
+      if (!keyMatch) return "";
+      const valStart = keyMatch.index + keyMatch[0].length;
+      const nextPat = new RegExp(`["']?${nextField}["']?\\s*:`);
+      const nextMatch = nextPat.exec(text.slice(valStart));
+      if (!nextMatch) return "";
+      const raw = text.slice(valStart, valStart + nextMatch.index);
+      // Удаляем структурную завершающую кавычку + запятая + пробелы
+      return raw.replace(/["']\s*,?\s*$/, "").trimEnd();
+    };
+
+    // Последнее строковое поле — заканчивается на последней кавычке в тексте
+    const strLast = (field: string): string => {
+      const keyPat = new RegExp(`["']?${field}["']?\\s*:\\s*["']`);
+      const keyMatch = keyPat.exec(text);
+      if (!keyMatch) return "";
+      const valStart = keyMatch.index + keyMatch[0].length;
+      const lastQuote = Math.max(text.lastIndexOf('"'), text.lastIndexOf("'"));
+      if (lastQuote <= valStart) return "";
+      return text.slice(valStart, lastQuote);
+    };
+
+    // Массив строк: пробуем JSON.parse массива, иначе извлекаем поэлементно
+    const arrField = (field: string): string[] => {
+      const arrPat = new RegExp(`["']?${field}["']?\\s*:\\s*\\[([\\s\\S]*?)\\]`);
+      const m = arrPat.exec(text);
+      if (!m) return [];
+      const content = m[1];
+      try {
+        const parsed = JSON.parse("[" + content + "]");
+        if (Array.isArray(parsed)) return parsed.map(String);
+      } catch {}
+      // Резервно: извлекаем каждый элемент между двойными кавычками
+      const items: string[] = [];
+      let i = 0;
+      while (i < content.length) {
+        const qi = content.indexOf('"', i);
+        if (qi === -1) break;
+        let j = qi + 1;
+        while (j < content.length) {
+          if (content[j] === "\\") { j += 2; continue; }
+          if (content[j] === '"') break;
+          j++;
+        }
+        if (j < content.length) {
+          const item = content.slice(qi + 1, j).trim();
+          if (item) items.push(item);
+          i = j + 1;
+        } else break;
+      }
+      return items;
+    };
+
+    const result = {
+      contextScore:      num("contextScore"),
+      needsScore:        num("needsScore"),
+      painScore:         num("painScore"),
+      summaryScore:      num("summaryScore"),
+      presentationScore: num("presentationScore"),
+      pointBScore:       num("pointBScore"),
+      closingScore:      num("closingScore"),
+      objectionsScore:   num("objectionsScore"),
+      urgencyScore:      num("urgencyScore"),
+      agreementScore:    num("agreementScore"),
+      comment:           strBetween("comment", "strengths"),
+      strengths:         arrField("strengths"),
+      weaknesses:        arrField("weaknesses"),
+      clientPortrait:    strLast("clientPortrait"),
+    };
+
+    // Санити-чек: если все скоры = 1, значит экстракция не сработала
+    const totalScore = Object.values(result).filter(v => typeof v === "number").reduce((a, b) => a + (b as number), 0);
+    if (totalScore <= 10) return null;
+
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Анализ звонка через Gemini (Zod-валидированный ответ)
 // ---------------------------------------------------------------------------
 
@@ -470,9 +567,16 @@ ${transcript}`;
       try {
         parsed = JSON.parse(jsonrepair(text));
       } catch (secondErr) {
-        const parseError = `JSON.parse: ${(firstErr as Error).message}\njsonrepair+parse: ${(secondErr as Error).message}`;
-        console.error("[Gemini] analyzeCall: failed to parse JSON even after repair.", parseError);
-        return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI.", rawGeminiResponse: rawText, parseError };
+        // Третий уровень: ручной экстрактор полей по позиции между ключами
+        const manual = manualExtract(text);
+        if (manual) {
+          console.warn("[Gemini] analyzeCall: JSON/jsonrepair failed, used manual field extractor");
+          parsed = manual;
+        } else {
+          const parseError = `JSON.parse: ${(firstErr as Error).message}\njsonrepair+parse: ${(secondErr as Error).message}`;
+          console.error("[Gemini] analyzeCall: all parse attempts failed.", parseError);
+          return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI.", rawGeminiResponse: rawText, parseError };
+        }
       }
     }
 
