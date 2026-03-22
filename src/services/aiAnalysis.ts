@@ -413,6 +413,10 @@ export async function analyzeCallWithGemini(
 10. agreementScore — Договорённость по следующему шагу: есть ли конкретная договорённость ведущая к оплате?
     10: договорились и по шагу, и по сроку оплаты. 7–9: чёткий следующий шаг но без срока. 4–6: шаг есть но не ведёт к оплате. 1–3: не договорились что будет дальше.
 
+MUHIM QOIDALAR JSON uchun:
+- Barcha matn qiymatlarida qo'sh tirnoq (") belgisini ISHLATMANG — faqat oddiy tirnoq (') ishlating.
+- Haqiqiy yangi qator (Enter) ISHLATMANG — faqat \\n yozing.
+
 ФОРМАТ ОТВЕТА (только JSON, без markdown):
 {
   "contextScore": <1–10>,
