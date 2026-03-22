@@ -230,8 +230,18 @@ async function processCallJob(jobData: CallProcessingJobData) {
 
   if (analysis.rawGeminiResponse) {
     const filename = `gemini_error_${payload.uuid}.txt`;
-    const content = `UUID: ${payload.uuid}\nDeal: ${dealId ?? "null"}\n\n--- RAW GEMINI RESPONSE ---\n${analysis.rawGeminiResponse}`;
-    await notifyAdminsWithFile(`⚠️ Gemini вернул неверный JSON\nUUID: ${payload.uuid}`, content, filename).catch(() => {});
+    const content = [
+      `UUID: ${payload.uuid}`,
+      `Deal: ${dealId ?? "null"}`,
+      ``,
+      `--- PARSE ERROR ---`,
+      analysis.parseError ?? "(no error details)",
+      ``,
+      `--- RAW GEMINI RESPONSE ---`,
+      analysis.rawGeminiResponse,
+    ].join("\n");
+    const msg = `⚠️ Gemini вернул неверный JSON\nUUID: ${payload.uuid}\n\n<pre>${analysis.parseError ?? ""}</pre>`;
+    await notifyAdminsWithFile(msg, content, filename).catch(() => {});
   }
 
   const scoresJson = {

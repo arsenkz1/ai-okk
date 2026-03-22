@@ -358,6 +358,7 @@ const CallAnalysisSchema = z.object({
 
 export type CallAnalysisResult = z.infer<typeof CallAnalysisSchema> & {
   rawGeminiResponse?: string; // заполняется только при ошибке парсинга
+  parseError?: string;        // текст ошибки JSON.parse / jsonrepair
 };
 
 export async function analyzeCallWithGemini(
@@ -457,15 +458,16 @@ ${transcript}`;
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
-    } catch {
+    } catch (firstErr) {
       // Gemini иногда возвращает невалидный JSON: литеральные переносы строк,
       // неэкранированные кавычки внутри строк и т.п.
       // jsonrepair умеет чинить все эти случаи.
       try {
         parsed = JSON.parse(jsonrepair(text));
-      } catch {
-        console.error("[Gemini] analyzeCall: failed to parse JSON even after repair. Full raw response:", rawText);
-        return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI.", rawGeminiResponse: rawText };
+      } catch (secondErr) {
+        const parseError = `JSON.parse: ${(firstErr as Error).message}\njsonrepair+parse: ${(secondErr as Error).message}`;
+        console.error("[Gemini] analyzeCall: failed to parse JSON even after repair.", parseError);
+        return { ...fallback, comment: "Анализ не выполнен из-за ошибки формата ответа AI.", rawGeminiResponse: rawText, parseError };
       }
     }
 

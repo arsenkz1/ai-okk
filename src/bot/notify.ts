@@ -32,7 +32,7 @@ export async function notifyAdminsWithFile(
   const buffer = Buffer.from(content, "utf-8");
   for (const id of ids) {
     try {
-      await bot.sendDocument(id, buffer, { caption }, { filename, contentType: "text/plain" });
+      await bot.sendDocument(id, buffer, { caption, parse_mode: "HTML" }, { filename, contentType: "text/plain" });
     } catch (err: any) {
       console.error(`[Bot] notifyAdminsWithFile failed for ${id}:`, err.message);
     }
