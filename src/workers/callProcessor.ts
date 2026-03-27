@@ -78,6 +78,8 @@ async function ensureCallRecord(
       }
 
       if (found) {
+        // Если сделка найдена через amoCRM API — убеждаемся что она записана в локальную БД
+        await ensureDealInDb(found.dealId);
         dealId = found.dealId;
         pipelineId = found.pipelineId;
         stageId = found.stageId;
