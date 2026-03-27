@@ -1135,7 +1135,7 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
     // Шаг 1: получаем примечания-звонки из сделки amoCRM
     const notes = await fetchDealCallNotes(dealId);
 
-    const MIN_DURATION = 8 * 60; // 480 секунд
+    const MIN_DURATION = 6 * 60; // 360 секунд
     const qualifying = notes.filter((n) => n.duration >= MIN_DURATION && n.recordUrl);
 
     if (!qualifying.length) {

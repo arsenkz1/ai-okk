@@ -372,7 +372,7 @@ export interface HistorySyncStats {
   errors: number;
 }
 
-const MIN_DURATION_SECONDS = 8 * 60; // 8 минут
+const MIN_DURATION_SECONDS = 6 * 60; // 6 минут
 
 /**
  * Синхронизирует звонки за диапазон дат из OnlinePBX в очередь обработки.
@@ -427,7 +427,7 @@ export async function syncHistoryRange(
               ? record.duration
               : Math.max(0, endStamp - startStamp);
 
-          // Фильтр: длительность ≥ 8 минут
+          // Фильтр: длительность ≥ 6 минут
           if (duration < MIN_DURATION_SECONDS) {
             stats.skippedShort++;
             continue;
