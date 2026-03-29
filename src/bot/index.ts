@@ -1143,7 +1143,7 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
         msg.chat.id,
         `❌ Bitim #${dealId} uchun yaroqli qo'ng'iroqlar topilmadi.\n\n` +
           `Jami izohlar: ${notes.length}\n` +
-          `Shartlar: yozuv URL + davomiyligi ≥ 8 daqiqa`
+          `Shartlar: yozuv URL + davomiyligi ≥ 6 daqiqa`
       );
       return;
     }
