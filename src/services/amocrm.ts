@@ -633,7 +633,7 @@ export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote
     let data: any;
     try {
       data = await amoGet(
-        `/api/v4/leads/${dealId}/notes?filter[note_type][]=call_in&filter[note_type][]=call_out&limit=250&page=${page}`
+        `/api/v4/leads/${dealId}/notes?limit=250&page=${page}`
       );
     } catch (err: any) {
       const status = err.response?.status;
@@ -647,15 +647,33 @@ export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote
     for (const item of items) {
       const params = item.params ?? {};
       const recordUrl: string | null = params.link ?? null;
+
+      // Skip notes without a recording URL
+      if (!recordUrl) continue;
+
+      // Parse duration: prefer params.duration, fallback to text "HH:MM:SS" or "MM:SS"
+      let duration = Number(params.duration ?? 0);
+      if (!duration) {
+        const text: string = params.text ?? item.text ?? "";
+        const timeMatch = text.match(/(\d{1,2}):(\d{2}):(\d{2})|(\d{1,2}):(\d{2})/);
+        if (timeMatch) {
+          if (timeMatch[1] !== undefined) {
+            duration = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseInt(timeMatch[3]);
+          } else {
+            duration = parseInt(timeMatch[4]) * 60 + parseInt(timeMatch[5]);
+          }
+        }
+      }
+
       notes.push({
         id: item.id,
         noteType: item.note_type ?? "",
         createdAt: new Date((item.created_at ?? 0) * 1000),
-        duration: Number(params.duration ?? 0),
+        duration,
         recordUrl,
         phone: params.phone ?? null,
         uniq: params.uniq ?? null,
-        internalNumber: recordUrl ? extractInternalNumberFromRecordUrl(recordUrl) : null,
+        internalNumber: extractInternalNumberFromRecordUrl(recordUrl),
       });
     }
 
