@@ -646,7 +646,9 @@ export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote
 
     for (const item of items) {
       const params = item.params ?? {};
-      const recordUrl: string | null = params.link ?? null;
+      const recordUrl: string | null =
+        params.link ??
+        (params.text ? (params.text.match(/https?:\/\/\S+/) ?? [null])[0] : null);
 
       // Skip notes without a recording URL (log for debug)
       if (!recordUrl) {
