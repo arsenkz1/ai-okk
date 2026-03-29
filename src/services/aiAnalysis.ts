@@ -12,13 +12,25 @@ function geminiModel(envVar: string, fallback: string): string {
   return raw.startsWith("gemini-") ? raw : `gemini-${raw}`;
 }
 
-/** Собирает текст из всех parts ответа Gemini (thought + response могут быть раздельно) */
+/** Собирает текст из всех parts ответа Gemini, пропуская thinking-части.
+ *  Используется для анализа (JSON): thinking-части содержат { } и ломают парсинг. */
 function extractGeminiText(response: any): string {
   const parts: { text?: string; thought?: boolean }[] =
     response.data?.candidates?.[0]?.content?.parts ?? [];
   // Пропускаем thinking-части (thought: true) — они могут содержать { } и ломать JSON-экстракцию
   return parts
     .filter((p) => !p.thought)
+    .map((p) => p.text ?? "")
+    .join("")
+    .trim();
+}
+
+/** Собирает текст из ВСЕХ parts включая thinking-части.
+ *  Используется для транскрибации: текст может прийти в thought-части. */
+function extractGeminiTextAll(response: any): string {
+  const parts: { text?: string }[] =
+    response.data?.candidates?.[0]?.content?.parts ?? [];
+  return parts
     .map((p) => p.text ?? "")
     .join("")
     .trim();
@@ -228,7 +240,11 @@ export async function transcribeAudioFromBuffer(
     })
   );
 
-  return extractGeminiText(response);
+  const text = extractGeminiTextAll(response);
+  if (!text) {
+    console.warn("[Gemini] transcribeAudioFromBuffer: empty result. Raw response:", JSON.stringify(response.data?.candidates?.[0]));
+  }
+  return text;
 }
 
 /**
@@ -289,7 +305,11 @@ export async function transcribeAudioWithGemini(
     })
   );
 
-  return extractGeminiText(response);
+  const text = extractGeminiTextAll(response);
+  if (!text) {
+    console.warn("[Gemini] transcribeAudioWithGemini: empty result. Raw response:", JSON.stringify(response.data?.candidates?.[0]));
+  }
+  return text;
 }
 
 // ---------------------------------------------------------------------------
