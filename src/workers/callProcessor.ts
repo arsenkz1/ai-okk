@@ -217,6 +217,21 @@ async function processCallJob(jobData: CallProcessingJobData) {
     },
   });
 
+  // Если транскрипт пустой — уведомляем админов и останавливаем обработку
+  if (!transcriptText.trim()) {
+    await prisma.call.update({
+      where: { id: callId },
+      data: { processingStatus: "failed", lastError: "Transcription returned empty text" },
+    });
+    await notifyAdmins(
+      `⚠️ Транскрипция не удалась — пустой текст\n` +
+      `UUID: ${payload.uuid}\n` +
+      `Deal: ${dealId ?? "не найден"}\n` +
+      `Длительность: ${Math.round(payload.duration / 60)} мин\n` +
+      `Запись: ${payload.record_url || localFilePath || "нет"}`
+    ).catch(() => {});
+    return;
+  }
 
   const analysis = await analyzeCallWithGemini(transcriptText, {
     durationSeconds: payload.duration,
