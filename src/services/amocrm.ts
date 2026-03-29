@@ -170,12 +170,25 @@ export async function lookupDealByPhoneFromAmo(rawPhone: string): Promise<{
 
   console.log(`[AmoSync] Fallback: found ${contacts.length} contact(s) for phone ${normalized}`);
 
-  // Собираем все lead_id со всех контактов (дедупликация)
+  const contactIds = contacts.map((c: any) => c.id as number);
+
+  // Собираем lead_id из _embedded.leads (может быть неполным для авто-контактов)
   const allLeadIds = new Set<number>();
   for (const c of contacts) {
     for (const l of c._embedded?.leads ?? []) {
       allLeadIds.add(l.id);
     }
+  }
+
+  // Дополнительно: прямой запрос сделок по contact_id — надёжнее чем _embedded.leads
+  try {
+    const filter = contactIds.map((id) => `filter[contacts_id][]=${id}`).join("&");
+    const leadsData = await amoGet(`/api/v4/leads?${filter}&limit=250`);
+    for (const l of leadsData?._embedded?.leads ?? []) {
+      allLeadIds.add(l.id);
+    }
+  } catch (err: any) {
+    console.warn("[AmoSync] Fallback leads-by-contact query failed:", err.message);
   }
 
   const deals = allLeadIds.size ? await fetchDealsInfo([...allLeadIds]) : [];
