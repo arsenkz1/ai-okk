@@ -122,7 +122,7 @@ async function ensureCallRecord(
   return { id: call.id, dealId, pipelineId, stageId, skipNotify };
 }
 
-async function processCallJob(jobData: CallProcessingJobData) {
+async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: number, jobMaxAttempts: number) {
   const { payload, localFilePath } = jobData;
 
   console.log("[CallWorker] Got job:", {
@@ -206,10 +206,26 @@ async function processCallJob(jobData: CallProcessingJobData) {
 
     } catch (err: any) {
       const isTimeout = err?.code === "ECONNABORTED" || err?.message?.includes("timeout");
-      const reason = isTimeout
-        ? `Таймаут скачивания записи (${Math.round((payload.duration || 0) / 60)} мин файл)`
-        : `Ошибка: ${err?.message ?? err}`;
-      console.error("[CallWorker] Transcription failed:", err);
+      console.error("[CallWorker] Transcription failed:", err?.message ?? err);
+
+      if (isTimeout) {
+        // Таймаут — бросаем ошибку, BullMQ сделает retry автоматически
+        // Уведомляем только на последней попытке
+        const isLastAttempt = jobAttemptsMade + 1 >= jobMaxAttempts;
+        if (isLastAttempt) {
+          await prisma.call.update({
+            where: { id: callId },
+            data: { processingStatus: "failed", lastError: `Таймаут скачивания после ${jobMaxAttempts} попыток` },
+          });
+          await notifyAdmins(
+            `⚠️ Транскрипция не удалась после ${jobMaxAttempts} попыток\nUUID: ${payload.uuid}\nDeal: ${dealId ?? "не найден"}\nДлительность: ${Math.round((payload.duration || 0) / 60)} мин\n\nТаймаут скачивания записи\n\nЗапись: ${payload.record_url}`
+          ).catch(() => {});
+        }
+        throw err; // BullMQ retry
+      }
+
+      // Другие ошибки (403, 404 и т.д.) — уведомляем сразу, retry не поможет
+      const reason = `Ошибка скачивания: ${err?.message ?? err}`;
       await prisma.call.update({
         where: { id: callId },
         data: { processingStatus: "failed", lastError: reason },
@@ -387,9 +403,10 @@ async function processCallJob(jobData: CallProcessingJobData) {
 
 createWorker("call_processing", async (job) => {
   const data = job.data as CallProcessingJobData;
+  const maxAttempts = job.opts?.attempts ?? 5;
 
   try {
-    await processCallJob(data);
+    await processCallJob(data, job.attemptsMade, maxAttempts);
   } catch (error: any) {
     console.error("Error processing call job:", error);
     // Обновляем статус звонка как error, если удалось определить запись
