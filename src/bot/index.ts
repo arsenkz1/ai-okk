@@ -1139,11 +1139,18 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
     const qualifying = notes.filter((n) => n.duration >= MIN_DURATION && n.recordUrl);
 
     if (!qualifying.length) {
+      const noteDetails = notes
+        .map(
+          (n, i) =>
+            `  ${i + 1}. duration=${n.duration}s, url=${n.recordUrl ? "✅" : "❌"}, type=${n.noteType}`
+        )
+        .join("\n");
       await bot.sendMessage(
         msg.chat.id,
         `❌ Bitim #${dealId} uchun yaroqli qo'ng'iroqlar topilmadi.\n\n` +
           `Jami izohlar: ${notes.length}\n` +
-          `Shartlar: yozuv URL + davomiyligi ≥ 6 daqiqa`
+          `Shartlar: yozuv URL + davomiyligi ≥ 6 daqiqa\n` +
+          (noteDetails ? `\nIzohlar:\n${noteDetails}` : "")
       );
       return;
     }
