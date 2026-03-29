@@ -1142,15 +1142,26 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
       const noteDetails = notes
         .map(
           (n, i) =>
-            `  ${i + 1}. duration=${n.duration}s, url=${n.recordUrl ? "✅" : "❌"}, type=${n.noteType}`
+            `  ${i + 1}. davomiyligi=${n.duration}s, url=${n.recordUrl ? "✅" : "❌"}, tur=${n.noteType}`
         )
         .join("\n");
+
+      let hint = "";
+      if (notes.length === 0) {
+        hint = "\n\n💡 Sabab: Bitimda hech qanday izoh yo'q. OnlinePBX qo'ng'iroqni ushbu bitimga bog'lamagan bo'lishi mumkin.";
+      } else if (notes.every((n) => !n.recordUrl)) {
+        hint = "\n\n💡 Sabab: Izohlar topildi, lekin yozuv URL yo'q. OnlinePBX sozlamalarida yozib olish yoqilganligini tekshiring.";
+      } else if (notes.every((n) => n.duration < 6 * 60)) {
+        hint = `\n\n💡 Sabab: Barcha qo'ng'iroqlar 6 daqiqadan qisqa (eng uzuni ${Math.max(...notes.map((n) => n.duration))}s). Tahlil uchun kamida 6 daqiqa kerak.`;
+      }
+
       await bot.sendMessage(
         msg.chat.id,
         `❌ Bitim #${dealId} uchun yaroqli qo'ng'iroqlar topilmadi.\n\n` +
           `Jami izohlar: ${notes.length}\n` +
-          `Shartlar: yozuv URL + davomiyligi ≥ 6 daqiqa\n` +
-          (noteDetails ? `\nIzohlar:\n${noteDetails}` : "")
+          `Shartlar: yozuv URL + davomiyligi ≥ 6 daqiqa` +
+          (noteDetails ? `\n\nIzohlar:\n${noteDetails}` : "") +
+          hint
       );
       return;
     }

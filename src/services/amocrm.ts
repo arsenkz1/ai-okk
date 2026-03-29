@@ -652,7 +652,8 @@ export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote
 
       // Skip notes without a recording URL (log for debug)
       if (!recordUrl) {
-        console.log(`[fetchDealCallNotes] note ${item.id} type=${item.note_type} skipped, no link. params keys: ${Object.keys(params).join(",")}`);
+        const textPreview = String(params.text ?? "").slice(0, 200);
+        console.log(`[fetchDealCallNotes] note ${item.id} type=${item.note_type} skipped, no link. params keys: ${Object.keys(params).join(",")} | text: ${textPreview}`);
         continue;
       }
 
