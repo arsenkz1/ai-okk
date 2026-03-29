@@ -648,8 +648,11 @@ export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote
       const params = item.params ?? {};
       const recordUrl: string | null = params.link ?? null;
 
-      // Skip notes without a recording URL
-      if (!recordUrl) continue;
+      // Skip notes without a recording URL (log for debug)
+      if (!recordUrl) {
+        console.log(`[fetchDealCallNotes] note ${item.id} type=${item.note_type} skipped, no link. params keys: ${Object.keys(params).join(",")}`);
+        continue;
+      }
 
       // Parse duration: prefer params.duration, fallback to text "HH:MM:SS" or "MM:SS"
       let duration = Number(params.duration ?? 0);
