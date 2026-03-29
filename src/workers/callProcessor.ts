@@ -204,8 +204,20 @@ async function processCallJob(jobData: CallProcessingJobData) {
         data: { engine: "gemini" },
       });
 
-    } catch (err) {
+    } catch (err: any) {
+      const isTimeout = err?.code === "ECONNABORTED" || err?.message?.includes("timeout");
+      const reason = isTimeout
+        ? `Таймаут скачивания записи (${Math.round((payload.duration || 0) / 60)} мин файл)`
+        : `Ошибка: ${err?.message ?? err}`;
       console.error("[CallWorker] Transcription failed:", err);
+      await prisma.call.update({
+        where: { id: callId },
+        data: { processingStatus: "failed", lastError: reason },
+      });
+      await notifyAdmins(
+        `⚠️ Транскрипция не удалась\nUUID: ${payload.uuid}\nDeal: ${dealId ?? "не найден"}\nДлительность: ${Math.round((payload.duration || 0) / 60)} мин\n\n${reason}\n\nЗапись: ${payload.record_url}`
+      ).catch(() => {});
+      return;
     }
   }
 

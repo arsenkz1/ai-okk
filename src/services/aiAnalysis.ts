@@ -261,7 +261,7 @@ export async function transcribeAudioWithGemini(
   const pbxApiKey = process.env.ONLINEPBX_PBX_AUTH ?? process.env.ONLINEPBX_API_KEY;
   const audioResponse = await axios.get(recordUrl, {
     responseType: "arraybuffer",
-    timeout: 60_000,
+    timeout: 180_000,
     headers: pbxApiKey ? { "x-pbx-authentication": pbxApiKey } : {},
   });
 
