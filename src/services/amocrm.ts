@@ -623,9 +623,10 @@ export async function ensureDealInDb(dealId: number): Promise<void> {
   });
 }
 
-export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote[]> {
-  if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) return [];
-
+async function fetchNotesFromEntity(
+  entityType: "leads" | "contacts",
+  entityId: number
+): Promise<AmoCrmCallNote[]> {
   const notes: AmoCrmCallNote[] = [];
   let page = 1;
 
@@ -633,7 +634,7 @@ export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote
     let data: any;
     try {
       data = await amoGet(
-        `/api/v4/leads/${dealId}/notes?limit=250&page=${page}`
+        `/api/v4/${entityType}/${entityId}/notes?limit=250&page=${page}`
       );
     } catch (err: any) {
       const status = err.response?.status;
@@ -650,12 +651,7 @@ export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote
         params.link ??
         (params.text ? (params.text.match(/https?:\/\/\S+/) ?? [null])[0] : null);
 
-      // Skip notes without a recording URL (log for debug)
-      if (!recordUrl) {
-        const textPreview = String(params.text ?? "").slice(0, 200);
-        console.log(`[fetchDealCallNotes] note ${item.id} type=${item.note_type} skipped, no link. params keys: ${Object.keys(params).join(",")} | text: ${textPreview}`);
-        continue;
-      }
+      if (!recordUrl) continue;
 
       // Parse duration: prefer params.duration, fallback to text "HH:MM:SS" or "MM:SS"
       let duration = Number(params.duration ?? 0);
@@ -689,6 +685,42 @@ export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote
   }
 
   return notes;
+}
+
+export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote[]> {
+  if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) return [];
+
+  // Fetch notes from the lead itself
+  const leadNotes = await fetchNotesFromEntity("leads", dealId);
+
+  // Fetch contact IDs linked to this deal
+  let contactIds: number[] = [];
+  try {
+    const dealData = await amoGet(`/api/v4/leads/${dealId}?with=contacts`);
+    contactIds = (dealData?._embedded?.contacts ?? []).map((c: any) => c.id as number);
+  } catch {
+    // ignore, proceed with lead notes only
+  }
+
+  // Fetch notes from each contact
+  const contactNoteArrays = await Promise.all(
+    contactIds.map((cid) => fetchNotesFromEntity("contacts", cid).catch(() => [] as AmoCrmCallNote[]))
+  );
+  const contactNotes = contactNoteArrays.flat();
+
+  // Merge, deduplicate by note ID
+  const seen = new Set<number>();
+  const allNotes: AmoCrmCallNote[] = [];
+  for (const note of [...leadNotes, ...contactNotes]) {
+    if (!seen.has(note.id)) {
+      seen.add(note.id);
+      allNotes.push(note);
+    }
+  }
+
+  console.log(`[fetchDealCallNotes] deal=${dealId} lead_notes=${leadNotes.length} contact_notes=${contactNotes.length} contacts=${contactIds.join(",")} total=${allNotes.length}`);
+
+  return allNotes;
 }
 
 // ---------------------------------------------------------------------------
