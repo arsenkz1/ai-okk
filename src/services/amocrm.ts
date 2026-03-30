@@ -93,9 +93,19 @@ async function amoPost(path: string, data: unknown): Promise<any> {
 
 export function normalizePhone(raw: string): string {
   const digits = raw.replace(/\D/g, "");
+  // Already full Uzbek: 998XXXXXXXXX (12 digits)
+  if (digits.length === 12 && digits.startsWith("998")) {
+    return digits;
+  }
+  // Local Uzbek 9-digit (e.g. 948123006 → 998948123006)
+  if (digits.length === 9) {
+    return "998" + digits;
+  }
+  // Russian 11-digit starting with 8 (e.g. 89001234567 → 79001234567)
   if (digits.length === 11 && digits.startsWith("8")) {
     return "7" + digits.slice(1);
   }
+  // Russian 10-digit (e.g. 9001234567 → 79001234567)
   if (digits.length === 10) {
     return "7" + digits;
   }
