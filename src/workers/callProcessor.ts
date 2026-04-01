@@ -229,19 +229,21 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
 
     } catch (err: any) {
       const isTimeout = err?.code === "ECONNABORTED" || err?.message?.includes("timeout");
+      const isRetryable = isTimeout || err?.response?.status === 503;
       console.error("[CallWorker] Transcription failed:", err?.message ?? err);
 
-      if (isTimeout) {
-        // Таймаут — бросаем ошибку, BullMQ сделает retry автоматически
+      if (isRetryable) {
+        // Временная ошибка — бросаем, BullMQ сделает retry автоматически
         // Уведомляем только на последней попытке
         const isLastAttempt = jobAttemptsMade + 1 >= jobMaxAttempts;
         if (isLastAttempt) {
+          const lastReason = isTimeout ? "Таймаут скачивания" : `Сервер OnlinePBX недоступен (503)`;
           await prisma.call.update({
             where: { id: callId },
-            data: { processingStatus: "failed", lastError: `Таймаут скачивания после ${jobMaxAttempts} попыток` },
+            data: { processingStatus: "failed", lastError: `${lastReason} после ${jobMaxAttempts} попыток` },
           });
           await notifyAdmins(
-            `⚠️ Транскрипция не удалась после ${jobMaxAttempts} попыток\nUUID: ${payload.uuid}\nDeal: ${dealId ?? "не найден"}\nДлительность: ${Math.round((payload.duration || 0) / 60)} мин\n\nТаймаут скачивания записи\n\nЗапись: ${payload.record_url}`
+            `⚠️ Транскрипция не удалась после ${jobMaxAttempts} попыток\nUUID: ${payload.uuid}\nDeal: ${dealId ?? "не найден"}\nДлительность: ${Math.round((payload.duration || 0) / 60)} мин\n\n${lastReason}\n\nЗапись: ${payload.record_url}`
           ).catch(() => {});
         }
         throw err; // BullMQ retry
