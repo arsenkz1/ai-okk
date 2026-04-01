@@ -252,9 +252,9 @@ export async function transcribeAudioFromBuffer(
  */
 export async function transcribeAudioWithGemini(
   recordUrl: string
-): Promise<string> {
+): Promise<{ text: string; finishReason?: string; audioSizeKb?: number }> {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return "";
+  if (!apiKey) return { text: "" };
 
   const model = geminiModel("GEMINI_TRANSCRIBE_MODEL", "gemini-2.5-flash");
 
@@ -306,10 +306,12 @@ export async function transcribeAudioWithGemini(
   );
 
   const text = extractGeminiTextAll(response);
+  const finishReason: string | undefined = response.data?.candidates?.[0]?.finishReason;
+  const audioSizeKb = Math.round(audioResponse.data.byteLength / 1024);
   if (!text) {
-    console.warn("[Gemini] transcribeAudioWithGemini: empty result. Raw response:", JSON.stringify(response.data?.candidates?.[0]));
+    console.warn("[Gemini] transcribeAudioWithGemini: empty result. finishReason:", finishReason, "audioSizeKb:", audioSizeKb, "raw:", JSON.stringify(response.data?.candidates?.[0]));
   }
-  return text;
+  return { text, finishReason, audioSizeKb };
 }
 
 // ---------------------------------------------------------------------------

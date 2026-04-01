@@ -178,6 +178,8 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
 
   // Транскрибация аудио через Gemini
   let transcriptText = "";
+  let transcribeFinishReason: string | undefined;
+  let transcribeAudioSizeKb: number | undefined;
 
   if (localFilePath) {
     // Исторический звонок: читаем локальный MP3-файл, извлечённый из TAR
@@ -210,7 +212,10 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
   } else if (payload.record_url) {
     // Real-time звонок: скачиваем по URL из OnlinePBX
     try {
-      transcriptText = await transcribeAudioWithGemini(payload.record_url);
+      const result = await transcribeAudioWithGemini(payload.record_url);
+      transcriptText = result.text;
+      transcribeFinishReason = result.finishReason;
+      transcribeAudioSizeKb = result.audioSizeKb;
 
       await prisma.callTranscript.upsert({
         where: { callId },
@@ -269,11 +274,25 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
       where: { id: callId },
       data: { processingStatus: "failed", lastError: "Transcription returned empty text" },
     });
+    const finishInfo = transcribeFinishReason ? `\n🔴 Gemini finishReason: ${transcribeFinishReason}` : "";
+    const sizeInfo = transcribeAudioSizeKb ? `\n📦 Размер файла: ${transcribeAudioSizeKb} KB` : "";
+    const hintMap: Record<string, string> = {
+      OTHER: "Gemini отказался обрабатывать файл (возможно формат или содержимое)",
+      SAFETY: "Заблокировано фильтром безопасности Gemini",
+      RECITATION: "Заблокировано как повторение обучающих данных",
+      MAX_TOKENS: "Ответ обрезан — файл слишком большой для одного запроса",
+    };
+    const hint = transcribeFinishReason && hintMap[transcribeFinishReason]
+      ? `\n💡 ${hintMap[transcribeFinishReason]}`
+      : "\n💡 Возможные причины: тихая запись, неподдерживаемый формат, или сбой Gemini";
     await notifyAdmins(
       `⚠️ Транскрипция не удалась — пустой текст\n` +
       `UUID: ${payload.uuid}\n` +
       `Deal: ${dealId ?? "не найден"}\n` +
-      `Длительность: ${Math.round(payload.duration / 60)} мин\n` +
+      `Длительность: ${Math.round(payload.duration / 60)} мин` +
+      finishInfo +
+      sizeInfo +
+      hint + "\n" +
       `Запись: ${payload.record_url || localFilePath || "нет"}`
     ).catch(() => {});
     return;
