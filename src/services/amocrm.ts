@@ -659,7 +659,7 @@ async function fetchNotesFromEntity(
       const params = item.params ?? {};
       const recordUrl: string | null =
         params.link ??
-        (params.text ? (params.text.match(/https?:\/\/\S+/) ?? [null])[0] : null);
+        (params.text ? (params.text.match(/https?:\/\/\S+/) ?? [null])[0]?.replace(/["')\]>.,;]+$/, "") ?? null : null);
 
       if (!recordUrl) continue;
 
