@@ -18,12 +18,13 @@ import {
   lookupDealByPhoneFromAmo,
   isQualifyingDeal,
   ensureDealInDb,
+  normalizePhone,
 } from "../services/amocrm";
 
 async function ensureCallRecord(
   payload: OnlinePbxWebhookPayload,
   forceDealId?: number
-): Promise<{ id: number; dealId: number | null; pipelineId: number | null; stageId: number | null; skipNotify?: boolean }> {
+): Promise<{ id: number; dealId: number | null; pipelineId: number | null; stageId: number | null; skipNotify?: boolean; searchMeta?: { phone: string; normalizedPhone: string; foundInDb: boolean; foundInAmo: boolean } }> {
   const existing = await prisma.call.findUnique({
     where: {
       externalId_source: {
@@ -65,17 +66,27 @@ async function ensureCallRecord(
   let stageId: number | null = null;
   let skipNotify = false;
 
+  let searchMeta: { phone: string; normalizedPhone: string; foundInDb: boolean; foundInAmo: boolean } | undefined;
+
   if (forceDealId) {
     await ensureDealInDb(forceDealId);
     dealId = forceDealId;
   } else {
     const clientPhone = payload.external_number ?? payload.caller ?? payload.callee;
     if (clientPhone) {
+      const normalizedPhone = normalizePhone(clientPhone);
+      let foundInDb = false;
+      let foundInAmo = false;
+
       let found = await lookupDealByPhone(clientPhone);
+      if (found) foundInDb = true;
 
       if (!found) {
         found = await lookupDealByPhoneFromAmo(clientPhone);
+        if (found) foundInAmo = true;
       }
+
+      searchMeta = { phone: clientPhone, normalizedPhone, foundInDb, foundInAmo };
 
       if (found) {
         // Если сделка найдена через amoCRM API — убеждаемся что она записана в локальную БД
@@ -95,7 +106,7 @@ async function ensureCallRecord(
         data: { dealId, processingStatus: "queued" },
       });
     }
-    return { id: existing.id, dealId, pipelineId, stageId, skipNotify };
+    return { id: existing.id, dealId, pipelineId, stageId, skipNotify, searchMeta };
   }
 
   const now = new Date();
@@ -119,7 +130,7 @@ async function ensureCallRecord(
     },
   });
 
-  return { id: call.id, dealId, pipelineId, stageId, skipNotify };
+  return { id: call.id, dealId, pipelineId, stageId, skipNotify, searchMeta };
 }
 
 async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: number, jobMaxAttempts: number) {
@@ -131,7 +142,7 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
     direction: payload.direction,
   });
 
-  const { id: callId, dealId, pipelineId, stageId, skipNotify } = await ensureCallRecord(payload, jobData.forceDealId);
+  const { id: callId, dealId, pipelineId, stageId, skipNotify, searchMeta } = await ensureCallRecord(payload, jobData.forceDealId);
 
   // Стадия/воронка больше не фильтруется — обрабатываем все найденные сделки
   // Если сделка не найдена (dealId=null) — пропускаем анализ
@@ -148,12 +159,19 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
     console.log("[CallWorker] Skipped: no deal found for call", { callId, uuid: payload.uuid });
     const duration = Math.round(payload.duration / 60);
     const phone = payload.external_number ?? payload.caller ?? payload.callee ?? "—";
+    const searchInfo = searchMeta
+      ? `📲 Нормализован: ${searchMeta.normalizedPhone}\n` +
+        `🔍 Локальная БД: ${searchMeta.foundInDb ? "✅ найдено" : "❌ не найдено"}\n` +
+        `🔍 amoCRM API: ${searchMeta.foundInAmo ? "✅ найдено" : "❌ не найдено"}\n`
+      : "";
     await notifyAdmins(
       `⚠️ Звонок без сделки (пропущен)\n\n` +
       `📞 Телефон: ${phone}\n` +
+      searchInfo +
       `⏱ Длительность: ${duration} мин\n` +
       `🆔 UUID: ${payload.uuid}\n\n` +
-      `Сделка по этому номеру не найдена в amoCRM. Звонок не проанализирован.`
+      `Сделка не найдена. Звонок не проанализирован.\n` +
+      `💡 Если контакт есть в amoCRM — проверьте формат номера телефона в карточке.`
     );
     return;
   }
