@@ -281,10 +281,19 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
       SAFETY: "Заблокировано фильтром безопасности Gemini",
       RECITATION: "Заблокировано как повторение обучающих данных",
       MAX_TOKENS: "Ответ обрезан — файл слишком большой для одного запроса",
+      STOP: "Gemini завершил нормально, но не распознал речь — возможно тихая или пустая запись",
     };
-    const hint = transcribeFinishReason && hintMap[transcribeFinishReason]
-      ? `\n💡 ${hintMap[transcribeFinishReason]}`
-      : "\n💡 Возможные причины: тихая запись, неподдерживаемый формат, или сбой Gemini";
+    const finishKey = transcribeFinishReason?.startsWith("BLOCKED:")
+      ? "BLOCKED"
+      : transcribeFinishReason;
+    const blockedDetail = transcribeFinishReason?.startsWith("BLOCKED:")
+      ? `Запрос заблокирован Gemini: ${transcribeFinishReason.replace("BLOCKED:", "")}`
+      : null;
+    const hint = blockedDetail
+      ? `\n💡 ${blockedDetail}`
+      : (finishKey && hintMap[finishKey])
+        ? `\n💡 ${hintMap[finishKey]}`
+        : "\n💡 Возможные причины: тихая запись, неподдерживаемый формат, или сбой Gemini";
     await notifyAdmins(
       `⚠️ Транскрипция не удалась — пустой текст\n` +
       `UUID: ${payload.uuid}\n` +

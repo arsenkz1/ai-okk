@@ -307,11 +307,12 @@ export async function transcribeAudioWithGemini(
 
   const text = extractGeminiTextAll(response);
   const finishReason: string | undefined = response.data?.candidates?.[0]?.finishReason;
+  const blockReason: string | undefined = response.data?.promptFeedback?.blockReason;
   const audioSizeKb = Math.round(audioResponse.data.byteLength / 1024);
   if (!text) {
-    console.warn("[Gemini] transcribeAudioWithGemini: empty result. finishReason:", finishReason, "audioSizeKb:", audioSizeKb, "raw:", JSON.stringify(response.data?.candidates?.[0]));
+    console.warn("[Gemini] transcribeAudioWithGemini: empty result. finishReason:", finishReason, "blockReason:", blockReason, "audioSizeKb:", audioSizeKb, "raw:", JSON.stringify(response.data?.candidates?.[0]));
   }
-  return { text, finishReason, audioSizeKb };
+  return { text, finishReason: finishReason ?? (blockReason ? `BLOCKED:${blockReason}` : undefined), audioSizeKb };
 }
 
 // ---------------------------------------------------------------------------
