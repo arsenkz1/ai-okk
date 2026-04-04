@@ -451,8 +451,18 @@ export async function syncHistoryRange(
           });
 
           if (existing) {
-            stats.skippedDuplicate++;
-            continue;
+            // Re-queue failed calls only if within last 7 days (recording still available)
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+            if (existing.processingStatus === "failed" && existing.startedAt > sevenDaysAgo) {
+              await prisma.call.update({
+                where: { id: existing.id },
+                data: { processingStatus: "queued", lastError: null },
+              });
+              // fall through to qualifying.push below
+            } else {
+              stats.skippedDuplicate++;
+              continue;
+            }
           }
 
           qualifying.push({ record, normalized });
