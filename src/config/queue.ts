@@ -99,7 +99,7 @@ const defaultJobOptionsByQueue: Record<QueueName, JobsOptions> = {
 };
 
 const concurrencyByQueue: Record<QueueName, number> = {
-  call_processing: 5, // ограничиваем одновременную обработку звонков
+  call_processing: 3, // ограничиваем одновременную обработку звонков
   history_sync: 1,
   daily_reports: 2,
   telegram_notifications: 5,
