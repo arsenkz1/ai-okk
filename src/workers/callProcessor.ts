@@ -229,7 +229,8 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
 
     } catch (err: any) {
       const isTimeout = err?.code === "ECONNABORTED" || err?.message?.includes("timeout");
-      const isRetryable = isTimeout || err?.response?.status === 503;
+      const isCircuitOpen = err?.message?.includes("Circuit is OPEN");
+      const isRetryable = isTimeout || err?.response?.status === 503 || isCircuitOpen;
       console.error("[CallWorker] Transcription failed:", err?.message ?? err);
 
       if (isRetryable) {
@@ -237,7 +238,11 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
         // Уведомляем только на последней попытке
         const isLastAttempt = jobAttemptsMade + 1 >= jobMaxAttempts;
         if (isLastAttempt) {
-          const lastReason = isTimeout ? "Таймаут скачивания" : `Сервер OnlinePBX недоступен (503)`;
+          const lastReason = isTimeout
+            ? "Таймаут скачивания"
+            : isCircuitOpen
+            ? "Gemini API временно недоступен (circuit breaker)"
+            : "Сервер OnlinePBX недоступен (503)";
           await prisma.call.update({
             where: { id: callId },
             data: { processingStatus: "failed", lastError: `${lastReason} после ${jobMaxAttempts} попыток` },
