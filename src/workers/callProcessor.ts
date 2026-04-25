@@ -230,40 +230,26 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
     } catch (err: any) {
       const isTimeout = err?.code === "ECONNABORTED" || err?.message?.includes("timeout");
       const isCircuitOpen = err?.message?.includes("Circuit is OPEN");
-      const isRetryable = isTimeout || err?.response?.status === 503 || isCircuitOpen;
+      const httpStatus = err?.response?.status;
       console.error("[CallWorker] Transcription failed:", err?.message ?? err);
 
-      if (isRetryable) {
-        // Временная ошибка — бросаем, BullMQ сделает retry автоматически
-        // Уведомляем только на последней попытке
-        const isLastAttempt = jobAttemptsMade + 1 >= jobMaxAttempts;
-        if (isLastAttempt) {
-          const lastReason = isTimeout
-            ? "Таймаут скачивания"
-            : isCircuitOpen
-            ? "Gemini API временно недоступен (circuit breaker)"
-            : "Сервер OnlinePBX недоступен (503)";
-          await prisma.call.update({
-            where: { id: callId },
-            data: { processingStatus: "failed", lastError: `${lastReason} после ${jobMaxAttempts} попыток` },
-          });
-          await notifyAdmins(
-            `⚠️ Транскрипция не удалась после ${jobMaxAttempts} попыток\nUUID: ${payload.uuid}\nDeal: ${dealId ?? "не найден"}\nДлительность: ${Math.round((payload.duration || 0) / 60)} мин\n\n${lastReason}\n\nЗапись: ${payload.record_url}`
-          ).catch(() => {});
-        }
-        throw err; // BullMQ retry
+      // Все ошибки — retry. Уведомляем только на последней попытке.
+      const isLastAttempt = jobAttemptsMade + 1 >= jobMaxAttempts;
+      if (isLastAttempt) {
+        const reason = isTimeout
+          ? "Таймаут скачивания"
+          : isCircuitOpen
+          ? "Gemini API временно недоступен (circuit breaker)"
+          : `Ошибка скачивания: ${httpStatus ? `HTTP ${httpStatus}` : (err?.message ?? err)}`;
+        await prisma.call.update({
+          where: { id: callId },
+          data: { processingStatus: "failed", lastError: `${reason} после ${jobMaxAttempts} попыток` },
+        });
+        await notifyAdmins(
+          `⚠️ Транскрипция не удалась после ${jobMaxAttempts} попыток\nUUID: ${payload.uuid}\nDeal: ${dealId ?? "не найден"}\nДлительность: ${Math.round((payload.duration || 0) / 60)} мин\n\n${reason}\n\nЗапись: ${payload.record_url}`
+        ).catch(() => {});
       }
-
-      // Другие ошибки (403, 404 и т.д.) — уведомляем сразу, retry не поможет
-      const reason = `Ошибка скачивания: ${err?.message ?? err}`;
-      await prisma.call.update({
-        where: { id: callId },
-        data: { processingStatus: "failed", lastError: reason },
-      });
-      await notifyAdmins(
-        `⚠️ Транскрипция не удалась\nUUID: ${payload.uuid}\nDeal: ${dealId ?? "не найден"}\nДлительность: ${Math.round((payload.duration || 0) / 60)} мин\n\n${reason}\n\nЗапись: ${payload.record_url}`
-      ).catch(() => {});
-      return;
+      throw err; // BullMQ retry
     }
   }
 
