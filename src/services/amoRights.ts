@@ -49,11 +49,13 @@ export async function getAmoUserRoleId(amoUserId: number): Promise<number | null
 }
 
 export async function setAmoUserRole(amoUserId: number, roleId: number): Promise<void> {
-  await axios.patch(
-    `${AMO_BASE_URL}/api/v4/users/${amoUserId}`,
-    { rights: { role_id: roleId } },
+  // amoCRM does not support PATCH /users/{id} for role_id — use bulk endpoint with array
+  const resp = await axios.patch(
+    `${AMO_BASE_URL}/api/v4/users`,
+    [{ id: amoUserId, rights: { role_id: roleId } }],
     { headers: amoHeaders() }
   );
+  console.log(`[amoRights] setAmoUserRole(${amoUserId}, ${roleId}) status=${resp.status} data=${JSON.stringify(resp.data)}`);
 }
 
 export async function restrictAmoUserLeads(amoUserId: number): Promise<void> {
