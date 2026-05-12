@@ -48,46 +48,11 @@ export async function getAmoUserRoleId(amoUserId: number): Promise<number | null
   }
 }
 
-export async function setAmoUserRole(amoUserId: number, roleId: number): Promise<void> {
-  // Try 1: bulk endpoint with role_id inside rights
-  try {
-    const resp = await axios.patch(
-      `${AMO_BASE_URL}/api/v4/users`,
-      [{ id: amoUserId, rights: { role_id: roleId } }],
-      { headers: amoHeaders() }
-    );
-    console.log(`[amoRights] setAmoUserRole attempt1 OK: status=${resp.status} data=${JSON.stringify(resp.data)}`);
-    return;
-  } catch (err: any) {
-    console.warn(`[amoRights] setAmoUserRole attempt1 failed: status=${err.response?.status} data=${JSON.stringify(err.response?.data)} msg=${err.message}`);
-  }
-
-  // Try 2: bulk endpoint with role_id at top level
-  try {
-    const resp = await axios.patch(
-      `${AMO_BASE_URL}/api/v4/users`,
-      [{ id: amoUserId, role_id: roleId }],
-      { headers: amoHeaders() }
-    );
-    console.log(`[amoRights] setAmoUserRole attempt2 OK: status=${resp.status} data=${JSON.stringify(resp.data)}`);
-    return;
-  } catch (err: any) {
-    console.warn(`[amoRights] setAmoUserRole attempt2 failed: status=${err.response?.status} data=${JSON.stringify(err.response?.data)} msg=${err.message}`);
-  }
-
-  // Try 3: single-user endpoint with role_id at top level
-  try {
-    const resp = await axios.patch(
-      `${AMO_BASE_URL}/api/v4/users/${amoUserId}`,
-      { role_id: roleId },
-      { headers: amoHeaders() }
-    );
-    console.log(`[amoRights] setAmoUserRole attempt3 OK: status=${resp.status} data=${JSON.stringify(resp.data)}`);
-    return;
-  } catch (err: any) {
-    console.warn(`[amoRights] setAmoUserRole attempt3 failed: status=${err.response?.status} data=${JSON.stringify(err.response?.data)} msg=${err.message}`);
-    throw new Error(`All 3 attempts failed. Last: status=${err.response?.status} data=${JSON.stringify(err.response?.data)}`);
-  }
+// amoCRM does not support changing role_id via API (always returns 405).
+// Role change is only possible through the amoCRM UI.
+// This function is kept as a no-op stub in case the API ever supports it.
+export async function setAmoUserRole(_amoUserId: number, _roleId: number): Promise<void> {
+  throw new Error("amoCRM API does not support role_id changes via PATCH — use restrictAmoUserLeads instead");
 }
 
 export async function restrictAmoUserLeads(amoUserId: number): Promise<void> {

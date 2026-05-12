@@ -1,5 +1,5 @@
 import { prisma } from "../config/database";
-import { getAmoUserRoleId, setAmoUserRole, AMO_RESTRICTED_ROLE_ID } from "./amoRights";
+import { getAmoUserRights, restrictAmoUserLeads } from "./amoRights";
 
 const MIN_SESSION_WORDS = 10;
 
@@ -27,7 +27,7 @@ export async function runDisciplineCheck(
 
   for (const manager of managers) {
     try {
-      // Check if manager has a valid AI session today (>=10 words)
+      // Session counts only if question has >=10 words
       const sessionsToday = await prisma.aiTrainerSession.findMany({
         where: { managerId: manager.id, createdAt: { gte: todayStart } },
         select: { question: true },
@@ -40,20 +40,21 @@ export async function runDisciplineCheck(
         continue;
       }
 
-      // Save current role before restricting (don't overwrite if already restricted — guarded by query filter above)
-      const currentRoleId = await getAmoUserRoleId(manager.amoUserId!);
-      if (!currentRoleId) {
-        console.warn(`[Discipline] Could not fetch role for manager ${manager.id}, skipping`);
+      // Save current rights before restricting.
+      // isAmoCrmRestricted: false filter above prevents overwriting saved rights.
+      const originalRights = await getAmoUserRights(manager.amoUserId!);
+      if (!originalRights) {
+        console.warn(`[Discipline] Could not fetch rights for manager ${manager.id}, skipping`);
         errors++;
         continue;
       }
 
-      await setAmoUserRole(manager.amoUserId!, AMO_RESTRICTED_ROLE_ID);
+      await restrictAmoUserLeads(manager.amoUserId!);
       await prisma.manager.update({
         where: { id: manager.id },
         data: {
           isAmoCrmRestricted: true,
-          amoRightsBeforeRestriction: { roleId: currentRoleId },
+          amoRightsBeforeRestriction: originalRights as object,
         },
       });
 
@@ -61,7 +62,7 @@ export async function runDisciplineCheck(
       if (chatId) {
         await sendFn(
           chatId,
-          "🔒 Ваш доступ в amoCRM ограничен — роль изменена до конца дня.\n" +
+          "🔒 Ваш доступ в amoCRM ограничен — вы видите только свои лиды.\n" +
             "Для восстановления пройдите AI-сессию: /ask\n" +
             "_(Отправьте осмысленный вопрос минимум из 10 слов)_"
         ).catch((e) =>
@@ -70,7 +71,7 @@ export async function runDisciplineCheck(
       }
 
       restricted++;
-      console.log(`[Discipline] Restricted manager ${manager.id} (${manager.name}), saved roleId=${currentRoleId}`);
+      console.log(`[Discipline] Restricted manager ${manager.id} (${manager.name})`);
     } catch (err: any) {
       console.error(`[Discipline] Error processing manager ${manager.id}:`, err.message);
       errors++;

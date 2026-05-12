@@ -12,7 +12,7 @@ import { writeManagersToSheet } from "../services/googleSheets";
 import { syncHistoryRange, findPbxRecordByDateAndPhone } from "../services/pbxHistory";
 import { callProcessingQueue } from "../queues/callProcessing";
 import { fetchDealCallNotes, fetchDealContactPhones } from "../services/amocrm";
-import { restoreAmoUserRights, getAmoUserRoleId, setAmoUserRole, AMO_RESTRICTED_ROLE_ID } from "../services/amoRights";
+import { restoreAmoUserRights, getAmoUserRoleId, restrictAmoUserLeads, getAmoUserRights } from "../services/amoRights";
 import { supervisorAiSessions, roleFlowState } from "./state";
 import { buildSupervisorAiPrompt } from "./supervisorAi";
 import { registerAdminRoleHandlers } from "./handlers/adminRoles";
@@ -799,15 +799,12 @@ bot.on("message", async (msg) => {
         data: { managerId: session.managerId, question, answer, period: session.period },
       }).catch((e: Error) => console.error("[AiSession] Save failed:", e.message));
 
-      // Restore amoCRM role if manager was restricted
+      // Restore amoCRM rights if manager was restricted
       try {
         const mgr = await prisma.manager.findUnique({ where: { id: session.managerId } });
         if (mgr?.isAmoCrmRestricted && mgr.amoUserId) {
           const saved = mgr.amoRightsBeforeRestriction as Record<string, unknown> | null;
-          if (typeof saved?.roleId === "number") {
-            await setAmoUserRole(mgr.amoUserId, saved.roleId as number);
-          } else if (saved) {
-            // Backward compat: old records saved full rights object
+          if (saved) {
             await restoreAmoUserRights(mgr.amoUserId, saved);
           }
           await prisma.manager.update({
@@ -1459,28 +1456,29 @@ bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
     await bot.sendMessage(msg.chat.id, `❌ Не удалось получить role_id из amoCRM для ${manager.name}.\nПроверь логи сервера — там будет ответ API.`);
     return;
   }
-  await bot.sendMessage(msg.chat.id, `✔ Текущая роль: ${currentRoleId}\n🔄 Меняю на ${AMO_RESTRICTED_ROLE_ID} (МОП)...`);
+  await bot.sendMessage(msg.chat.id, `✔ Текущая роль: ${currentRoleId}\n🔄 Ограничиваю права (leads.view=M)...`);
 
   try {
-    await setAmoUserRole(manager.amoUserId, AMO_RESTRICTED_ROLE_ID);
-    console.log(`[test_restrict] setAmoUserRole OK: amoUserId=${manager.amoUserId} -> roleId=${AMO_RESTRICTED_ROLE_ID}`);
+    await restrictAmoUserLeads(manager.amoUserId);
+    console.log(`[test_restrict] restrictAmoUserLeads OK: amoUserId=${manager.amoUserId}`);
   } catch (err: any) {
-    console.error(`[test_restrict] setAmoUserRole FAILED:`, err.response?.data ?? err.message);
-    await bot.sendMessage(msg.chat.id, `❌ Ошибка при смене роли в amoCRM:\n${err.response?.data ? JSON.stringify(err.response.data) : err.message}`);
+    console.error(`[test_restrict] restrictAmoUserLeads FAILED: status=${(err as any).response?.status} data=${JSON.stringify((err as any).response?.data)} msg=${err.message}`);
+    await bot.sendMessage(msg.chat.id, `❌ Ошибка при ограничении прав в amoCRM:\nstatus=${(err as any).response?.status} ${JSON.stringify((err as any).response?.data) || err.message}`);
     return;
   }
 
+  const currentRights = await getAmoUserRights(manager.amoUserId);
   await prisma.manager.update({
     where: { id: manager.id },
-    data: { isAmoCrmRestricted: true, amoRightsBeforeRestriction: { roleId: currentRoleId } },
+    data: { isAmoCrmRestricted: true, amoRightsBeforeRestriction: currentRoleId ? { roleId: currentRoleId, rights: currentRights } : (currentRights as object) },
   });
-  console.log(`[test_restrict] DB updated: manager ${manager.id} isAmoCrmRestricted=true savedRoleId=${currentRoleId}`);
+  console.log(`[test_restrict] DB updated: manager ${manager.id} isAmoCrmRestricted=true`);
 
   await bot.sendMessage(
     msg.chat.id,
-    `✅ [ТЕСТ] Роль ${manager.name} изменена:\n` +
-      `• Прежняя роль: ${currentRoleId}\n` +
-      `• Новая роль: ${AMO_RESTRICTED_ROLE_ID} (МОП)\n\n` +
+    `✅ [ТЕСТ] ${manager.name} ограничен в amoCRM:\n` +
+      `• Роль (для инфо): ${currentRoleId}\n` +
+      `• leads.view → только свои лиды\n\n` +
       `Менеджер восстановит доступ через /ask (вопрос ≥10 слов).`
   );
 });
@@ -1505,15 +1503,15 @@ bot.onText(/\/test_restore (.+)/, async (msg, match) => {
     return;
   }
 
-  const saved = manager.amoRightsBeforeRestriction as { roleId?: number } | null;
-  const roleId = saved?.roleId;
+  const saved = manager.amoRightsBeforeRestriction as Record<string, unknown> | null;
 
-  if (!roleId || !manager.amoUserId) {
-    await bot.sendMessage(msg.chat.id, `❌ Нет сохранённой роли для ${manager.name}.`);
+  if (!saved || !manager.amoUserId) {
+    await bot.sendMessage(msg.chat.id, `❌ Нет сохранённых прав для ${manager.name}.`);
     return;
   }
 
-  await setAmoUserRole(manager.amoUserId, roleId);
+  const rightsToRestore = (saved.rights ?? saved) as Record<string, unknown>;
+  await restoreAmoUserRights(manager.amoUserId, rightsToRestore);
   await prisma.manager.update({
     where: { id: manager.id },
     data: { isAmoCrmRestricted: false, amoRightsBeforeRestriction: Prisma.DbNull },
@@ -1521,7 +1519,7 @@ bot.onText(/\/test_restore (.+)/, async (msg, match) => {
 
   await bot.sendMessage(
     msg.chat.id,
-    `✅ [ТЕСТ] Роль ${manager.name} восстановлена:\n• Роль: ${roleId}`
+    `✅ [ТЕСТ] Права ${manager.name} восстановлены.`
   );
 });
 
