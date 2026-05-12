@@ -37,12 +37,13 @@ export async function getAmoUserRoleId(amoUserId: number): Promise<number | null
       { headers: amoHeaders() }
     );
     const rights = resp.data?.rights as Record<string, unknown> | undefined;
+    console.log(`[amoRights] getAmoUserRoleId(${amoUserId}) rights.role_id=${rights?.role_id} _embedded.roles=${JSON.stringify(resp.data?._embedded?.roles)}`);
     if (typeof rights?.role_id === "number") return rights.role_id;
     const roles = resp.data?._embedded?.roles as Array<{ id: number }> | undefined;
     if (roles?.[0]?.id) return roles[0].id;
     return null;
   } catch (err: any) {
-    console.error(`[amoRights] getAmoUserRoleId failed for ${amoUserId}:`, err.message);
+    console.error(`[amoRights] getAmoUserRoleId failed for ${amoUserId}:`, err.response?.data ?? err.message);
     return null;
   }
 }

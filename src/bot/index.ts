@@ -1404,12 +1404,18 @@ bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
   if (!(await requireAdmin(msg))) return;
 
   const tgId = match![1].trim();
-  const manager = await getManager(tgId);
+  console.log(`[test_restrict] tgId=${tgId}`);
+  await bot.sendMessage(msg.chat.id, `🔍 Ищу менеджера с tg_id=${tgId}...`);
 
+  const manager = await getManager(tgId);
   if (!manager) {
-    await bot.sendMessage(msg.chat.id, `❌ Менеджер с Telegram ID ${tgId} не найден.`);
+    console.log(`[test_restrict] Manager not found for tgId=${tgId}`);
+    await bot.sendMessage(msg.chat.id, `❌ Менеджер с Telegram ID ${tgId} не найден в БД.`);
     return;
   }
+  console.log(`[test_restrict] Found manager: id=${manager.id} name=${manager.name} amoUserId=${manager.amoUserId} isRestricted=${manager.isAmoCrmRestricted}`);
+  await bot.sendMessage(msg.chat.id, `✔ Менеджер: ${manager.name} (amoId=${manager.amoUserId}, restricted=${manager.isAmoCrmRestricted})`);
+
   if (!manager.amoUserId) {
     await bot.sendMessage(msg.chat.id, `❌ У ${manager.name} нет amoCRM user ID.`);
     return;
@@ -1419,17 +1425,30 @@ bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
     return;
   }
 
+  await bot.sendMessage(msg.chat.id, `🔍 Запрашиваю текущую роль из amoCRM (userId=${manager.amoUserId})...`);
   const currentRoleId = await getAmoUserRoleId(manager.amoUserId);
+  console.log(`[test_restrict] getAmoUserRoleId result: ${currentRoleId}`);
+
   if (!currentRoleId) {
-    await bot.sendMessage(msg.chat.id, `❌ Не удалось получить текущую роль ${manager.name}.`);
+    await bot.sendMessage(msg.chat.id, `❌ Не удалось получить role_id из amoCRM для ${manager.name}.\nПроверь логи сервера — там будет ответ API.`);
+    return;
+  }
+  await bot.sendMessage(msg.chat.id, `✔ Текущая роль: ${currentRoleId}\n🔄 Меняю на ${AMO_RESTRICTED_ROLE_ID} (МОП)...`);
+
+  try {
+    await setAmoUserRole(manager.amoUserId, AMO_RESTRICTED_ROLE_ID);
+    console.log(`[test_restrict] setAmoUserRole OK: amoUserId=${manager.amoUserId} -> roleId=${AMO_RESTRICTED_ROLE_ID}`);
+  } catch (err: any) {
+    console.error(`[test_restrict] setAmoUserRole FAILED:`, err.response?.data ?? err.message);
+    await bot.sendMessage(msg.chat.id, `❌ Ошибка при смене роли в amoCRM:\n${err.response?.data ? JSON.stringify(err.response.data) : err.message}`);
     return;
   }
 
-  await setAmoUserRole(manager.amoUserId, AMO_RESTRICTED_ROLE_ID);
   await prisma.manager.update({
     where: { id: manager.id },
     data: { isAmoCrmRestricted: true, amoRightsBeforeRestriction: { roleId: currentRoleId } },
   });
+  console.log(`[test_restrict] DB updated: manager ${manager.id} isAmoCrmRestricted=true savedRoleId=${currentRoleId}`);
 
   await bot.sendMessage(
     msg.chat.id,
