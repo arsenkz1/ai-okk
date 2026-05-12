@@ -56,24 +56,22 @@ export async function setAmoUserRole(_amoUserId: number, _roleId: number): Promi
 }
 
 export async function restrictAmoUserLeads(amoUserId: number): Promise<void> {
-  await axios.patch(
-    `${AMO_BASE_URL}/api/v4/users/${amoUserId}`,
-    {
-      rights: {
-        leads: { view: "M", edit: "M", add: "M", delete: "M" },
-      },
-    },
+  const resp = await axios.patch(
+    `${AMO_BASE_URL}/api/v4/users`,
+    [{ id: amoUserId, rights: { leads: { view: "M", edit: "M", add: "M", delete: "M" } } }],
     { headers: amoHeaders() }
   );
+  console.log(`[amoRights] restrictAmoUserLeads(${amoUserId}) status=${resp.status}`);
 }
 
 export async function restoreAmoUserRights(
   amoUserId: number,
   rights: Record<string, unknown>
 ): Promise<void> {
-  await axios.patch(
-    `${AMO_BASE_URL}/api/v4/users/${amoUserId}`,
-    { rights },
+  const resp = await axios.patch(
+    `${AMO_BASE_URL}/api/v4/users`,
+    [{ id: amoUserId, rights }],
     { headers: amoHeaders() }
   );
+  console.log(`[amoRights] restoreAmoUserRights(${amoUserId}) status=${resp.status}`);
 }
