@@ -49,13 +49,45 @@ export async function getAmoUserRoleId(amoUserId: number): Promise<number | null
 }
 
 export async function setAmoUserRole(amoUserId: number, roleId: number): Promise<void> {
-  // amoCRM does not support PATCH /users/{id} for role_id — use bulk endpoint with array
-  const resp = await axios.patch(
-    `${AMO_BASE_URL}/api/v4/users`,
-    [{ id: amoUserId, rights: { role_id: roleId } }],
-    { headers: amoHeaders() }
-  );
-  console.log(`[amoRights] setAmoUserRole(${amoUserId}, ${roleId}) status=${resp.status} data=${JSON.stringify(resp.data)}`);
+  // Try 1: bulk endpoint with role_id inside rights
+  try {
+    const resp = await axios.patch(
+      `${AMO_BASE_URL}/api/v4/users`,
+      [{ id: amoUserId, rights: { role_id: roleId } }],
+      { headers: amoHeaders() }
+    );
+    console.log(`[amoRights] setAmoUserRole attempt1 OK: status=${resp.status} data=${JSON.stringify(resp.data)}`);
+    return;
+  } catch (err: any) {
+    console.warn(`[amoRights] setAmoUserRole attempt1 failed: status=${err.response?.status} data=${JSON.stringify(err.response?.data)} msg=${err.message}`);
+  }
+
+  // Try 2: bulk endpoint with role_id at top level
+  try {
+    const resp = await axios.patch(
+      `${AMO_BASE_URL}/api/v4/users`,
+      [{ id: amoUserId, role_id: roleId }],
+      { headers: amoHeaders() }
+    );
+    console.log(`[amoRights] setAmoUserRole attempt2 OK: status=${resp.status} data=${JSON.stringify(resp.data)}`);
+    return;
+  } catch (err: any) {
+    console.warn(`[amoRights] setAmoUserRole attempt2 failed: status=${err.response?.status} data=${JSON.stringify(err.response?.data)} msg=${err.message}`);
+  }
+
+  // Try 3: single-user endpoint with role_id at top level
+  try {
+    const resp = await axios.patch(
+      `${AMO_BASE_URL}/api/v4/users/${amoUserId}`,
+      { role_id: roleId },
+      { headers: amoHeaders() }
+    );
+    console.log(`[amoRights] setAmoUserRole attempt3 OK: status=${resp.status} data=${JSON.stringify(resp.data)}`);
+    return;
+  } catch (err: any) {
+    console.warn(`[amoRights] setAmoUserRole attempt3 failed: status=${err.response?.status} data=${JSON.stringify(err.response?.data)} msg=${err.message}`);
+    throw new Error(`All 3 attempts failed. Last: status=${err.response?.status} data=${JSON.stringify(err.response?.data)}`);
+  }
 }
 
 export async function restrictAmoUserLeads(amoUserId: number): Promise<void> {
