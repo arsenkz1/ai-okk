@@ -53,7 +53,7 @@ export async function getAmoUserRoleId(amoUserId: number): Promise<number | null
 export async function setAmoUserRole(amoUserId: number, roleId: number): Promise<void> {
   const resp = await axios.patch(
     `${AMO_BASE_URL}/api/v4/roles/${roleId}`,
-    { users: [{ id: amoUserId }] },
+    { _embedded: { users: [{ id: amoUserId }] } },
     { headers: amoHeaders() }
   );
   console.log(`[amoRights] setAmoUserRole(${amoUserId} -> roleId=${roleId}) status=${resp.status}`);
