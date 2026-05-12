@@ -4,7 +4,7 @@ import axios from "axios";
 const AMO_BASE_URL = process.env.AMOCRM_BASE_URL;
 const AMO_ACCESS_TOKEN = process.env.AMOCRM_ACCESS_TOKEN;
 
-export const AMO_RESTRICTED_ROLE_ID = parseInt(process.env.AMO_RESTRICTED_ROLE_ID ?? "626410");
+export const AMO_RESTRICTED_ROLE_ID = parseInt(process.env.AMO_RESTRICTED_ROLE_ID ?? "1201342");
 
 function amoHeaders() {
   return {
@@ -48,11 +48,15 @@ export async function getAmoUserRoleId(amoUserId: number): Promise<number | null
   }
 }
 
-// amoCRM does not support changing role_id via API (always returns 405).
-// Role change is only possible through the amoCRM UI.
-// This function is kept as a no-op stub in case the API ever supports it.
-export async function setAmoUserRole(_amoUserId: number, _roleId: number): Promise<void> {
-  throw new Error("amoCRM API does not support role_id changes via PATCH — use restrictAmoUserLeads instead");
+// Assign a user to a role via PATCH /api/v4/roles/{roleId}.
+// Adding a user to a role automatically removes them from their previous role.
+export async function setAmoUserRole(amoUserId: number, roleId: number): Promise<void> {
+  const resp = await axios.patch(
+    `${AMO_BASE_URL}/api/v4/roles/${roleId}`,
+    { users: [{ id: amoUserId }] },
+    { headers: amoHeaders() }
+  );
+  console.log(`[amoRights] setAmoUserRole(${amoUserId} -> roleId=${roleId}) status=${resp.status}`);
 }
 
 export async function restrictAmoUserLeads(amoUserId: number): Promise<void> {

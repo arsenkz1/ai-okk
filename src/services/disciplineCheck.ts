@@ -1,5 +1,5 @@
 import { prisma } from "../config/database";
-import { getAmoUserRights, restrictAmoUserLeads } from "./amoRights";
+import { getAmoUserRoleId, setAmoUserRole, AMO_RESTRICTED_ROLE_ID } from "./amoRights";
 
 const MIN_SESSION_WORDS = 10;
 
@@ -9,7 +9,6 @@ export async function runDisciplineCheck(
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  // Only process active managers not already restricted
   const managers = await prisma.manager.findMany({
     where: {
       isActive: true,
@@ -27,7 +26,6 @@ export async function runDisciplineCheck(
 
   for (const manager of managers) {
     try {
-      // Session counts only if question has >=10 words
       const sessionsToday = await prisma.aiTrainerSession.findMany({
         where: { managerId: manager.id, createdAt: { gte: todayStart } },
         select: { question: true },
@@ -40,21 +38,25 @@ export async function runDisciplineCheck(
         continue;
       }
 
-      // Save current rights before restricting.
-      // isAmoCrmRestricted: false filter above prevents overwriting saved rights.
-      const originalRights = await getAmoUserRights(manager.amoUserId!);
-      if (!originalRights) {
-        console.warn(`[Discipline] Could not fetch rights for manager ${manager.id}, skipping`);
+      const currentRoleId = await getAmoUserRoleId(manager.amoUserId!);
+      if (!currentRoleId) {
+        console.warn(`[Discipline] Could not fetch role for manager ${manager.id}, skipping`);
         errors++;
         continue;
       }
 
-      await restrictAmoUserLeads(manager.amoUserId!);
+      // Skip if already on restricted role (safety check)
+      if (currentRoleId === AMO_RESTRICTED_ROLE_ID) {
+        skipped++;
+        continue;
+      }
+
+      await setAmoUserRole(manager.amoUserId!, AMO_RESTRICTED_ROLE_ID);
       await prisma.manager.update({
         where: { id: manager.id },
         data: {
           isAmoCrmRestricted: true,
-          amoRightsBeforeRestriction: originalRights as object,
+          amoRightsBeforeRestriction: { roleId: currentRoleId },
         },
       });
 
@@ -71,7 +73,7 @@ export async function runDisciplineCheck(
       }
 
       restricted++;
-      console.log(`[Discipline] Restricted manager ${manager.id} (${manager.name})`);
+      console.log(`[Discipline] Restricted manager ${manager.id} (${manager.name}), savedRoleId=${currentRoleId}`);
     } catch (err: any) {
       console.error(`[Discipline] Error processing manager ${manager.id}:`, err.message);
       errors++;
