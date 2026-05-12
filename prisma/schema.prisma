@@ -13,6 +13,21 @@ datasource db {
   provider = "postgresql"
 }
 
+enum ManagerRole {
+  MANAGER
+  TEAMLEAD
+  ROP
+}
+
+model Team {
+  id         Int       @id @default(autoincrement())
+  name       String
+  teamLeadId Int?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  members    Manager[]
+}
+
 model Manager {
   id             Int             @id @default(autoincrement())
   name           String
@@ -21,6 +36,12 @@ model Manager {
   timezone       String          @default("UTC")
   isActive       Boolean         @default(true)
   deactivatedAt  DateTime?
+
+  role                       ManagerRole  @default(MANAGER)
+  teamId                     Int?
+  team                       Team?        @relation(fields: [teamId], references: [id])
+  isAmoCrmRestricted         Boolean      @default(false)
+  amoRightsBeforeRestriction Json?
 
   telegramLinks  TelegramLink[]
   calls          Call[]

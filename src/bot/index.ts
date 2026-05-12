@@ -1,6 +1,7 @@
 import "dotenv/config";
 import TelegramBot from "node-telegram-bot-api";
 import { prisma } from "../config/database";
+import { Prisma } from "../generated/prisma/client";
 import { redisConnection } from "../config/queue";
 import { syncManagersFromPbx, resetManagerCode } from "../services/managerSync";
 import {
@@ -11,6 +12,12 @@ import { writeManagersToSheet } from "../services/googleSheets";
 import { syncHistoryRange, findPbxRecordByDateAndPhone } from "../services/pbxHistory";
 import { callProcessingQueue } from "../queues/callProcessing";
 import { fetchDealCallNotes, fetchDealContactPhones } from "../services/amocrm";
+import { restoreAmoUserRights, getAmoUserRoleId, setAmoUserRole, AMO_RESTRICTED_ROLE_ID } from "../services/amoRights";
+import { supervisorAiSessions, roleFlowState } from "./state";
+import { buildSupervisorAiPrompt } from "./supervisorAi";
+import { registerAdminRoleHandlers } from "./handlers/adminRoles";
+import { registerTeamLeadHandlers } from "./handlers/teamlead";
+import { registerRopHandlers } from "./handlers/rop";
 
 // ---------------------------------------------------------------------------
 // Bot initialization
@@ -59,6 +66,8 @@ interface AiSession {
   active: boolean;
   history: GeminiMessage[];
   systemContext: string;
+  managerId: number;
+  period: string;
 }
 const aiSessions = new Map<number, AiSession>();
 
@@ -538,7 +547,11 @@ bot.onText(/\/help$/, async (msg) => {
         `/week — so'nggi 7 kun\n` +
         `/month — joriy oy\n` +
         `/period — ixtiyoriy sana diapazoni\n` +
-        `/errors — 30 kunlik zaif kriteriyalar`,
+        `/errors — 30 kunlik zaif kriteriyalar\n\n` +
+
+        `*Tест дисциплины (amoCRM роль):*\n` +
+        `/test\\_restrict <tg\\_id> — ограничить роль менеджера\n` +
+        `/test\\_restore <tg\\_id> — восстановить роль менеджера`,
       { parse_mode: "Markdown" }
     );
     return;
@@ -701,10 +714,71 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // ── State 3: AI-coach dialog ──────────────────────────────────────────────
+  // ── State 3: Supervisor AI dialog (TeamLead/ROP asking about a manager) ──
+  const supSession = supervisorAiSessions.get(userId);
+  if (supSession?.active) {
+    const question = msg.text.trim();
+    await bot.sendChatAction(msg.chat.id, "typing");
+    supSession.history.push({ role: "user", parts: [{ text: question }] });
+    const answer = await askGeminiWithHistory(supSession.history, supSession.systemContext);
+    supSession.history.push({ role: "model", parts: [{ text: answer }] });
+    if (supSession.history.length > 40) supSession.history = supSession.history.slice(-40);
+    await bot.sendMessage(msg.chat.id, answer);
+    return;
+  }
+
+  // ── State 3.5: Awaiting supervisor question (after manager picker) ────────
+  const flow = roleFlowState.get(userId);
+  if (flow?.step === "awaiting_sup_question") {
+    const question = msg.text.trim();
+    const words = question.split(/\s+/).filter(Boolean);
+    if (words.length < 10) {
+      await bot.sendMessage(
+        msg.chat.id,
+        "❌ Вопрос должен содержать не менее 10 слов. Попробуйте ещё раз."
+      );
+      return;
+    }
+
+    const { targetManagerId, targetManagerName, supervisorRole } = flow.data as {
+      targetManagerId: number;
+      targetManagerName: string;
+      supervisorRole: "TEAMLEAD" | "ROP";
+    };
+
+    roleFlowState.delete(userId);
+    await bot.sendChatAction(msg.chat.id, "typing");
+
+    const systemContext = await buildSupervisorAiPrompt(
+      targetManagerId,
+      targetManagerName as string,
+      supervisorRole
+    );
+    const history: GeminiMessage[] = [{ role: "user", parts: [{ text: question }] }];
+    const answer = await askGeminiWithHistory(history, systemContext);
+    history.push({ role: "model", parts: [{ text: answer }] });
+
+    supervisorAiSessions.set(userId, {
+      active: true,
+      targetManagerId,
+      targetManagerName: targetManagerName as string,
+      history,
+      systemContext,
+    });
+
+    await bot.sendMessage(
+      msg.chat.id,
+      `🤖 *AI о ${targetManagerName}:*\n\n${answer}\n\n_Продолжайте задавать вопросы или /stop\\_ai для выхода._`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+
+  // ── State 4: AI-coach dialog (manager talking about themselves) ───────────
   const session = aiSessions.get(userId);
   if (session?.active) {
     const question = msg.text.trim();
+    const wordCount = question.split(/\s+/).filter(Boolean).length;
     await bot.sendChatAction(msg.chat.id, "typing");
 
     session.history.push({ role: "user", parts: [{ text: question }] });
@@ -718,6 +792,35 @@ bot.on("message", async (msg) => {
     }
 
     await bot.sendMessage(msg.chat.id, answer);
+
+    // Session counts for discipline only if question is >=10 words
+    if (wordCount >= 10) {
+      await prisma.aiTrainerSession.create({
+        data: { managerId: session.managerId, question, answer, period: session.period },
+      }).catch((e: Error) => console.error("[AiSession] Save failed:", e.message));
+
+      // Restore amoCRM role if manager was restricted
+      try {
+        const mgr = await prisma.manager.findUnique({ where: { id: session.managerId } });
+        if (mgr?.isAmoCrmRestricted && mgr.amoUserId) {
+          const saved = mgr.amoRightsBeforeRestriction as Record<string, unknown> | null;
+          if (typeof saved?.roleId === "number") {
+            await setAmoUserRole(mgr.amoUserId, saved.roleId as number);
+          } else if (saved) {
+            // Backward compat: old records saved full rights object
+            await restoreAmoUserRights(mgr.amoUserId, saved);
+          }
+          await prisma.manager.update({
+            where: { id: mgr.id },
+            data: { isAmoCrmRestricted: false, amoRightsBeforeRestriction: Prisma.DbNull },
+          });
+          await bot.sendMessage(msg.chat.id, "✅ Ваш доступ в amoCRM восстановлен.");
+        }
+      } catch (e: any) {
+        console.error("[Discipline] Restore failed:", e.message);
+      }
+    }
+
     return;
   }
 });
@@ -868,7 +971,7 @@ bot.onText(/\/ask(.*)/, async (msg, match) => {
     const answer = await askGeminiWithHistory(history, systemContext);
     history.push({ role: "model", parts: [{ text: answer }] });
 
-    aiSessions.set(userId, { active: true, history, systemContext });
+    aiSessions.set(userId, { active: true, history, systemContext, managerId: manager.id, period });
 
     await bot.sendMessage(
       msg.chat.id,
@@ -876,7 +979,7 @@ bot.onText(/\/ask(.*)/, async (msg, match) => {
       { parse_mode: "Markdown" }
     );
   } else {
-    aiSessions.set(userId, { active: true, history, systemContext });
+    aiSessions.set(userId, { active: true, history, systemContext, managerId: manager.id, period });
     await bot.sendMessage(msg.chat.id, activationText, { parse_mode: "Markdown" });
   }
 });
@@ -889,14 +992,24 @@ bot.onText(/\/stop_ai$/, async (msg) => {
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
   const userId = msg.from!.id;
   const session = aiSessions.get(userId);
+  const supSession = supervisorAiSessions.get(userId);
+  const flow = roleFlowState.get(userId);
 
-  if (!session?.active) {
+  if (!session?.active && !supSession?.active && !flow) {
     await bot.sendMessage(msg.chat.id, "ℹ️ AI-murabbiy allaqachon aktiv emas.");
     return;
   }
 
-  const msgCount = Math.floor(session.history.length / 2);
-  aiSessions.delete(userId);
+  let msgCount = 0;
+  if (supSession?.active) {
+    msgCount = Math.floor(supSession.history.length / 2);
+    supervisorAiSessions.delete(userId);
+  }
+  if (session?.active) {
+    msgCount = Math.floor(session.history.length / 2);
+    aiSessions.delete(userId);
+  }
+  if (flow) roleFlowState.delete(userId);
 
   await bot.sendMessage(
     msg.chat.id,
@@ -1281,6 +1394,103 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
     await bot.sendMessage(msg.chat.id, `❌ Xato: ${err.message}`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// ADMIN: /test_restrict <tg_id> — manually restrict a manager's amoCRM role
+// ---------------------------------------------------------------------------
+
+bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
+  if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  if (!(await requireAdmin(msg))) return;
+
+  const tgId = match![1].trim();
+  const manager = await getManager(tgId);
+
+  if (!manager) {
+    await bot.sendMessage(msg.chat.id, `❌ Менеджер с Telegram ID ${tgId} не найден.`);
+    return;
+  }
+  if (!manager.amoUserId) {
+    await bot.sendMessage(msg.chat.id, `❌ У ${manager.name} нет amoCRM user ID.`);
+    return;
+  }
+  if (manager.isAmoCrmRestricted) {
+    await bot.sendMessage(msg.chat.id, `⚠️ ${manager.name} уже ограничен.`);
+    return;
+  }
+
+  const currentRoleId = await getAmoUserRoleId(manager.amoUserId);
+  if (!currentRoleId) {
+    await bot.sendMessage(msg.chat.id, `❌ Не удалось получить текущую роль ${manager.name}.`);
+    return;
+  }
+
+  await setAmoUserRole(manager.amoUserId, AMO_RESTRICTED_ROLE_ID);
+  await prisma.manager.update({
+    where: { id: manager.id },
+    data: { isAmoCrmRestricted: true, amoRightsBeforeRestriction: { roleId: currentRoleId } },
+  });
+
+  await bot.sendMessage(
+    msg.chat.id,
+    `✅ [ТЕСТ] Роль ${manager.name} изменена:\n` +
+      `• Прежняя роль: ${currentRoleId}\n` +
+      `• Новая роль: ${AMO_RESTRICTED_ROLE_ID} (МОП)\n\n` +
+      `Менеджер восстановит доступ через /ask (вопрос ≥10 слов).`
+  );
+});
+
+// ---------------------------------------------------------------------------
+// ADMIN: /test_restore <tg_id> — manually restore a manager's amoCRM role
+// ---------------------------------------------------------------------------
+
+bot.onText(/\/test_restore (.+)/, async (msg, match) => {
+  if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  if (!(await requireAdmin(msg))) return;
+
+  const tgId = match![1].trim();
+  const manager = await getManager(tgId);
+
+  if (!manager) {
+    await bot.sendMessage(msg.chat.id, `❌ Менеджер с Telegram ID ${tgId} не найден.`);
+    return;
+  }
+  if (!manager.isAmoCrmRestricted) {
+    await bot.sendMessage(msg.chat.id, `⚠️ ${manager.name} сейчас не ограничен.`);
+    return;
+  }
+
+  const saved = manager.amoRightsBeforeRestriction as { roleId?: number } | null;
+  const roleId = saved?.roleId;
+
+  if (!roleId || !manager.amoUserId) {
+    await bot.sendMessage(msg.chat.id, `❌ Нет сохранённой роли для ${manager.name}.`);
+    return;
+  }
+
+  await setAmoUserRole(manager.amoUserId, roleId);
+  await prisma.manager.update({
+    where: { id: manager.id },
+    data: { isAmoCrmRestricted: false, amoRightsBeforeRestriction: Prisma.DbNull },
+  });
+
+  await bot.sendMessage(
+    msg.chat.id,
+    `✅ [ТЕСТ] Роль ${manager.name} восстановлена:\n• Роль: ${roleId}`
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Polling errors + graceful shutdown
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Role-based handlers
+// ---------------------------------------------------------------------------
+
+registerAdminRoleHandlers(bot);
+registerTeamLeadHandlers(bot);
+registerRopHandlers(bot);
 
 // ---------------------------------------------------------------------------
 // Polling errors + graceful shutdown

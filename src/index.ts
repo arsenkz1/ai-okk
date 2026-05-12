@@ -8,6 +8,7 @@ import { syncManagersFromPbx } from "./services/managerSync";
 import { sendDailyReports } from "./workers/dailyReport";
 import "./workers/callProcessor";
 import { bot } from "./bot/index"; // запускает бот в режиме polling
+import { runDisciplineCheck } from "./services/disciplineCheck";
 import { notifyAdmins } from "./bot/notify";
 void bot; // используется через polling
 
@@ -95,6 +96,24 @@ cron.schedule(
       console.log("[Cron] Daily reports done:", result);
     } catch (err: any) {
       console.error("[Cron] Daily reports failed:", err.message);
+    }
+  },
+  { timezone: tz }
+);
+
+// Дисциплина: проверка AI-сессии менеджеров в рабочие дни
+const coachDeadlineHour = parseInt(process.env.COACH_DEADLINE_HOUR ?? "11");
+cron.schedule(
+  `0 ${coachDeadlineHour} * * 1-5`,
+  async () => {
+    console.log("[Cron] Running discipline check...");
+    try {
+      const r = await runDisciplineCheck(async (chatId, text) => {
+        await bot.sendMessage(chatId, text);
+      });
+      console.log("[Cron] Discipline check done:", r);
+    } catch (err: any) {
+      console.error("[Cron] Discipline check failed:", err.message);
     }
   },
   { timezone: tz }
