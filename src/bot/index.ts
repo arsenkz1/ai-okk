@@ -549,9 +549,26 @@ bot.onText(/\/help$/, async (msg) => {
         `/period — ixtiyoriy sana diapazoni\n` +
         `/errors — 30 kunlik zaif kriteriyalar\n\n` +
 
-        `*Tест дисциплины (amoCRM роль):*\n` +
-        `/test\\_restrict <tg\\_id> — ограничить роль менеджера\n` +
-        `/test\\_restore <tg\\_id> — восстановить роль менеджера`,
+        `*РОП — рейтинги и аналитика:*\n` +
+        `/teams — все команды\n` +
+        `/all\\_rating — общий рейтинг менеджеров (7 дней)\n` +
+        `/all\\_mistakes — ошибки по всей компании\n` +
+        `/rop\\_team\\_rating — рейтинг конкретной команды\n` +
+        `/rop\\_team\\_mistakes — ошибки конкретной команды\n` +
+        `/rop\\_manager — карточка менеджера\n` +
+        `/rop\\_ask — AI-вопрос о менеджере\n\n` +
+
+        `*РОП — управление командами:*\n` +
+        `/set\\_role <tg\\_id> <manager|teamlead|rop> — назначить роль\n` +
+        `/set\\_teamlead <amo\\_id> — создать команду и назначить ТЛ\n` +
+        `/add\\_to\\_team <mgr\\_amo\\_id> <tl\\_amo\\_id> — добавить в команду\n` +
+        `/remove\\_from\\_team <amo\\_id> — убрать из команды\n` +
+        `/teams\\_list — список всех команд\n\n` +
+
+        `*Тест дисциплины:*\n` +
+        `/test\\_restrict <tg\\_id> — ограничить менеджера\n` +
+        `/test\\_restore <tg\\_id> — восстановить менеджера\n` +
+        `/check\\_tg <tg\\_id> — проверить привязку в БД`,
       { parse_mode: "Markdown" }
     );
     return;
