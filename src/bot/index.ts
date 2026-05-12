@@ -1396,6 +1396,32 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
 });
 
 // ---------------------------------------------------------------------------
+// ADMIN: /check_tg <tg_id> — debug: show DB records for a Telegram ID
+// ---------------------------------------------------------------------------
+
+bot.onText(/\/check_tg (.+)/, async (msg, match) => {
+  if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  if (!(await requireAdmin(msg))) return;
+
+  const tgId = match![1].trim();
+
+  const links = await prisma.telegramLink.findMany({
+    where: { telegramUserId: tgId },
+    include: { manager: true },
+  });
+
+  if (!links.length) {
+    await bot.sendMessage(msg.chat.id, `❌ TelegramLink с telegramUserId=${tgId} не найдено вообще.`);
+    return;
+  }
+
+  const lines = links.map((l) =>
+    `• status=${l.status} managerId=${l.managerId} name=${l.manager.name} amoId=${l.manager.amoUserId ?? "—"} active=${l.manager.isActive}`
+  );
+  await bot.sendMessage(msg.chat.id, `TelegramLink записи для ${tgId}:\n${lines.join("\n")}`);
+});
+
+// ---------------------------------------------------------------------------
 // ADMIN: /test_restrict <tg_id> — manually restrict a manager's amoCRM role
 // ---------------------------------------------------------------------------
 
