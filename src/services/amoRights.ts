@@ -48,12 +48,23 @@ export async function getAmoUserRoleId(amoUserId: number): Promise<number | null
   }
 }
 
-// Assign a user to a role via PATCH /api/v4/roles/{roleId}.
-// Adding a user to a role automatically removes them from their previous role.
+// Assign a user to a role via PUT /api/v4/user_roles/{roleId}.
+// Gets current users of the role, adds the target user, then PUTs the updated list.
 export async function setAmoUserRole(amoUserId: number, roleId: number): Promise<void> {
-  const resp = await axios.patch(
-    `${AMO_BASE_URL}/api/v4/roles/${roleId}`,
-    { _embedded: { users: [{ id: amoUserId }] } },
+  const getResp = await axios.get(
+    `${AMO_BASE_URL}/api/v4/user_roles/${roleId}`,
+    { headers: amoHeaders() }
+  );
+  const currentUsers: Array<{ id: number }> = getResp.data?._embedded?.users ?? [];
+  console.log(`[amoRights] setAmoUserRole: role ${roleId} current users=${JSON.stringify(currentUsers)}`);
+
+  const updatedUsers = currentUsers.some((u) => u.id === amoUserId)
+    ? currentUsers
+    : [...currentUsers, { id: amoUserId }];
+
+  const resp = await axios.put(
+    `${AMO_BASE_URL}/api/v4/user_roles/${roleId}`,
+    { name: getResp.data?.name, users: updatedUsers },
     { headers: amoHeaders() }
   );
   console.log(`[amoRights] setAmoUserRole(${amoUserId} -> roleId=${roleId}) status=${resp.status}`);
