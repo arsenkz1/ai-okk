@@ -77,7 +77,7 @@ export async function setAmoUserRole(amoUserId: number, roleId: number): Promise
       headers: {
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         "X-Requested-With": "XMLHttpRequest",
-        "X-Session-Token": AMO_ACCESS_TOKEN ?? "",
+        "X-Session-Token": process.env.AMO_SESSION_TOKEN ?? "",
       },
     }
   );
