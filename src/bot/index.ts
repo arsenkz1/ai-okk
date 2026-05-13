@@ -1481,25 +1481,35 @@ bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
   try {
     await setAmoUserRole(manager.amoUserId, AMO_RESTRICTED_ROLE_ID);
     console.log(`[test_restrict] setAmoUserRole OK: amoUserId=${manager.amoUserId} -> roleId=${AMO_RESTRICTED_ROLE_ID}`);
+
+    await prisma.manager.update({
+      where: { id: manager.id },
+      data: { isAmoCrmRestricted: true, amoRightsBeforeRestriction: { roleId: currentRoleId } },
+    });
+    console.log(`[test_restrict] DB updated: manager ${manager.id} isAmoCrmRestricted=true savedRoleId=${currentRoleId}`);
+
+    await bot.sendMessage(
+      msg.chat.id,
+      `✅ [ТЕСТ] Роль ${manager.name} изменена:\n` +
+        `• Прежняя роль: ${currentRoleId}\n` +
+        `• Новая роль: ${AMO_RESTRICTED_ROLE_ID} (ИИ ОКК ограничение)\n\n` +
+        `Менеджер восстановит доступ через /ask (вопрос ≥10 слов).`
+    );
   } catch (err: any) {
-    console.error(`[test_restrict] setAmoUserRole FAILED: status=${(err as any).response?.status} data=${JSON.stringify((err as any).response?.data)} msg=${err.message}`);
-    await bot.sendMessage(msg.chat.id, `❌ Ошибка при смене роли:\nstatus=${(err as any).response?.status} ${JSON.stringify((err as any).response?.data) || err.message}`);
+    const status = err.response?.status;
+    const errMsg = err.message ?? "unknown error";
+    const detail = err.response?.data
+      ? (typeof err.response.data === "string"
+          ? err.response.data.slice(0, 200)
+          : JSON.stringify(err.response.data).slice(0, 200))
+      : "";
+    console.error(`[test_restrict] FAILED: status=${status} msg=${errMsg} detail=${detail}`);
+    await bot.sendMessage(
+      msg.chat.id,
+      `❌ Ошибка при смене роли:\n${errMsg}${detail ? `\n${detail}` : ""}`
+    );
     return;
   }
-
-  await prisma.manager.update({
-    where: { id: manager.id },
-    data: { isAmoCrmRestricted: true, amoRightsBeforeRestriction: { roleId: currentRoleId } },
-  });
-  console.log(`[test_restrict] DB updated: manager ${manager.id} isAmoCrmRestricted=true savedRoleId=${currentRoleId}`);
-
-  await bot.sendMessage(
-    msg.chat.id,
-    `✅ [ТЕСТ] Роль ${manager.name} изменена:\n` +
-      `• Прежняя роль: ${currentRoleId}\n` +
-      `• Новая роль: ${AMO_RESTRICTED_ROLE_ID} (ИИ ОКК ограничение)\n\n` +
-      `Менеджер восстановит доступ через /ask (вопрос ≥10 слов).`
-  );
 });
 
 // ---------------------------------------------------------------------------

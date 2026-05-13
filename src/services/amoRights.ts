@@ -74,6 +74,7 @@ export async function setAmoUserRole(amoUserId: number, roleId: number): Promise
     `${AMO_BASE_URL}/ajax/v1/users/set/`,
     params.toString(),
     {
+      timeout: 10000,
       headers: {
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         "X-Requested-With": "XMLHttpRequest",
@@ -81,7 +82,18 @@ export async function setAmoUserRole(amoUserId: number, roleId: number): Promise
       },
     }
   );
-  console.log(`[amoRights] setAmoUserRole AJAX(${amoUserId} -> roleId=${roleId}) status=${resp.status} data=${JSON.stringify(resp.data)}`);
+  const dataStr = typeof resp.data === "string"
+    ? resp.data.slice(0, 300)
+    : JSON.stringify(resp.data).slice(0, 300);
+  console.log(`[amoRights] setAmoUserRole AJAX(${amoUserId} -> roleId=${roleId}) status=${resp.status} data=${dataStr}`);
+
+  // amoCRM AJAX returns 200 even on auth failures — check response body
+  if (typeof resp.data === "string" && resp.data.includes("<html")) {
+    throw new Error(`AJAX auth failed (got HTML login page). Refresh AMO_SESSION_TOKEN in Railway env vars.`);
+  }
+  if (resp.data?.response?.error) {
+    throw new Error(`AJAX error: ${JSON.stringify(resp.data.response.error)}`);
+  }
 }
 
 export async function restrictAmoUserLeads(amoUserId: number): Promise<void> {
