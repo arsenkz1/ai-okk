@@ -48,26 +48,40 @@ export async function getAmoUserRoleId(amoUserId: number): Promise<number | null
   }
 }
 
-// Assign a user to a role via PUT /api/v4/user_roles/{roleId}.
-// Gets current users of the role, adds the target user, then PUTs the updated list.
+// Assign a user to a role via the internal amoCRM AJAX endpoint POST /ajax/v1/users/set/
+// This mirrors what the browser does when an admin changes a user's role in the UI.
 export async function setAmoUserRole(amoUserId: number, roleId: number): Promise<void> {
-  const getResp = await axios.get(
-    `${AMO_BASE_URL}/api/v4/user_roles/${roleId}`,
+  // Fetch user info (name, email, group_id) needed for the AJAX payload
+  const userResp = await axios.get(
+    `${AMO_BASE_URL}/api/v4/users/${amoUserId}?with=role,group`,
     { headers: amoHeaders() }
   );
-  const currentUsers: Array<{ id: number }> = getResp.data?._embedded?.users ?? [];
-  console.log(`[amoRights] setAmoUserRole: role ${roleId} current users=${JSON.stringify(currentUsers)}`);
+  const user = userResp.data;
+  const name: string = user.name ?? "";
+  const email: string = user.email ?? "";
+  const groupId: number | string = user._embedded?.groups?.[0]?.id ?? "";
 
-  const updatedUsers = currentUsers.some((u) => u.id === amoUserId)
-    ? currentUsers
-    : [...currentUsers, { id: amoUserId }];
+  const params = new URLSearchParams();
+  params.append("request[users][update][id]", String(amoUserId));
+  params.append("request[users][update][name]", name);
+  params.append("request[users][update][email]", email);
+  params.append("request[users][update][group_id]", String(groupId));
+  params.append("request[users][update][active]", "Y");
+  params.append("request[users][update][password]", "");
+  params.append("request[users][update][role_id]", String(roleId));
 
-  const resp = await axios.put(
-    `${AMO_BASE_URL}/api/v4/user_roles/${roleId}`,
-    { name: getResp.data?.name, users: updatedUsers },
-    { headers: amoHeaders() }
+  const resp = await axios.post(
+    `${AMO_BASE_URL}/ajax/v1/users/set/`,
+    params.toString(),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-Session-Token": AMO_ACCESS_TOKEN ?? "",
+      },
+    }
   );
-  console.log(`[amoRights] setAmoUserRole(${amoUserId} -> roleId=${roleId}) status=${resp.status}`);
+  console.log(`[amoRights] setAmoUserRole AJAX(${amoUserId} -> roleId=${roleId}) status=${resp.status} data=${JSON.stringify(resp.data)}`);
 }
 
 export async function restrictAmoUserLeads(amoUserId: number): Promise<void> {
