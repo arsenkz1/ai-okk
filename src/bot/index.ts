@@ -534,6 +534,7 @@ bot.onText(/\/help$/, async (msg) => {
       `🔑 *Administrator buyruqlari*\n\n` +
         `*Menejerlar:*\n` +
         "`/managers` - barcha menejerlar ro'yxati\n" +
+        "`/manager_ids` - amoID larni nusxalash uchun qulay ro'yxat\n" +
         "`/sync_managers` - OnlinePBX dan sinxronlash va Google Sheet yangilash\n" +
         "`/reset_code <amo_id>` - menejer uchun yangi kod yaratish\n\n" +
         `*Administratorlar:*\n` +
@@ -1202,6 +1203,40 @@ bot.onText(/\/managers$/, async (msg) => {
 
   for (let i = 0; i < lines.length; i += 30) {
     await bot.sendMessage(msg.chat.id, `👥 Menejerlar:\n\n${lines.slice(i, i + 30).join("\n")}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ADMIN: /manager_ids - copy-friendly amoID list
+// ---------------------------------------------------------------------------
+
+bot.onText(/\/manager_ids$/, async (msg) => {
+  if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  if (!(await requireAdmin(msg))) return;
+
+  const managers = await prisma.manager.findMany({
+    where: { amoUserId: { not: null } },
+    orderBy: [{ isActive: "desc" }, { name: "asc" }],
+    select: {
+      name: true,
+      amoUserId: true,
+      isActive: true,
+      role: true,
+    },
+  });
+
+  if (!managers.length) {
+    await bot.sendMessage(msg.chat.id, "AmoID bilan menejerlar topilmadi.");
+    return;
+  }
+
+  const lines = managers.map((manager) => {
+    const activeMark = manager.isActive ? "" : " [inactive]";
+    return `${manager.amoUserId} - ${manager.name} (${manager.role})${activeMark}`;
+  });
+
+  for (let i = 0; i < lines.length; i += 40) {
+    await bot.sendMessage(msg.chat.id, `AmoID ro'yxati:\n\n${lines.slice(i, i + 40).join("\n")}`);
   }
 });
 
