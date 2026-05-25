@@ -563,6 +563,7 @@ bot.onText(/\/help$/, async (msg) => {
         "`/set_teamlead <amo_id>` - jamoa yaratish va TL tayinlash\n" +
         "`/add_to_team <mgr_amo_id> <tl_amo_id>` - jamoaga qo'shish\n" +
         "`/remove_from_team <amo_id>` - jamoadan chiqarish\n" +
+        "`/delete_team <team_id>` - jamoani butunlay o'chirish\n" +
         "`/teams_list` - barcha jamoalar ro'yxati\n\n" +
         `*Intizom testi:*\n` +
         "`/test_restrict <tg_id>` - menejerni cheklash\n" +

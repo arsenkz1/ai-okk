@@ -4,6 +4,7 @@ import { prisma } from "../../config/database";
 type ManagerRole = "MANAGER" | "TEAMLEAD" | "ROP";
 
 const ADMIN_TELEGRAM_ID = process.env.ADMIN_TELEGRAM_ID;
+const pendingTeamDeleteConfirmations = new Map<number, number>();
 
 async function isAdmin(telegramUserId: string): Promise<boolean> {
   if (telegramUserId === ADMIN_TELEGRAM_ID) return true;
@@ -156,6 +157,44 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
     });
   });
 
+  bot.onText(/\/delete_team (\d+)/, async (msg, match) => {
+    if (!(await requireAdmin(bot, msg))) return;
+
+    const teamId = parseInt(match![1], 10);
+    const team = await prisma.team.findUnique({ where: { id: teamId } });
+
+    if (!team) {
+      await bot.sendMessage(msg.chat.id, `❌ ID ${teamId} bo'lgan jamoa topilmadi.`);
+      return;
+    }
+
+    const memberCount = await prisma.manager.count({ where: { teamId } });
+    const tl = team.teamLeadId
+      ? await prisma.manager.findUnique({ where: { id: team.teamLeadId } })
+      : null;
+
+    pendingTeamDeleteConfirmations.set(msg.from!.id, teamId);
+
+    await bot.sendMessage(
+      msg.chat.id,
+      `⚠️ *Jamoani o'chirishni tasdiqlang*\n\n` +
+        `Jamoa: *${team.name}*\n` +
+        `ID: \`${teamId}\`\n` +
+        `TeamLead: ${tl?.name ?? "tayinlanmagan"}\n` +
+        `Menejerlar soni: ${memberCount}\n\n` +
+        `Tasdiqlasangiz, jamoa o'chiriladi va barcha a'zolarning team bog'lanishi olib tashlanadi.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Tasdiqlash", callback_data: `admin_delete_team_confirm:${teamId}` }],
+            [{ text: "Bekor qilish", callback_data: `admin_delete_team_cancel:${teamId}` }],
+          ],
+        },
+      }
+    );
+  });
+
   bot.onText(/\/teams_list$/, async (msg) => {
     if (!(await requireAdmin(bot, msg))) return;
 
@@ -176,5 +215,80 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
     }
 
     await bot.sendMessage(msg.chat.id, lines.join("\n"), { parse_mode: "Markdown" });
+  });
+
+  bot.on("callback_query", async (query) => {
+    if (!query.data || !query.message) return;
+    if (!query.data.startsWith("admin_delete_team_")) return;
+
+    const tgId = String(query.from.id);
+    if (!(await isAdmin(tgId))) {
+      await bot.answerCallbackQuery(query.id, {
+        text: "Sizda bu amal uchun huquq yo'q.",
+      });
+      return;
+    }
+
+    const [action, teamIdRaw] = query.data.replace("admin_delete_team_", "").split(":");
+    const teamId = Number(teamIdRaw);
+    const pendingTeamId = pendingTeamDeleteConfirmations.get(query.from.id);
+
+    if (!pendingTeamId || pendingTeamId !== teamId) {
+      await bot.answerCallbackQuery(query.id, {
+        text: "Tasdiqlash oynasi eskirgan. Buyruqni qayta yuboring.",
+      });
+      return;
+    }
+
+    if (action === "cancel") {
+      pendingTeamDeleteConfirmations.delete(query.from.id);
+      await bot.answerCallbackQuery(query.id, { text: "O'chirish bekor qilindi." });
+      await bot.editMessageText("❌ Jamoani o'chirish bekor qilindi.", {
+        chat_id: query.message.chat.id,
+        message_id: query.message.message_id,
+      });
+      return;
+    }
+
+    if (action !== "confirm") return;
+
+    const team = await prisma.team.findUnique({ where: { id: teamId } });
+    if (!team) {
+      pendingTeamDeleteConfirmations.delete(query.from.id);
+      await bot.answerCallbackQuery(query.id, { text: "Jamoa topilmadi." });
+      await bot.editMessageText("❌ Jamoa topilmadi yoki allaqachon o'chirilgan.", {
+        chat_id: query.message.chat.id,
+        message_id: query.message.message_id,
+      });
+      return;
+    }
+
+    const members = await prisma.manager.findMany({
+      where: { teamId },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    });
+
+    await prisma.manager.updateMany({
+      where: { teamId },
+      data: { teamId: null },
+    });
+
+    await prisma.team.delete({ where: { id: teamId } });
+    pendingTeamDeleteConfirmations.delete(query.from.id);
+
+    const memberSummary = members.length
+      ? `\n\nAjratilganlar: ${members.map((member) => member.name).join(", ")}`
+      : "\n\nBu jamoada biriktirilgan menejer yo'q edi.";
+
+    await bot.answerCallbackQuery(query.id, { text: "Jamoa o'chirildi." });
+    await bot.editMessageText(
+      `✅ *${team.name}* jamoasi o'chirildi (ID: ${teamId}).${memberSummary}`,
+      {
+        chat_id: query.message.chat.id,
+        message_id: query.message.message_id,
+        parse_mode: "Markdown",
+      }
+    );
   });
 }
