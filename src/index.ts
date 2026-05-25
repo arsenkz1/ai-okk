@@ -4,7 +4,7 @@ import cron from "node-cron";
 import onlinepbxRouter from "./routes/onlinepbx";
 import amocrmRouter from "./routes/amocrm";
 import { syncContactsFromAmoCrm, checkAndRestoreAmoCrmWebhook } from "./services/amocrm";
-import { syncManagersFromPbx } from "./services/managerSync";
+import { applyPilotDisciplineManagerConfig, syncManagersFromPbx } from "./services/managerSync";
 import { sendDailyReports } from "./workers/dailyReport";
 import "./workers/callProcessor";
 import { bot } from "./bot/index"; // запускает бот в режиме polling
@@ -140,4 +140,8 @@ cron.schedule(
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
   console.log(`Cron timezone: ${tz}`);
+
+  applyPilotDisciplineManagerConfig()
+    .then(() => console.log("[Startup] Pilot discipline manager config applied"))
+    .catch((err: any) => console.error("[Startup] Failed to apply pilot discipline config:", err.message));
 });

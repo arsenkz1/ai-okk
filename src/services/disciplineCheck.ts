@@ -1,17 +1,72 @@
+import { Prisma } from "../generated/prisma/client";
 import { prisma } from "../config/database";
-import { getAmoUserRoleId, setAmoUserRole, AMO_RESTRICTED_ROLE_ID } from "./amoRights";
+import {
+  MIN_DISCIPLINE_MESSAGES_PER_DAY,
+  MIN_DISCIPLINE_MESSAGE_WORDS,
+} from "../config/disciplinePilot";
+import {
+  AmoRoleRights,
+  restrictAmoRoleNewLeadAccess,
+  restoreAmoRoleRights,
+} from "./amoRights";
+import { notifyAdmins } from "../bot/notify";
 
-const MIN_SESSION_WORDS = 10;
+function startOfToday(): Date {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  return todayStart;
+}
+
+export function countWords(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+export async function countValidAiMessagesToday(managerId: number): Promise<number> {
+  const sessionsToday = await prisma.aiTrainerSession.findMany({
+    where: { managerId, createdAt: { gte: startOfToday() } },
+    select: { question: true },
+  });
+
+  return sessionsToday.filter((session) => countWords(session.question) >= MIN_DISCIPLINE_MESSAGE_WORDS).length;
+}
+
+export async function maybeRestorePilotManagerAccess(
+  managerId: number
+): Promise<boolean> {
+  const manager = await prisma.manager.findUnique({ where: { id: managerId } });
+  if (!manager?.isDisciplinePilot || !manager.isAmoCrmRestricted || !manager.amoRoleId) {
+    return false;
+  }
+
+  const validMessages = await countValidAiMessagesToday(managerId);
+  if (validMessages < MIN_DISCIPLINE_MESSAGES_PER_DAY) {
+    return false;
+  }
+
+  const savedRights = manager.amoRightsBeforeRestriction as AmoRoleRights | null;
+  if (!savedRights) {
+    throw new Error(`Missing saved role rights snapshot for manager ${manager.id}`);
+  }
+
+  await restoreAmoRoleRights(manager.amoRoleId, savedRights);
+  await prisma.manager.update({
+    where: { id: manager.id },
+    data: {
+      isAmoCrmRestricted: false,
+      amoRightsBeforeRestriction: Prisma.DbNull,
+    },
+  });
+
+  return true;
+}
 
 export async function runDisciplineCheck(
   sendFn: (chatId: string, text: string) => Promise<void>
 ): Promise<{ restricted: number; skipped: number; errors: number }> {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-
   const managers = await prisma.manager.findMany({
     where: {
       isActive: true,
+      isDisciplinePilot: true,
       isAmoCrmRestricted: false,
       amoUserId: { not: null },
     },
@@ -26,37 +81,26 @@ export async function runDisciplineCheck(
 
   for (const manager of managers) {
     try {
-      const sessionsToday = await prisma.aiTrainerSession.findMany({
-        where: { managerId: manager.id, createdAt: { gte: todayStart } },
-        select: { question: true },
-      });
-      const hasValidSession = sessionsToday.some(
-        (s) => s.question.split(/\s+/).filter(Boolean).length >= MIN_SESSION_WORDS
-      );
-      if (hasValidSession) {
+      const validMessages = await countValidAiMessagesToday(manager.id);
+      if (validMessages >= MIN_DISCIPLINE_MESSAGES_PER_DAY) {
         skipped++;
         continue;
       }
 
-      const currentRoleId = await getAmoUserRoleId(manager.amoUserId!);
-      if (!currentRoleId) {
-        console.warn(`[Discipline] Could not fetch role for manager ${manager.id}, skipping`);
+      if (!manager.amoRoleId) {
+        const reason = `Pilot manager ${manager.name} (${manager.id}) has no amoRoleId`;
+        console.warn(`[Discipline] ${reason}`);
+        await notifyAdmins(`⚠️ ${reason}`).catch(() => {});
         errors++;
         continue;
       }
 
-      // Skip if already on restricted role (safety check)
-      if (currentRoleId === AMO_RESTRICTED_ROLE_ID) {
-        skipped++;
-        continue;
-      }
-
-      await setAmoUserRole(manager.amoUserId!, AMO_RESTRICTED_ROLE_ID);
+      const { originalRights } = await restrictAmoRoleNewLeadAccess(manager.amoUserId!, manager.amoRoleId);
       await prisma.manager.update({
         where: { id: manager.id },
         data: {
           isAmoCrmRestricted: true,
-          amoRightsBeforeRestriction: { roleId: currentRoleId },
+          amoRightsBeforeRestriction: originalRights as unknown as Prisma.InputJsonValue,
         },
       });
 
@@ -64,18 +108,23 @@ export async function runDisciplineCheck(
       if (chatId) {
         await sendFn(
           chatId,
-          "🔒 Ваш доступ в amoCRM ограничен — вы видите только свои лиды.\n" +
-            "Для восстановления пройдите AI-сессию: /ask\n" +
-            "_(Отправьте осмысленный вопрос минимум из 10 слов)_"
+          "🔒 Ваш доступ в amoCRM ограничен: скрыты лиды на стадии Новый лид.\n" +
+            `Для восстановления отправьте ${MIN_DISCIPLINE_MESSAGES_PER_DAY} осмысленных сообщений в AI-сессии,\n` +
+            `каждое минимум по ${MIN_DISCIPLINE_MESSAGE_WORDS} слов.`
         ).catch((e) =>
           console.error(`[Discipline] Notify failed for manager ${manager.id}:`, e.message)
         );
       }
 
       restricted++;
-      console.log(`[Discipline] Restricted manager ${manager.id} (${manager.name}), savedRoleId=${currentRoleId}`);
+      console.log(
+        `[Discipline] Restricted pilot manager ${manager.id} (${manager.name}), roleId=${manager.amoRoleId}`
+      );
     } catch (err: any) {
       console.error(`[Discipline] Error processing manager ${manager.id}:`, err.message);
+      await notifyAdmins(
+        `⚠️ Discipline restriction failed for ${manager.name} (${manager.amoUserId ?? manager.id})\n${err.message}`
+      ).catch(() => {});
       errors++;
     }
   }

@@ -2,6 +2,10 @@ import "dotenv/config";
 import axios from "axios";
 import { prisma } from "../config/database";
 import { writeManagersToSheet } from "./googleSheets";
+import {
+  getPilotManagerConfig,
+  PILOT_MANAGER_AMO_IDS,
+} from "../config/disciplinePilot";
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -22,6 +26,26 @@ export interface ManagerSyncResult {
   total: number;
   sheetUpdated: boolean;
   sheetError?: string;
+}
+
+export async function applyPilotDisciplineManagerConfig(): Promise<void> {
+  await prisma.manager.updateMany({
+    where: { isDisciplinePilot: true, amoUserId: { notIn: PILOT_MANAGER_AMO_IDS } },
+    data: { isDisciplinePilot: false, amoRoleId: null },
+  });
+
+  for (const amoUserId of PILOT_MANAGER_AMO_IDS) {
+    const pilot = getPilotManagerConfig(amoUserId);
+    if (!pilot) continue;
+
+    await prisma.manager.updateMany({
+      where: { amoUserId },
+      data: {
+        isDisciplinePilot: true,
+        amoRoleId: pilot.amoRoleId,
+      },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +113,7 @@ export async function syncManagersFromPbx(): Promise<ManagerSyncResult> {
   // --- Шаг 1: Обрабатываем каждого пользователя из PBX ---
   for (const user of mapping) {
     const amoUserId = parseInt(user.amo_id);
+    const pilot = getPilotManagerConfig(amoUserId);
 
     const existing = await prisma.manager.findUnique({
       where: { amoUserId },
@@ -111,6 +136,8 @@ export async function syncManagersFromPbx(): Promise<ManagerSyncResult> {
           internalNumber: user.uid,
           isActive: true,
           deactivatedAt: null,
+          isDisciplinePilot: !!pilot,
+          amoRoleId: pilot?.amoRoleId ?? null,
         },
       });
 
@@ -152,6 +179,8 @@ export async function syncManagersFromPbx(): Promise<ManagerSyncResult> {
           amoUserId,
           internalNumber: user.uid,
           isActive: true,
+          isDisciplinePilot: !!pilot,
+          amoRoleId: pilot?.amoRoleId ?? null,
         },
       });
 
@@ -192,6 +221,8 @@ export async function syncManagersFromPbx(): Promise<ManagerSyncResult> {
       );
     }
   }
+
+  await applyPilotDisciplineManagerConfig();
 
   // --- Шаг 3: Обновляем Google Sheet ---
   let sheetUpdated = false;

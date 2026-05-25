@@ -8,11 +8,16 @@ import {
   askGeminiWithHistory,
   GeminiMessage,
 } from "../services/aiAnalysis";
+import {
+  MIN_DISCIPLINE_MESSAGES_PER_DAY,
+  MIN_DISCIPLINE_MESSAGE_WORDS,
+} from "../config/disciplinePilot";
 import { writeManagersToSheet } from "../services/googleSheets";
 import { syncHistoryRange, findPbxRecordByDateAndPhone } from "../services/pbxHistory";
 import { callProcessingQueue } from "../queues/callProcessing";
 import { fetchDealCallNotes, fetchDealContactPhones } from "../services/amocrm";
 import { restoreAmoUserRights, getAmoUserRoleId, setAmoUserRole, restrictAmoUserLeads, getAmoUserRights, AMO_RESTRICTED_ROLE_ID } from "../services/amoRights";
+import { countValidAiMessagesToday, maybeRestorePilotManagerAccess } from "../services/disciplineCheck";
 import { supervisorAiSessions, roleFlowState } from "./state";
 import { buildSupervisorAiPrompt } from "./supervisorAi";
 import { registerAdminRoleHandlers } from "./handlers/adminRoles";
@@ -810,28 +815,21 @@ bot.on("message", async (msg) => {
 
     await bot.sendMessage(msg.chat.id, answer);
 
-    // Session counts for discipline only if question is >=10 words
-    if (wordCount >= 10) {
+    // Session counts for discipline only if question is long enough
+    if (wordCount >= MIN_DISCIPLINE_MESSAGE_WORDS) {
       await prisma.aiTrainerSession.create({
         data: { managerId: session.managerId, question, answer, period: session.period },
       }).catch((e: Error) => console.error("[AiSession] Save failed:", e.message));
 
-      // Restore amoCRM role if manager was restricted
+      // Restore amoCRM role rights once the pilot manager reaches the daily threshold.
       try {
-        const mgr = await prisma.manager.findUnique({ where: { id: session.managerId } });
-        if (mgr?.isAmoCrmRestricted && mgr.amoUserId) {
-          const saved = mgr.amoRightsBeforeRestriction as { roleId?: number } | Record<string, unknown> | null;
-          const roleId = (saved as any)?.roleId;
-          if (typeof roleId === "number") {
-            await setAmoUserRole(mgr.amoUserId, roleId);
-          } else if (saved) {
-            await restoreAmoUserRights(mgr.amoUserId, saved as Record<string, unknown>);
-          }
-          await prisma.manager.update({
-            where: { id: mgr.id },
-            data: { isAmoCrmRestricted: false, amoRightsBeforeRestriction: Prisma.DbNull },
-          });
+        const restored = await maybeRestorePilotManagerAccess(session.managerId);
+        if (restored) {
+          const validMessages = await countValidAiMessagesToday(session.managerId);
           await bot.sendMessage(msg.chat.id, "✅ Ваш доступ в amoCRM восстановлен.");
+          console.log(
+            `[Discipline] Restored amoCRM access for manager ${session.managerId} after ${validMessages}/${MIN_DISCIPLINE_MESSAGES_PER_DAY} valid AI messages`
+          );
         }
       } catch (e: any) {
         console.error("[Discipline] Restore failed:", e.message);
