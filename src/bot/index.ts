@@ -533,40 +533,40 @@ bot.onText(/\/help$/, async (msg) => {
       msg.chat.id,
       `🔑 *Administrator buyruqlari*\n\n` +
         `*Menejerlar:*\n` +
-        `/managers - barcha menejerlar ro'yxati\n` +
-        `/sync\_managers - OnlinePBX dan sinxronlash va Google Sheet yangilash\n` +
-        `/reset\_code <amo\_id> - menejer uchun yangi kod yaratish\n\n` +
+        "`/managers` - barcha menejerlar ro'yxati\n" +
+        "`/sync_managers` - OnlinePBX dan sinxronlash va Google Sheet yangilash\n" +
+        "`/reset_code <amo_id>` - menejer uchun yangi kod yaratish\n\n" +
         `*Administratorlar:*\n` +
-        `/admins - barcha administratorlarni ko'rish\n` +
-        `/add\_admin <telegram\_id> - foydalanuvchini administrator qilish\n` +
-        `/remove\_admin <telegram\_id> - administrator huquqlarini olish\n\n` +
+        "`/admins` - barcha administratorlarni ko'rish\n" +
+        "`/add_admin <telegram_id>` - foydalanuvchini administrator qilish\n" +
+        "`/remove_admin <telegram_id>` - administrator huquqlarini olish\n\n" +
         `*Qo'ng'iroqlar tahlili:*\n` +
-        `/analyze\_deal <deal\_id> - bitim bo'yicha so'nggi qo'ng'iroqni tahlil qilish\n` +
-        `/sync\_history - qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)\n\n` +
+        "`/analyze_deal <deal_id>` - bitim bo'yicha so'nggi qo'ng'iroqni tahlil qilish\n" +
+        "`/sync_history` - qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)\n\n" +
         `*Hisobotlar (jamoa bo'yicha):*\n` +
-        `/report - bugungi hisobot\n` +
-        `/week - so'nggi 7 kun\n` +
-        `/month - joriy oy\n` +
-        `/period - ixtiyoriy sana oralig'i\n` +
-        `/errors - 30 kunlik zaif kriteriyalar\n\n` +
+        "`/report` - bugungi hisobot\n" +
+        "`/week` - so'nggi 7 kun\n" +
+        "`/month` - joriy oy\n" +
+        "`/period` - ixtiyoriy sana oralig'i\n" +
+        "`/errors` - 30 kunlik zaif kriteriyalar\n\n" +
         `*ROP - reyting va analitika:*\n` +
-        `/teams - barcha jamoalar\n` +
-        `/all\_rating - menejerlarning umumiy reytingi (7 kun)\n` +
-        `/all\_mistakes - kompaniya bo'yicha xatolar\n` +
-        `/rop\_team\_rating - aniq jamoa reytingi\n` +
-        `/rop\_team\_mistakes - aniq jamoa xatolari\n` +
-        `/rop\_manager - menejer kartasi\n` +
-        `/rop\_ask - menejer haqida AI-savol\n\n` +
+        "`/teams` - barcha jamoalar\n" +
+        "`/all_rating` - menejerlarning umumiy reytingi (7 kun)\n" +
+        "`/all_mistakes` - kompaniya bo'yicha xatolar\n" +
+        "`/rop_team_rating` - aniq jamoa reytingi\n" +
+        "`/rop_team_mistakes` - aniq jamoa xatolari\n" +
+        "`/rop_manager` - menejer kartasi\n" +
+        "`/rop_ask` - menejer haqida AI-savol\n\n" +
         `*ROP - jamoa boshqaruvi:*\n` +
-        `/set\_role <tg\_id> <manager|teamlead|rop> - rol tayinlash\n` +
-        `/set\_teamlead <amo\_id> - jamoa yaratish va TL tayinlash\n` +
-        `/add\_to\_team <mgr\_amo\_id> <tl\_amo\_id> - jamoaga qo'shish\n` +
-        `/remove\_from\_team <amo\_id> - jamoadan chiqarish\n` +
-        `/teams\_list - barcha jamoalar ro'yxati\n\n` +
+        "`/set_role <tg_id> <manager|teamlead|rop>` - rol tayinlash\n" +
+        "`/set_teamlead <amo_id>` - jamoa yaratish va TL tayinlash\n" +
+        "`/add_to_team <mgr_amo_id> <tl_amo_id>` - jamoaga qo'shish\n" +
+        "`/remove_from_team <amo_id>` - jamoadan chiqarish\n" +
+        "`/teams_list` - barcha jamoalar ro'yxati\n\n" +
         `*Intizom testi:*\n` +
-        `/test\_restrict <tg\_id> - menejerni cheklash\n` +
-        `/test\_restore <tg\_id> - menejerni tiklash\n` +
-        `/check\_tg <tg\_id> - BDDagi bog'lanishni tekshirish`,
+        "`/test_restrict <tg_id>` - menejerni cheklash\n" +
+        "`/test_restore <tg_id>` - menejerni tiklash\n" +
+        "`/check_tg <tg_id>` - BDDagi bog'lanishni tekshirish",
       { parse_mode: "Markdown" }
     );
     return;
@@ -577,19 +577,19 @@ bot.onText(/\/help$/, async (msg) => {
       msg.chat.id,
       `📋 *Mavjud buyruqlar*\n\n` +
         `*Hisobotlar:*\n` +
-        `/report - bugungi hisobot\n` +
-        `/week - so'nggi 7 kun\n` +
-        `/month - joriy oy\n` +
-        `/period - ixtiyoriy sana oralig'i\n\n` +
+        "`/report` - bugungi hisobot\n" +
+        "`/week` - so'nggi 7 kun\n" +
+        "`/month` - joriy oy\n" +
+        "`/period` - ixtiyoriy sana oralig'i\n\n" +
         `*Xatolar tahlili:*\n` +
-        `/errors - so'nggi 30 kunlik eng ko'p xatolar\n\n` +
+        "`/errors` - so'nggi 30 kunlik eng ko'p xatolar\n\n" +
         `*AI-murabbiy:*\n` +
-        `/ask - dialog rejimiga kirish (30 kun ma'lumotlari)\n` +
-        `/ask kun - faqat bugungi ma'lumotlar\n` +
-        `/ask hafta - 7 kunlik ma'lumotlar\n` +
-        `/ask oy - joriy oy ma'lumotlari\n` +
-        `/ask <savol> - savolni darhol berish\n` +
-        `/stop\_ai - AI-murabbiy rejimidan chiqish`,
+        "`/ask` - dialog rejimiga kirish (30 kun ma'lumotlari)\n" +
+        "`/ask kun` - faqat bugungi ma'lumotlar\n" +
+        "`/ask hafta` - 7 kunlik ma'lumotlar\n" +
+        "`/ask oy` - joriy oy ma'lumotlari\n" +
+        "`/ask <savol>` - savolni darhol berish\n" +
+        "`/stop_ai` - AI-murabbiy rejimidan chiqish",
       { parse_mode: "Markdown" }
     );
     return;
