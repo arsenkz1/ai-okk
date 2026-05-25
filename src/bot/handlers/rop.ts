@@ -31,17 +31,17 @@ async function hasRopAccess(telegramUserId: string): Promise<boolean> {
 
 async function requireRop(bot: TelegramBot, msg: TelegramBot.Message): Promise<boolean> {
   if (!(await hasRopAccess(String(msg.from!.id)))) {
-    await bot.sendMessage(msg.chat.id, "❌ У вас нет прав РОП.");
+    await bot.sendMessage(msg.chat.id, "❌ Sizda ROP huquqi yo'q.");
     return false;
   }
   return true;
 }
 
 function formatRating(items: ManagerWithScore[]): string {
-  if (!items.length) return "Нет данных.";
+  if (!items.length) return "Ma'lumot yo'q.";
   return items
     .map(({ manager, avgScore }, i) => {
-      const score = avgScore != null ? `${avgScore}/100` : "нет данных";
+      const score = avgScore != null ? `${avgScore}/100` : "ma'lumot yo'q";
       return `${i + 1}. ${manager.name} — ${score}`;
     })
     .join("\n");
@@ -81,19 +81,19 @@ export function registerRopHandlers(bot: TelegramBot) {
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
     if (!teams.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Команды не созданы.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Jamoalar yaratilmagan.");
       return;
     }
 
     const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
-    const lines = ["🏢 *Все команды:*", ""];
+    const lines = ["🏢 *Barcha jamoalar:*", ""];
 
     for (const team of teams) {
       const count = await prisma.manager.count({ where: { teamId: team.id } });
       const tl = team.teamLeadId
         ? await prisma.manager.findUnique({ where: { id: team.teamLeadId } })
         : null;
-      lines.push(`• *${team.name}* — ${count} менеджеров (ТЛ: ${tl?.name ?? "—"})`);
+      lines.push(`• *${team.name}* — ${count} menejer (TL: ${tl?.name ?? "—"})`);
       keyboard.push([{ text: `👥 ${team.name}`, callback_data: `rop_team:${team.id}` }]);
     }
 
@@ -106,14 +106,14 @@ export function registerRopHandlers(bot: TelegramBot) {
   bot.onText(/\/all_rating$/, async (msg) => {
     if (!(await requireRop(bot, msg))) return;
 
-    await bot.sendMessage(msg.chat.id, "⏳ Загружаю рейтинг...");
+    await bot.sendMessage(msg.chat.id, "⏳ Reyting yuklanmoqda...");
     const rating = await getAllManagerRating(7);
     if (!rating.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Нет данных о менеджерах.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Menejerlar bo'yicha ma'lumot topilmadi.");
       return;
     }
 
-    const text = `📊 *Общий рейтинг менеджеров (7 дней):*\n\n${formatRating(rating)}`;
+    const text = `📊 *Menejerlarning umumiy reytingi (7 kun):*\n\n${formatRating(rating)}`;
     await sendInChunks(bot, msg.chat.id, text, "Markdown");
   });
 
@@ -122,15 +122,15 @@ export function registerRopHandlers(bot: TelegramBot) {
 
     const mistakes = await getAllMistakes(7, 10);
     if (!mistakes.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Нет данных об ошибках за последние 7 дней.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Oxirgi 7 kun bo'yicha xatolar topilmadi.");
       return;
     }
 
-    const lines = mistakes.map((m, i) => `${i + 1}. ${m.mistake} — ${m.count} раз`);
+    const lines = mistakes.map((m, i) => `${i + 1}. ${m.mistake} — ${m.count} marta`);
     await sendInChunks(
       bot,
       msg.chat.id,
-      `⚠️ *Частые ошибки по компании (7 дней):*\n\n${lines.join("\n")}`,
+      `⚠️ *Kompaniya bo'yicha ko'p uchraydigan xatolar (7 kun):*\n\n${lines.join("\n")}`,
       "Markdown"
     );
   });
@@ -140,12 +140,12 @@ export function registerRopHandlers(bot: TelegramBot) {
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
     if (!teams.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Нет команд.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Jamoalar topilmadi.");
       return;
     }
 
     const keyboard = teams.map((t) => [{ text: t.name, callback_data: `rop_tr:${t.id}` }]);
-    await bot.sendMessage(msg.chat.id, "Выберите команду для рейтинга:", {
+    await bot.sendMessage(msg.chat.id, "Reyting uchun jamoani tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
   });
@@ -155,12 +155,12 @@ export function registerRopHandlers(bot: TelegramBot) {
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
     if (!teams.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Нет команд.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Jamoalar topilmadi.");
       return;
     }
 
     const keyboard = teams.map((t) => [{ text: t.name, callback_data: `rop_tm:${t.id}` }]);
-    await bot.sendMessage(msg.chat.id, "Выберите команду для анализа ошибок:", {
+    await bot.sendMessage(msg.chat.id, "Xatolar tahlili uchun jamoani tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
   });
@@ -170,12 +170,12 @@ export function registerRopHandlers(bot: TelegramBot) {
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
     if (!teams.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Нет команд.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Jamoalar topilmadi.");
       return;
     }
 
     const keyboard = teams.map((t) => [{ text: t.name, callback_data: `rop_t_card:${t.id}` }]);
-    await bot.sendMessage(msg.chat.id, "Выберите команду:", {
+    await bot.sendMessage(msg.chat.id, "Jamoani tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
   });
@@ -185,12 +185,12 @@ export function registerRopHandlers(bot: TelegramBot) {
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
     if (!teams.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Нет команд.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Jamoalar topilmadi.");
       return;
     }
 
     const keyboard = teams.map((t) => [{ text: t.name, callback_data: `rop_t_ask:${t.id}` }]);
-    await bot.sendMessage(msg.chat.id, "Выберите команду:", {
+    await bot.sendMessage(msg.chat.id, "Jamoani tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
   });
@@ -207,10 +207,10 @@ export function registerRopHandlers(bot: TelegramBot) {
       const rating = await getTeamRating(teamId, 7);
       const team = await prisma.team.findUnique({ where: { id: teamId } });
       if (!rating.length) {
-        await bot.sendMessage(chatId, "ℹ️ В команде нет менеджеров.");
+        await bot.sendMessage(chatId, "ℹ️ Jamoada menejerlar yo'q.");
         return;
       }
-      const text = `👥 *${team?.name ?? "Команда"} (7 дней):*\n\n${formatRating(rating)}`;
+      const text = `👥 *${team?.name ?? "Jamoa"} (7 kun):*\n\n${formatRating(rating)}`;
       await sendInChunks(bot, chatId, text, "Markdown");
       return;
     }
@@ -223,10 +223,10 @@ export function registerRopHandlers(bot: TelegramBot) {
         prisma.team.findUnique({ where: { id: teamId } }),
       ]);
       if (!rating.length) {
-        await bot.sendMessage(chatId, "ℹ️ Нет данных по этой команде.");
+        await bot.sendMessage(chatId, "ℹ️ Bu jamoa bo'yicha ma'lumot topilmadi.");
         return;
       }
-      const text = `📊 *Рейтинг: ${team?.name ?? "команда"} (7 дней):*\n\n${formatRating(rating)}`;
+      const text = `📊 *Reyting: ${team?.name ?? "jamoa"} (7 kun):*\n\n${formatRating(rating)}`;
       await sendInChunks(bot, chatId, text, "Markdown");
       return;
     }
@@ -239,14 +239,14 @@ export function registerRopHandlers(bot: TelegramBot) {
         prisma.team.findUnique({ where: { id: teamId } }),
       ]);
       if (!mistakes.length) {
-        await bot.sendMessage(chatId, "ℹ️ Нет данных об ошибках.");
+        await bot.sendMessage(chatId, "ℹ️ Xatolar bo'yicha ma'lumot topilmadi.");
         return;
       }
-      const lines = mistakes.map((m, i) => `${i + 1}. ${m.mistake} — ${m.count} раз`);
+      const lines = mistakes.map((m, i) => `${i + 1}. ${m.mistake} — ${m.count} marta`);
       await sendInChunks(
         bot,
         chatId,
-        `⚠️ *Ошибки команды ${team?.name ?? ""} (7 дней):*\n\n${lines.join("\n")}`,
+        `⚠️ *${team?.name ?? ""} jamoasi xatolari (7 kun):*\n\n${lines.join("\n")}`,
         "Markdown"
       );
       return;
@@ -260,11 +260,11 @@ export function registerRopHandlers(bot: TelegramBot) {
         orderBy: { name: "asc" },
       });
       if (!members.length) {
-        await bot.sendMessage(chatId, "ℹ️ В команде нет менеджеров.");
+        await bot.sendMessage(chatId, "ℹ️ Jamoada menejerlar yo'q.");
         return;
       }
       const keyboard = members.map((m) => [{ text: m.name, callback_data: `rop_card:${m.id}` }]);
-      await bot.sendMessage(chatId, "Выберите менеджера:", {
+      await bot.sendMessage(chatId, "Menejerni tanlang:", {
         reply_markup: { inline_keyboard: keyboard },
       });
       return;
@@ -274,16 +274,16 @@ export function registerRopHandlers(bot: TelegramBot) {
       const managerId = parseInt(data.split(":")[1]);
       await bot.answerCallbackQuery(query.id);
       const card = await buildManagerCard(managerId);
-      const score = card.avgScore != null ? `${card.avgScore}/100` : "нет данных";
-      const strengths = card.strengths.length ? card.strengths.join(", ") : "нет данных";
-      const weaknesses = card.weaknesses.length ? card.weaknesses.join(", ") : "нет данных";
+      const score = card.avgScore != null ? `${card.avgScore}/100` : "ma'lumot yo'q";
+      const strengths = card.strengths.length ? card.strengths.join(", ") : "ma'lumot yo'q";
+      const weaknesses = card.weaknesses.length ? card.weaknesses.join(", ") : "ma'lumot yo'q";
 
       const text =
         `👤 *${card.name}*\n` +
-        `⭐ Балл: ${score} (7 дней)\n` +
-        `🏆 Место в команде: ${card.rankInTeam} из ${card.teamSize}\n\n` +
-        `💪 Сильные стороны: ${strengths}\n` +
-        `⚠️ Зоны роста: ${weaknesses}`;
+        `⭐ Ball: ${score} (7 kun)\n` +
+        `🏆 Jamoadagi o'rni: ${card.rankInTeam} / ${card.teamSize}\n\n` +
+        `💪 Kuchli tomonlari: ${strengths}\n` +
+        `⚠️ O'sish nuqtalari: ${weaknesses}`;
 
       await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
       return;
@@ -297,11 +297,11 @@ export function registerRopHandlers(bot: TelegramBot) {
         orderBy: { name: "asc" },
       });
       if (!members.length) {
-        await bot.sendMessage(chatId, "ℹ️ В команде нет менеджеров.");
+        await bot.sendMessage(chatId, "ℹ️ Jamoada menejerlar yo'q.");
         return;
       }
       const keyboard = members.map((m) => [{ text: m.name, callback_data: `rop_ask_mgr:${m.id}` }]);
-      await bot.sendMessage(chatId, "Выберите менеджера:", {
+      await bot.sendMessage(chatId, "Menejerni tanlang:", {
         reply_markup: { inline_keyboard: keyboard },
       });
       return;
@@ -311,7 +311,7 @@ export function registerRopHandlers(bot: TelegramBot) {
       const managerId = parseInt(data.split(":")[1]);
       const mgr = await prisma.manager.findUnique({ where: { id: managerId } });
       if (!mgr) {
-        await bot.answerCallbackQuery(query.id, { text: "Менеджер не найден." });
+        await bot.answerCallbackQuery(query.id, { text: "Menejer topilmadi." });
         return;
       }
 
@@ -323,7 +323,7 @@ export function registerRopHandlers(bot: TelegramBot) {
 
       await bot.sendMessage(
         chatId,
-        `🤖 Задайте вопрос об *${mgr.name}* (минимум 10 слов):\n\nПример: «Что рекомендуете улучшить менеджеру ${mgr.name} в первую очередь?»\n\nДля выхода: /stop_ai`,
+        `🤖 *${mgr.name}* haqida savol yozing (kamida 10 ta so'z):\n\nMasalan: "${mgr.name} uchun birinchi navbatda nimani yaxshilash kerak?"\n\nChiqish uchun: /stop_ai`,
         { parse_mode: "Markdown" }
       );
     }

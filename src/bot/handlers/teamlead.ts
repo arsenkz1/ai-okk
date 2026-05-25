@@ -28,106 +28,102 @@ async function requireTeamLead(
 ): Promise<TeamLeadManager | null> {
   const tl = await getTeamLead(String(msg.from!.id));
   if (!tl) {
-    await bot.sendMessage(msg.chat.id, "❌ У вас нет прав TeamLead.");
+    await bot.sendMessage(msg.chat.id, "❌ Sizda TeamLead huquqi yo'q.");
     return null;
   }
   if (!tl.isActive) {
-    await bot.sendMessage(msg.chat.id, "❌ Ваш аккаунт деактивирован.");
+    await bot.sendMessage(msg.chat.id, "❌ Hisobingiz deaktiv qilingan.");
     return null;
   }
   return tl;
 }
 
 function formatRating(items: ManagerWithScore[]): string {
-  if (!items.length) return "Нет участников.";
+  if (!items.length) return "Ishtirokchilar topilmadi.";
   return items
     .map(({ manager, avgScore }, i) => {
-      const score = avgScore != null ? `${avgScore}/100` : "нет данных";
+      const score = avgScore != null ? `${avgScore}/100` : "ma'lumot yo'q";
       return `${i + 1}. ${manager.name} — ${score}`;
     })
     .join("\n");
 }
 
 async function sendInChunks(bot: TelegramBot, chatId: number, text: string) {
-  const MAX = 4096;
-  if (text.length <= MAX) {
+  const maxLength = 4096;
+  if (text.length <= maxLength) {
     await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
     return;
   }
   const lines = text.split("\n");
   let chunk = "";
   for (const line of lines) {
-    if ((chunk + "\n" + line).length > MAX) {
+    if ((chunk + "\n" + line).length > maxLength) {
       await bot.sendMessage(chatId, chunk, { parse_mode: "Markdown" });
       chunk = line;
     } else {
-      chunk = chunk ? chunk + "\n" + line : line;
+      chunk = chunk ? `${chunk}\n${line}` : line;
     }
   }
   if (chunk) await bot.sendMessage(chatId, chunk, { parse_mode: "Markdown" });
 }
 
 export function registerTeamLeadHandlers(bot: TelegramBot) {
-  // /team — список участников команды
   bot.onText(/\/team$/, async (msg) => {
     const tl = await requireTeamLead(bot, msg);
     if (!tl) return;
     if (!tl.teamId) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Вы не привязаны к команде. Обратитесь к администратору.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Siz jamoaga biriktirilmagansiz. Administratorga murojaat qiling.");
       return;
     }
 
     const rating = await getTeamRating(tl.teamId, 7);
     if (!rating.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ В вашей команде пока нет менеджеров.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Jamoangizda hozircha menejerlar yo'q.");
       return;
     }
 
-    const text = `👥 *Ваша команда (7 дней):*\n\n${formatRating(rating)}`;
+    const text = `👥 *Sizning jamoangiz (7 kun):*\n\n${formatRating(rating)}`;
     await sendInChunks(bot, msg.chat.id, text);
   });
 
-  // /team_rating — рейтинг команды
   bot.onText(/\/team_rating$/, async (msg) => {
     const tl = await requireTeamLead(bot, msg);
     if (!tl || !tl.teamId) {
-      if (tl) await bot.sendMessage(msg.chat.id, "ℹ️ Вы не привязаны к команде.");
+      if (tl) await bot.sendMessage(msg.chat.id, "ℹ️ Siz jamoaga biriktirilmagansiz.");
       return;
     }
 
     const rating = await getTeamRating(tl.teamId, 7);
     if (!rating.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ В команде нет менеджеров.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Jamoada menejerlar yo'q.");
       return;
     }
 
-    const text = `📊 *Рейтинг команды (7 дней):*\n\n${formatRating(rating)}`;
+    const text = `📊 *Jamoa reytingi (7 kun):*\n\n${formatRating(rating)}`;
     await sendInChunks(bot, msg.chat.id, text);
   });
 
-  // /team_mistakes — частые ошибки команды
   bot.onText(/\/team_mistakes$/, async (msg) => {
     const tl = await requireTeamLead(bot, msg);
     if (!tl || !tl.teamId) {
-      if (tl) await bot.sendMessage(msg.chat.id, "ℹ️ Вы не привязаны к команде.");
+      if (tl) await bot.sendMessage(msg.chat.id, "ℹ️ Siz jamoaga biriktirilmagansiz.");
       return;
     }
 
     const mistakes = await getTeamMistakes(tl.teamId, 7, 10);
     if (!mistakes.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Нет данных об ошибках за последние 7 дней.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Oxirgi 7 kun bo'yicha xatolar topilmadi.");
       return;
     }
 
-    const lines = mistakes.map((m, i) => `${i + 1}. ${m.mistake} — ${m.count} раз`);
-    await sendInChunks(bot, msg.chat.id, `⚠️ *Частые ошибки команды (7 дней):*\n\n${lines.join("\n")}`);
+    const lines = mistakes.map((m, i) => `${i + 1}. ${m.mistake} — ${m.count} marta`);
+    await sendInChunks(bot, msg.chat.id, `⚠️ *Jamoaning ko'p uchraydigan xatolari (7 kun):*\n\n${lines.join("\n")}`);
   });
 
-  // /team_add — добавить менеджера в команду (inline keyboard)
   bot.onText(/\/team_add$/, async (msg) => {
     const tl = await requireTeamLead(bot, msg);
     if (!tl || !tl.teamId) {
-      if (tl) await bot.sendMessage(msg.chat.id, "ℹ️ Вы не привязаны к команде.");
+      if (tl) await bot.sendMessage(msg.chat.id, "ℹ️ Siz jamoaga biriktirilmagansiz.");
       return;
     }
 
@@ -137,24 +133,21 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
     });
 
     if (!unassigned.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Нет свободных менеджеров для добавления.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Qo'shish uchun bo'sh menejerlar yo'q.");
       return;
     }
 
-    const keyboard = unassigned.map((m) => [
-      { text: m.name, callback_data: `tl_add:${m.id}` },
-    ]);
+    const keyboard = unassigned.map((m) => [{ text: m.name, callback_data: `tl_add:${m.id}` }]);
 
-    await bot.sendMessage(msg.chat.id, "Выберите менеджера для добавления в команду:", {
+    await bot.sendMessage(msg.chat.id, "Jamoaga qo'shish uchun menejerni tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
   });
 
-  // /team_manager — карточка менеджера
   bot.onText(/\/team_manager$/, async (msg) => {
     const tl = await requireTeamLead(bot, msg);
     if (!tl || !tl.teamId) {
-      if (tl) await bot.sendMessage(msg.chat.id, "ℹ️ Вы не привязаны к команде.");
+      if (tl) await bot.sendMessage(msg.chat.id, "ℹ️ Siz jamoaga biriktirilmagansiz.");
       return;
     }
 
@@ -164,23 +157,20 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
     });
 
     if (!members.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ В команде нет менеджеров.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Jamoada menejerlar yo'q.");
       return;
     }
 
-    const keyboard = members.map((m) => [
-      { text: m.name, callback_data: `tl_card:${m.id}` },
-    ]);
-    await bot.sendMessage(msg.chat.id, "Выберите менеджера:", {
+    const keyboard = members.map((m) => [{ text: m.name, callback_data: `tl_card:${m.id}` }]);
+    await bot.sendMessage(msg.chat.id, "Menejerni tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
   });
 
-  // /ask_manager — задать AI вопрос о менеджере
   bot.onText(/\/ask_manager$/, async (msg) => {
     const tl = await requireTeamLead(bot, msg);
     if (!tl || !tl.teamId) {
-      if (tl) await bot.sendMessage(msg.chat.id, "ℹ️ Вы не привязаны к команде.");
+      if (tl) await bot.sendMessage(msg.chat.id, "ℹ️ Siz jamoaga biriktirilmagansiz.");
       return;
     }
 
@@ -190,79 +180,73 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
     });
 
     if (!members.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ В команде нет менеджеров.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Jamoada menejerlar yo'q.");
       return;
     }
 
-    const keyboard = members.map((m) => [
-      { text: m.name, callback_data: `tl_ask:${m.id}` },
-    ]);
-    await bot.sendMessage(msg.chat.id, "Выберите менеджера для AI-анализа:", {
+    const keyboard = members.map((m) => [{ text: m.name, callback_data: `tl_ask:${m.id}` }]);
+    await bot.sendMessage(msg.chat.id, "AI tahlil uchun menejerni tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
   });
 
-  // Callback handlers
   bot.on("callback_query", async (query) => {
     if (!query.data || !query.message) return;
     const chatId = query.message.chat.id;
     const userId = query.from.id;
     const data = query.data;
 
-    // tl_add:<managerId> — добавить менеджера в команду
     if (data.startsWith("tl_add:")) {
       const managerId = parseInt(data.split(":")[1]);
       const tl = await getTeamLead(String(userId));
       if (!tl?.teamId) {
-        await bot.answerCallbackQuery(query.id, { text: "Ошибка: нет прав TeamLead." });
+        await bot.answerCallbackQuery(query.id, { text: "Xato: TeamLead huquqi yo'q." });
         return;
       }
 
       const mgr = await prisma.manager.findUnique({ where: { id: managerId } });
       if (!mgr) {
-        await bot.answerCallbackQuery(query.id, { text: "Менеджер не найден." });
+        await bot.answerCallbackQuery(query.id, { text: "Menejer topilmadi." });
         return;
       }
       if (mgr.teamId) {
-        await bot.answerCallbackQuery(query.id, { text: "Менеджер уже в команде." });
+        await bot.answerCallbackQuery(query.id, { text: "Menejer allaqachon jamoada." });
         return;
       }
 
       await prisma.manager.update({ where: { id: managerId }, data: { teamId: tl.teamId } });
       await bot.answerCallbackQuery(query.id);
-      await bot.sendMessage(chatId, `✅ *${mgr.name}* добавлен в вашу команду.`, {
+      await bot.sendMessage(chatId, `✅ *${mgr.name}* sizning jamoangizga qo'shildi.`, {
         parse_mode: "Markdown",
       });
       return;
     }
 
-    // tl_card:<managerId> — карточка менеджера
     if (data.startsWith("tl_card:")) {
       const managerId = parseInt(data.split(":")[1]);
       await bot.answerCallbackQuery(query.id);
 
       const card = await buildManagerCard(managerId);
-      const score = card.avgScore != null ? `${card.avgScore}/100` : "нет данных";
-      const strengths = card.strengths.length ? card.strengths.join(", ") : "нет данных";
-      const weaknesses = card.weaknesses.length ? card.weaknesses.join(", ") : "нет данных";
+      const score = card.avgScore != null ? `${card.avgScore}/100` : "ma'lumot yo'q";
+      const strengths = card.strengths.length ? card.strengths.join(", ") : "ma'lumot yo'q";
+      const weaknesses = card.weaknesses.length ? card.weaknesses.join(", ") : "ma'lumot yo'q";
 
       const text =
         `👤 *${card.name}*\n` +
-        `⭐ Балл: ${score} (7 дней)\n` +
-        `🏆 Место в команде: ${card.rankInTeam} из ${card.teamSize}\n\n` +
-        `💪 Сильные стороны: ${strengths}\n` +
-        `⚠️ Зоны роста: ${weaknesses}`;
+        `⭐ Ball: ${score} (7 kun)\n` +
+        `🏆 Jamoadagi o'rni: ${card.rankInTeam} / ${card.teamSize}\n\n` +
+        `💪 Kuchli tomonlari: ${strengths}\n` +
+        `⚠️ O'sish nuqtalari: ${weaknesses}`;
 
       await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
       return;
     }
 
-    // tl_ask:<managerId> — начать AI-сессию о менеджере
     if (data.startsWith("tl_ask:")) {
       const managerId = parseInt(data.split(":")[1]);
       const mgr = await prisma.manager.findUnique({ where: { id: managerId } });
       if (!mgr) {
-        await bot.answerCallbackQuery(query.id, { text: "Менеджер не найден." });
+        await bot.answerCallbackQuery(query.id, { text: "Menejer topilmadi." });
         return;
       }
 
@@ -274,11 +258,10 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
 
       await bot.sendMessage(
         chatId,
-        `🤖 Задайте вопрос об *${mgr.name}* (минимум 10 слов):\n\nПример: «Какие главные ошибки у ${mgr.name} за последнюю неделю?»\n\nДля выхода: /stop_ai`,
+        `🤖 *${mgr.name}* haqida savol yozing (kamida 10 ta so'z):\n\nMasalan: "${mgr.name} ning oxirgi haftadagi asosiy xatolari qaysilar?"\n\nChiqish uchun: /stop_ai`,
         { parse_mode: "Markdown" }
       );
       return;
     }
   });
 }
-

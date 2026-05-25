@@ -453,7 +453,7 @@ ROLING VA USLUBINGIZ:
 - Nastavnik sifatida gapir: qo'llab-quvvatlaysan, lekin halol va aniq bo'l
 - Aniq misollar va texnikalar bilan amaliy maslahatlar ber
 - FAQAT menejerni haqiqiy qo'ng'iroq ma'lumotlariga asoslan — faktlarni to'qima
-- Javoblar qisqa va mazmuнli (3–6 gap), bo'sh gaplarsiz
+- Javoblar qisqa va mazmunli (3–6 gap), bo'sh gaplarsiz
 - Menejerga "sen" deb murojaat qil, iliq lekin professional tarzda
 - Ma'lumot yetarli bo'lmasa — buni ochiq ayt
 - MUHIM: salomlashuvlarni hech qachon ishlatma ("Salom", "Assalomu alaykum" va h.k.) — sen allaqachon suhbatdasan, salomlashish faqat bir marta bo'ldi
@@ -467,7 +467,7 @@ O'rtacha ball: ${avg}/100
 Qo'ng'iroqlar bo'yicha batafsil:
 ${callLines}
 
-Barcha javob va tavsiyalaring uchun shu ma'lumotlardan foydalан.`;
+Barcha javob va tavsiyalaring uchun shu ma'lumotlardan foydalan.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -519,7 +519,7 @@ bot.onText(/\/start$/, async (msg) => {
 });
 
 // ---------------------------------------------------------------------------
-// /help — command reference
+// /help - command reference
 // ---------------------------------------------------------------------------
 
 bot.onText(/\/help$/, async (msg) => {
@@ -532,48 +532,41 @@ bot.onText(/\/help$/, async (msg) => {
     await bot.sendMessage(
       msg.chat.id,
       `🔑 *Administrator buyruqlari*\n\n` +
-
         `*Menejerlar:*\n` +
-        `/managers — barcha menejerlar ro'yxati\n` +
-        `/sync\\_managers — OnlinePBX dan sinxronlash va Google Sheet yangilash\n` +
-        `/reset\\_code <amo\\_id> — menejер uchun yangi kod yaratish\n\n` +
-
+        `/managers - barcha menejerlar ro'yxati\n` +
+        `/sync\_managers - OnlinePBX dan sinxronlash va Google Sheet yangilash\n` +
+        `/reset\_code <amo\_id> - menejer uchun yangi kod yaratish\n\n` +
         `*Administratorlar:*\n` +
-        `/admins — barcha administratorlarni ko'rish\n` +
-        `/add\\_admin <telegram\\_id> — foydalanuvchini administrator qilish\n` +
-        `/remove\\_admin <telegram\\_id> — administrator huquqlarini olish\n\n` +
-
+        `/admins - barcha administratorlarni ko'rish\n` +
+        `/add\_admin <telegram\_id> - foydalanuvchini administrator qilish\n` +
+        `/remove\_admin <telegram\_id> - administrator huquqlarini olish\n\n` +
         `*Qo'ng'iroqlar tahlili:*\n` +
-        `/analyze\\_deal <deal\\_id> — bitim bo'yicha so'nggi qo'ng'iroqni tahlil qilish\n` +
-        `/sync\\_history — qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)\n\n` +
-
+        `/analyze\_deal <deal\_id> - bitim bo'yicha so'nggi qo'ng'iroqni tahlil qilish\n` +
+        `/sync\_history - qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)\n\n` +
         `*Hisobotlar (jamoa bo'yicha):*\n` +
-        `/report — bugungi hisobot\n` +
-        `/week — so'nggi 7 kun\n` +
-        `/month — joriy oy\n` +
-        `/period — ixtiyoriy sana diapazoni\n` +
-        `/errors — 30 kunlik zaif kriteriyalar\n\n` +
-
-        `*РОП — рейтинги и аналитика:*\n` +
-        `/teams — все команды\n` +
-        `/all\\_rating — общий рейтинг менеджеров (7 дней)\n` +
-        `/all\\_mistakes — ошибки по всей компании\n` +
-        `/rop\\_team\\_rating — рейтинг конкретной команды\n` +
-        `/rop\\_team\\_mistakes — ошибки конкретной команды\n` +
-        `/rop\\_manager — карточка менеджера\n` +
-        `/rop\\_ask — AI-вопрос о менеджере\n\n` +
-
-        `*РОП — управление командами:*\n` +
-        `/set\\_role <tg\\_id> <manager|teamlead|rop> — назначить роль\n` +
-        `/set\\_teamlead <amo\\_id> — создать команду и назначить ТЛ\n` +
-        `/add\\_to\\_team <mgr\\_amo\\_id> <tl\\_amo\\_id> — добавить в команду\n` +
-        `/remove\\_from\\_team <amo\\_id> — убрать из команды\n` +
-        `/teams\\_list — список всех команд\n\n` +
-
-        `*Тест дисциплины:*\n` +
-        `/test\\_restrict <tg\\_id> — ограничить менеджера\n` +
-        `/test\\_restore <tg\\_id> — восстановить менеджера\n` +
-        `/check\\_tg <tg\\_id> — проверить привязку в БД`,
+        `/report - bugungi hisobot\n` +
+        `/week - so'nggi 7 kun\n` +
+        `/month - joriy oy\n` +
+        `/period - ixtiyoriy sana oralig'i\n` +
+        `/errors - 30 kunlik zaif kriteriyalar\n\n` +
+        `*ROP - reyting va analitika:*\n` +
+        `/teams - barcha jamoalar\n` +
+        `/all\_rating - menejerlarning umumiy reytingi (7 kun)\n` +
+        `/all\_mistakes - kompaniya bo'yicha xatolar\n` +
+        `/rop\_team\_rating - aniq jamoa reytingi\n` +
+        `/rop\_team\_mistakes - aniq jamoa xatolari\n` +
+        `/rop\_manager - menejer kartasi\n` +
+        `/rop\_ask - menejer haqida AI-savol\n\n` +
+        `*ROP - jamoa boshqaruvi:*\n` +
+        `/set\_role <tg\_id> <manager|teamlead|rop> - rol tayinlash\n` +
+        `/set\_teamlead <amo\_id> - jamoa yaratish va TL tayinlash\n` +
+        `/add\_to\_team <mgr\_amo\_id> <tl\_amo\_id> - jamoaga qo'shish\n` +
+        `/remove\_from\_team <amo\_id> - jamoadan chiqarish\n` +
+        `/teams\_list - barcha jamoalar ro'yxati\n\n` +
+        `*Intizom testi:*\n` +
+        `/test\_restrict <tg\_id> - menejerni cheklash\n` +
+        `/test\_restore <tg\_id> - menejerni tiklash\n` +
+        `/check\_tg <tg\_id> - BDDagi bog'lanishni tekshirish`,
       { parse_mode: "Markdown" }
     );
     return;
@@ -583,23 +576,20 @@ bot.onText(/\/help$/, async (msg) => {
     await bot.sendMessage(
       msg.chat.id,
       `📋 *Mavjud buyruqlar*\n\n` +
-
         `*Hisobotlar:*\n` +
-        `/report — bugungi hisobot\n` +
-        `/week — so'nggi 7 kun\n` +
-        `/month — joriy oy\n` +
-        `/period — ixtiyoriy sana diapazoni\n\n` +
-
+        `/report - bugungi hisobot\n` +
+        `/week - so'nggi 7 kun\n` +
+        `/month - joriy oy\n` +
+        `/period - ixtiyoriy sana oralig'i\n\n` +
         `*Xatolar tahlili:*\n` +
-        `/errors — so'nggi 30 kunlik eng ko'p xatolar\n\n` +
-
+        `/errors - so'nggi 30 kunlik eng ko'p xatolar\n\n` +
         `*AI-murabbiy:*\n` +
-        `/ask — dialog rejimiga kirish (30 kun ma'lumotlari)\n` +
-        `/ask kun — faqat bugungi ma'lumotlar\n` +
-        `/ask hafta — 7 kunlik ma'lumotlar\n` +
-        `/ask oy — joriy oy ma'lumotlari\n` +
-        `/ask <savol> — savolni darhol berish\n` +
-        `/stop\\_ai — AI-murabbiy rejimidan chiqish`,
+        `/ask - dialog rejimiga kirish (30 kun ma'lumotlari)\n` +
+        `/ask kun - faqat bugungi ma'lumotlar\n` +
+        `/ask hafta - 7 kunlik ma'lumotlar\n` +
+        `/ask oy - joriy oy ma'lumotlari\n` +
+        `/ask <savol> - savolni darhol berish\n` +
+        `/stop\_ai - AI-murabbiy rejimidan chiqish`,
       { parse_mode: "Markdown" }
     );
     return;
@@ -757,7 +747,7 @@ bot.on("message", async (msg) => {
     if (words.length < 10) {
       await bot.sendMessage(
         msg.chat.id,
-        "❌ Вопрос должен содержать не менее 10 слов. Попробуйте ещё раз."
+        "❌ Savol kamida 10 ta so'zdan iborat bo'lishi kerak. Yana urinib ko'ring."
       );
       return;
     }
@@ -790,7 +780,7 @@ bot.on("message", async (msg) => {
 
     await bot.sendMessage(
       msg.chat.id,
-      `🤖 *AI о ${targetManagerName}:*\n\n${answer}\n\n_Продолжайте задавать вопросы или /stop\\_ai для выхода._`,
+      `🤖 *${targetManagerName} haqida AI:*\n\n${answer}\n\n_Keyingi savollarni berishda davom eting yoki chiqish uchun /stop\\_ai ni bosing._`,
       { parse_mode: "Markdown" }
     );
     return;
@@ -826,7 +816,7 @@ bot.on("message", async (msg) => {
         const restored = await maybeRestorePilotManagerAccess(session.managerId);
         if (restored) {
           const validMessages = await countValidAiMessagesToday(session.managerId);
-          await bot.sendMessage(msg.chat.id, "✅ Ваш доступ в amoCRM восстановлен.");
+          await bot.sendMessage(msg.chat.id, "✅ amoCRM dagi kirish huquqingiz tiklandi.");
           console.log(
             `[Discipline] Restored amoCRM access for manager ${session.managerId} after ${validMessages}/${MIN_DISCIPLINE_MESSAGES_PER_DAY} valid AI messages`
           );
@@ -1140,7 +1130,7 @@ bot.onText(/\/reset_code (\d+)/, async (msg, match) => {
 
   const result = await resetManagerCode(parseInt(match![1]));
   if (!result) {
-    await bot.sendMessage(msg.chat.id, `❌ amoCRM ID ${match![1]} bilan menejер topilmadi.`);
+    await bot.sendMessage(msg.chat.id, `❌ amoCRM ID ${match![1]} bilan menejer topilmadi.`);
     return;
   }
 
@@ -1426,14 +1416,14 @@ bot.onText(/\/check_tg (.+)/, async (msg, match) => {
   });
 
   if (!links.length) {
-    await bot.sendMessage(msg.chat.id, `❌ TelegramLink с telegramUserId=${tgId} не найдено вообще.`);
+    await bot.sendMessage(msg.chat.id, `❌ telegramUserId=${tgId} uchun umuman TelegramLink topilmadi.`);
     return;
   }
 
   const lines = links.map((l) =>
     `• status=${l.status} managerId=${l.managerId} name=${l.manager.name} amoId=${l.manager.amoUserId ?? "—"} active=${l.manager.isActive}`
   );
-  await bot.sendMessage(msg.chat.id, `TelegramLink записи для ${tgId}:\n${lines.join("\n")}`);
+  await bot.sendMessage(msg.chat.id, `${tgId} uchun TelegramLink yozuvlari:\n${lines.join("\n")}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -1446,35 +1436,35 @@ bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
 
   const tgId = match![1].trim();
   console.log(`[test_restrict] tgId=${tgId}`);
-  await bot.sendMessage(msg.chat.id, `🔍 Ищу менеджера с tg_id=${tgId}...`);
+  await bot.sendMessage(msg.chat.id, `🔍 tg_id=${tgId} bo'yicha menejer qidirilmoqda...`);
 
   const manager = await getManager(tgId);
   if (!manager) {
     console.log(`[test_restrict] Manager not found for tgId=${tgId}`);
-    await bot.sendMessage(msg.chat.id, `❌ Менеджер с Telegram ID ${tgId} не найден в БД.`);
+    await bot.sendMessage(msg.chat.id, `❌ Telegram ID ${tgId} bo'lgan menejer bazada topilmadi.`);
     return;
   }
   console.log(`[test_restrict] Found manager: id=${manager.id} name=${manager.name} amoUserId=${manager.amoUserId} isRestricted=${manager.isAmoCrmRestricted}`);
-  await bot.sendMessage(msg.chat.id, `✔ Менеджер: ${manager.name} (amoId=${manager.amoUserId}, restricted=${manager.isAmoCrmRestricted})`);
+  await bot.sendMessage(msg.chat.id, `✅ Menejer: ${manager.name} (amoId=${manager.amoUserId}, restricted=${manager.isAmoCrmRestricted})`);
 
   if (!manager.amoUserId) {
-    await bot.sendMessage(msg.chat.id, `❌ У ${manager.name} нет amoCRM user ID.`);
+    await bot.sendMessage(msg.chat.id, `❌ ${manager.name} uchun amoCRM user ID yo'q.`);
     return;
   }
   if (manager.isAmoCrmRestricted) {
-    await bot.sendMessage(msg.chat.id, `⚠️ ${manager.name} уже ограничен.`);
+    await bot.sendMessage(msg.chat.id, `⚠️ ${manager.name} allaqachon cheklangan.`);
     return;
   }
 
-  await bot.sendMessage(msg.chat.id, `🔍 Запрашиваю текущую роль из amoCRM (userId=${manager.amoUserId})...`);
+  await bot.sendMessage(msg.chat.id, `🔍 amoCRM dan joriy rol so'ralmoqda (userId=${manager.amoUserId})...`);
   const currentRoleId = await getAmoUserRoleId(manager.amoUserId);
   console.log(`[test_restrict] getAmoUserRoleId result: ${currentRoleId}`);
 
   if (!currentRoleId) {
-    await bot.sendMessage(msg.chat.id, `❌ Не удалось получить role_id из amoCRM для ${manager.name}.\nПроверь логи сервера — там будет ответ API.`);
+    await bot.sendMessage(msg.chat.id, `❌ ${manager.name} uchun amoCRM dan role_id olib bo'lmadi.\nServer loglarini tekshiring, API javobi o'sha yerda bo'ladi.`);
     return;
   }
-  await bot.sendMessage(msg.chat.id, `✔ Текущая роль: ${currentRoleId}\n🔄 Меняю на роль "ИИ ОКК ограничение" (${AMO_RESTRICTED_ROLE_ID})...`);
+  await bot.sendMessage(msg.chat.id, `✅ Joriy rol: ${currentRoleId}\n🔄 "AI OKK cheklov" roli (${AMO_RESTRICTED_ROLE_ID}) ga almashtirilmoqda...`);
 
   try {
     await setAmoUserRole(manager.amoUserId, AMO_RESTRICTED_ROLE_ID);
@@ -1488,10 +1478,10 @@ bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
 
     await bot.sendMessage(
       msg.chat.id,
-      `✅ [ТЕСТ] Роль ${manager.name} изменена:\n` +
-        `• Прежняя роль: ${currentRoleId}\n` +
-        `• Новая роль: ${AMO_RESTRICTED_ROLE_ID} (ИИ ОКК ограничение)\n\n` +
-        `Менеджер восстановит доступ через /ask (вопрос ≥10 слов).`
+      `✅ [TEST] ${manager.name} uchun rol almashtirildi:\n` +
+        `• Avvalgi rol: ${currentRoleId}\n` +
+        `• Yangi rol: ${AMO_RESTRICTED_ROLE_ID} (AI OKK cheklov)\n\n` +
+        `Menejer /ask orqali normani bajargach kirish huquqini tiklaydi.`
     );
   } catch (err: any) {
     const status = err.response?.status;
@@ -1504,7 +1494,7 @@ bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
     console.error(`[test_restrict] FAILED: status=${status} msg=${errMsg} detail=${detail}`);
     await bot.sendMessage(
       msg.chat.id,
-      `❌ Ошибка при смене роли:\n${errMsg}${detail ? `\n${detail}` : ""}`
+      `❌ Rolni almashtirishda xatolik yuz berdi:\n${errMsg}${detail ? `\n${detail}` : ""}`
     );
     return;
   }
@@ -1522,18 +1512,18 @@ bot.onText(/\/test_restore (.+)/, async (msg, match) => {
   const manager = await getManager(tgId);
 
   if (!manager) {
-    await bot.sendMessage(msg.chat.id, `❌ Менеджер с Telegram ID ${tgId} не найден.`);
+    await bot.sendMessage(msg.chat.id, `❌ Telegram ID ${tgId} bo'lgan menejer topilmadi.`);
     return;
   }
   if (!manager.isAmoCrmRestricted) {
-    await bot.sendMessage(msg.chat.id, `⚠️ ${manager.name} сейчас не ограничен.`);
+    await bot.sendMessage(msg.chat.id, `⚠️ ${manager.name} hozir cheklanmagan.`);
     return;
   }
 
   const saved = manager.amoRightsBeforeRestriction as Record<string, unknown> | null;
 
   if (!saved || !manager.amoUserId) {
-    await bot.sendMessage(msg.chat.id, `❌ Нет сохранённых прав для ${manager.name}.`);
+    await bot.sendMessage(msg.chat.id, `❌ ${manager.name} uchun saqlangan huquqlar topilmadi.`);
     return;
   }
 
@@ -1546,7 +1536,7 @@ bot.onText(/\/test_restore (.+)/, async (msg, match) => {
 
   await bot.sendMessage(
     msg.chat.id,
-    `✅ [ТЕСТ] Права ${manager.name} восстановлены.`
+    `✅ [TEST] ${manager.name} ning huquqlari tiklandi.`
   );
 });
 

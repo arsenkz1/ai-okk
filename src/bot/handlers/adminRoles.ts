@@ -14,7 +14,7 @@ async function isAdmin(telegramUserId: string): Promise<boolean> {
 async function requireAdmin(bot: TelegramBot, msg: TelegramBot.Message): Promise<boolean> {
   const tgId = String(msg.from!.id);
   if (await isAdmin(tgId)) return true;
-  await bot.sendMessage(msg.chat.id, "❌ У вас нет прав для этой команды.");
+  await bot.sendMessage(msg.chat.id, "❌ Sizda bu buyruq uchun huquq yo'q.");
   return false;
 }
 
@@ -33,7 +33,7 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
 
     const role = roleMap[roleStr];
     if (!role) {
-      await bot.sendMessage(msg.chat.id, "❌ Неверная роль. Доступно: manager, teamlead, rop");
+      await bot.sendMessage(msg.chat.id, "❌ Noto'g'ri rol. Mavjud variantlar: manager, teamlead, rop");
       return;
     }
 
@@ -46,19 +46,19 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
       if (await isAdmin(targetTgId)) {
         await bot.sendMessage(
           msg.chat.id,
-          `ℹ️ Telegram ID ${targetTgId} уже имеет админский доступ. Для ROP-команд ему не нужна отдельная роль через /set_role.`
+          `ℹ️ Telegram ID ${targetTgId} allaqachon admin huquqiga ega. ROP buyruqlari uchun unga /set_role orqali alohida rol kerak emas.`
         );
         return;
       }
 
-      await bot.sendMessage(msg.chat.id, `❌ Пользователь с Telegram ID ${targetTgId} не найден в системе.`);
+      await bot.sendMessage(msg.chat.id, `❌ Telegram ID ${targetTgId} bo'lgan foydalanuvchi tizimda topilmadi.`);
       return;
     }
 
     await prisma.manager.update({ where: { id: link.managerId }, data: { role } });
     await bot.sendMessage(
       msg.chat.id,
-      `✅ Роль пользователя *${link.manager.name}* изменена на *${role}*.`,
+      `✅ *${link.manager.name}* foydalanuvchisining roli *${role}* ga o'zgartirildi.`,
       { parse_mode: "Markdown" }
     );
   });
@@ -70,14 +70,14 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
     const manager = await prisma.manager.findUnique({ where: { amoUserId } });
 
     if (!manager) {
-      await bot.sendMessage(msg.chat.id, `❌ Менеджер с amoCRM ID ${amoUserId} не найден.`);
+      await bot.sendMessage(msg.chat.id, `❌ amoCRM ID ${amoUserId} bo'lgan menejer topilmadi.`);
       return;
     }
 
     let team = await prisma.team.findFirst({ where: { teamLeadId: manager.id } });
     if (!team) {
       team = await prisma.team.create({
-        data: { name: `${manager.name} команда`, teamLeadId: manager.id },
+        data: { name: `${manager.name} jamoasi`, teamLeadId: manager.id },
       });
     }
 
@@ -88,7 +88,7 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
 
     await bot.sendMessage(
       msg.chat.id,
-      `✅ *${manager.name}* назначен TeamLead.\nКоманда: *${team.name}* (ID: ${team.id})`,
+      `✅ *${manager.name}* TeamLead etib belgilandi.\nJamoa: *${team.name}* (ID: ${team.id})`,
       { parse_mode: "Markdown" }
     );
   });
@@ -105,32 +105,32 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
     ]);
 
     if (!mgr) {
-      await bot.sendMessage(msg.chat.id, `❌ Менеджер с amoCRM ID ${mgrAmoId} не найден.`);
+      await bot.sendMessage(msg.chat.id, `❌ amoCRM ID ${mgrAmoId} bo'lgan menejer topilmadi.`);
       return;
     }
     if (!tl) {
-      await bot.sendMessage(msg.chat.id, `❌ TeamLead с amoCRM ID ${tlAmoId} не найден.`);
+      await bot.sendMessage(msg.chat.id, `❌ amoCRM ID ${tlAmoId} bo'lgan TeamLead topilmadi.`);
       return;
     }
     if (tl.role !== "TEAMLEAD") {
-      await bot.sendMessage(msg.chat.id, `❌ ${tl.name} не является TeamLead.`);
+      await bot.sendMessage(msg.chat.id, `❌ ${tl.name} TeamLead emas.`);
       return;
     }
     if (mgr.teamId) {
-      await bot.sendMessage(msg.chat.id, `❌ ${mgr.name} уже состоит в команде. Сначала выполните /remove_from_team.`);
+      await bot.sendMessage(msg.chat.id, `❌ ${mgr.name} allaqachon jamoada. Avval /remove_from_team buyrug'ini ishlating.`);
       return;
     }
 
     const team = await prisma.team.findFirst({ where: { teamLeadId: tl.id } });
     if (!team) {
-      await bot.sendMessage(msg.chat.id, `❌ Команда для TeamLead ${tl.name} не найдена. Сначала выполните /set_teamlead.`);
+      await bot.sendMessage(msg.chat.id, `❌ ${tl.name} uchun jamoa topilmadi. Avval /set_teamlead buyrug'ini ishlating.`);
       return;
     }
 
     await prisma.manager.update({ where: { id: mgr.id }, data: { teamId: team.id } });
     await bot.sendMessage(
       msg.chat.id,
-      `✅ *${mgr.name}* добавлен в команду *${team.name}*.`,
+      `✅ *${mgr.name}* *${team.name}* jamoasiga qo'shildi.`,
       { parse_mode: "Markdown" }
     );
   });
@@ -142,16 +142,16 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
     const manager = await prisma.manager.findUnique({ where: { amoUserId } });
 
     if (!manager) {
-      await bot.sendMessage(msg.chat.id, `❌ Менеджер с amoCRM ID ${amoUserId} не найден.`);
+      await bot.sendMessage(msg.chat.id, `❌ amoCRM ID ${amoUserId} bo'lgan menejer topilmadi.`);
       return;
     }
     if (!manager.teamId) {
-      await bot.sendMessage(msg.chat.id, `ℹ️ ${manager.name} не состоит ни в одной команде.`);
+      await bot.sendMessage(msg.chat.id, `ℹ️ ${manager.name} hech qaysi jamoada emas.`);
       return;
     }
 
     await prisma.manager.update({ where: { id: manager.id }, data: { teamId: null } });
-    await bot.sendMessage(msg.chat.id, `✅ *${manager.name}* удалён из команды.`, {
+    await bot.sendMessage(msg.chat.id, `✅ *${manager.name}* jamoadan chiqarildi.`, {
       parse_mode: "Markdown",
     });
   });
@@ -161,18 +161,18 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
     if (!teams.length) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Команды не созданы.");
+      await bot.sendMessage(msg.chat.id, "ℹ️ Jamoalar yaratilmagan.");
       return;
     }
 
-    const lines = ["📋 *Все команды:*", ""];
+    const lines = ["📋 *Barcha jamoalar:*", ""];
     for (const team of teams) {
       const memberCount = await prisma.manager.count({ where: { teamId: team.id } });
       const tl = team.teamLeadId
         ? await prisma.manager.findUnique({ where: { id: team.teamLeadId } })
         : null;
       lines.push(`• *${team.name}* (ID: ${team.id})`);
-      lines.push(`  ТЛ: ${tl?.name ?? "не назначен"} | Менеджеров: ${memberCount}`);
+      lines.push(`  TL: ${tl?.name ?? "tayinlanmagan"} | Menejerlar: ${memberCount}`);
     }
 
     await bot.sendMessage(msg.chat.id, lines.join("\n"), { parse_mode: "Markdown" });
