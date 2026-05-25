@@ -572,6 +572,34 @@ bot.onText(/\/help$/, async (msg) => {
     return;
   }
 
+  if (manager?.role === "TEAMLEAD") {
+    await bot.sendMessage(
+      msg.chat.id,
+      `👥 *TeamLead buyruqlari*\n\n` +
+        `*Shaxsiy buyruqlar:*\n` +
+        "`/report` - bugungi hisobot\n" +
+        "`/week` - so'nggi 7 kun\n" +
+        "`/month` - joriy oy\n" +
+        "`/period` - ixtiyoriy sana oralig'i\n" +
+        "`/errors` - so'nggi 30 kunlik eng ko'p xatolar\n" +
+        "`/ask` - dialog rejimiga kirish (30 kun ma'lumotlari)\n" +
+        "`/ask kun` - faqat bugungi ma'lumotlar\n" +
+        "`/ask hafta` - 7 kunlik ma'lumotlar\n" +
+        "`/ask oy` - joriy oy ma'lumotlari\n" +
+        "`/stop_ai` - AI-murabbiy rejimidan chiqish\n\n" +
+        `*Jamoa buyruqlari:*\n` +
+        "`/team` - o'z jamoangizni ko'rish\n" +
+        "`/team_rating` - jamoa reytingi\n" +
+        "`/team_mistakes` - jamoa xatolari\n" +
+        "`/team_add` - menejerlarni jamoaga biriktirish\n" +
+        "`/team_remove` - menejerlarni jamoadan chiqarish\n" +
+        "`/team_manager` - jamoa menejeri kartasi\n" +
+        "`/ask_manager` - jamoa menejeri haqida AI-savol",
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+
   if (manager) {
     await bot.sendMessage(
       msg.chat.id,
