@@ -29,7 +29,7 @@ interface AmoRoleRightsPatchPayload {
   tasks: Required<AmoTaskRights>;
   mail_access: boolean;
   catalog_access: boolean;
-  status_rights: AmoStatusRight[];
+  status_rights: AmoStatusRightPatch[];
 }
 
 export interface AmoStatusRight {
@@ -40,7 +40,18 @@ export interface AmoStatusRight {
     view: AccessValue;
     edit: AccessValue;
     delete: AccessValue;
-    export: AccessValue;
+    export?: AccessValue;
+  };
+}
+
+interface AmoStatusRightPatch {
+  entity_type: "leads";
+  pipeline_id: number;
+  status_id: number;
+  rights: {
+    view: AccessValue;
+    edit: AccessValue;
+    delete: AccessValue;
   };
 }
 
@@ -87,7 +98,7 @@ function normalizeAccessValue(value: AccessValue | undefined, fallback: AccessVa
   return value ?? fallback;
 }
 
-function normalizeStatusRight(item: AmoStatusRight): AmoStatusRight {
+function normalizeStatusRight(item: AmoStatusRight): AmoStatusRightPatch {
   const fallback = item.rights.view ?? "D";
   return {
     ...item,
@@ -95,7 +106,6 @@ function normalizeStatusRight(item: AmoStatusRight): AmoStatusRight {
       view: normalizeAccessValue(item.rights.view, fallback),
       edit: normalizeAccessValue(item.rights.edit, fallback),
       delete: normalizeAccessValue(item.rights.delete, fallback),
-      export: normalizeAccessValue(item.rights.export, fallback),
     },
   };
 }
@@ -163,7 +173,7 @@ function buildRestrictedRoleRights(originalRights: AmoRoleRights): AmoRoleRights
     (item) => !hiddenKeys.has(hiddenStageKey(item.pipeline_id, item.status_id))
   );
 
-  const restrictedStatusRights: AmoStatusRight[] = HIDDEN_NEW_LEAD_STAGES.map((item) => ({
+  const restrictedStatusRights: AmoStatusRightPatch[] = HIDDEN_NEW_LEAD_STAGES.map((item) => ({
     entity_type: "leads",
     pipeline_id: item.pipelineId,
     status_id: item.statusId,
@@ -171,7 +181,6 @@ function buildRestrictedRoleRights(originalRights: AmoRoleRights): AmoRoleRights
       view: "D",
       edit: "D",
       delete: "D",
-      export: "D",
     },
   }));
 
