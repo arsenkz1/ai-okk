@@ -22,6 +22,16 @@ interface AmoTaskRights {
   delete?: AccessValue;
 }
 
+interface AmoRoleRightsPatchPayload {
+  leads: Required<AmoEntityRights>;
+  contacts: Required<AmoEntityRights>;
+  companies: Required<AmoEntityRights>;
+  tasks: Required<AmoTaskRights>;
+  mail_access: boolean;
+  catalog_access: boolean;
+  status_rights: AmoStatusRight[];
+}
+
 export interface AmoStatusRight {
   entity_type: "leads";
   pipeline_id: number;
@@ -90,12 +100,42 @@ function normalizeStatusRight(item: AmoStatusRight): AmoStatusRight {
   };
 }
 
-function normalizeRoleRights(rights: AmoRoleRights): AmoRoleRights {
+function normalizeEntityRights(
+  rights: AmoEntityRights | undefined,
+  fallback: AccessValue = "D"
+): Required<AmoEntityRights> {
+  return {
+    view: normalizeAccessValue(rights?.view, fallback),
+    edit: normalizeAccessValue(rights?.edit, fallback),
+    add: normalizeAccessValue(rights?.add, fallback),
+    delete: normalizeAccessValue(rights?.delete, fallback),
+    export: normalizeAccessValue(rights?.export, fallback),
+  };
+}
+
+function normalizeTaskRights(
+  rights: AmoTaskRights | undefined,
+  fallback: AccessValue = "D"
+): Required<AmoTaskRights> {
+  return {
+    edit: normalizeAccessValue(rights?.edit, fallback),
+    delete: normalizeAccessValue(rights?.delete, fallback),
+  };
+}
+
+function normalizeRoleRights(rights: AmoRoleRights): AmoRoleRightsPatchPayload {
   const nextRights = cloneRights(rights);
-  nextRights.status_rights = Array.isArray(nextRights.status_rights)
-    ? nextRights.status_rights.map((item) => normalizeStatusRight(item))
-    : [];
-  return nextRights;
+  return {
+    leads: normalizeEntityRights(nextRights.leads, "A"),
+    contacts: normalizeEntityRights(nextRights.contacts, "A"),
+    companies: normalizeEntityRights(nextRights.companies, "A"),
+    tasks: normalizeTaskRights(nextRights.tasks, "A"),
+    mail_access: Boolean(nextRights.mail_access),
+    catalog_access: Boolean(nextRights.catalog_access),
+    status_rights: Array.isArray(nextRights.status_rights)
+      ? nextRights.status_rights.map((item) => normalizeStatusRight(item))
+      : [],
+  };
 }
 
 function extractEmbeddedUserIds(role: AmoRoleResponse): number[] {
@@ -145,8 +185,18 @@ async function amoGet<T>(path: string): Promise<T> {
 }
 
 async function amoPatch<T>(path: string, data: unknown): Promise<T> {
-  const resp = await axios.patch(`${AMO_BASE_URL}${path}`, data, { headers: amoHeaders() });
-  return resp.data as T;
+  try {
+    const resp = await axios.patch(`${AMO_BASE_URL}${path}`, data, { headers: amoHeaders() });
+    return resp.data as T;
+  } catch (err: any) {
+    const details = err.response?.data
+      ? typeof err.response.data === "string"
+        ? err.response.data
+        : JSON.stringify(err.response.data)
+      : err.message;
+    console.error(`[amoRights] PATCH ${path} failed: ${details}`);
+    throw err;
+  }
 }
 
 async function getAmoUser(amoUserId: number): Promise<any> {

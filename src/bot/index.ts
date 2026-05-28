@@ -16,7 +16,12 @@ import { writeManagersToSheet } from "../services/googleSheets";
 import { syncHistoryRange, findPbxRecordByDateAndPhone } from "../services/pbxHistory";
 import { callProcessingQueue } from "../queues/callProcessing";
 import { fetchDealCallNotes, fetchDealContactPhones } from "../services/amocrm";
-import { restoreAmoUserRights, getAmoUserRoleId, setAmoUserRole, restrictAmoUserLeads, getAmoUserRights, AMO_RESTRICTED_ROLE_ID } from "../services/amoRights";
+import {
+  AmoRoleRights,
+  getAmoUserRoleId,
+  restrictAmoRoleNewLeadAccess,
+  restoreAmoRoleRights,
+} from "../services/amoRights";
 import { countValidAiMessagesToday, maybeRestorePilotManagerAccess } from "../services/disciplineCheck";
 import { supervisorAiSessions, roleFlowState } from "./state";
 import { buildSupervisorAiPrompt } from "./supervisorAi";
@@ -1520,6 +1525,11 @@ bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
     return;
   }
 
+  if (!manager.amoRoleId) {
+    await bot.sendMessage(msg.chat.id, `❌ ${manager.name} uchun amoRoleId saqlanmagan.`);
+    return;
+  }
+
   await bot.sendMessage(msg.chat.id, `🔍 amoCRM dan joriy rol so'ralmoqda (userId=${manager.amoUserId})...`);
   const currentRoleId = await getAmoUserRoleId(manager.amoUserId);
   console.log(`[test_restrict] getAmoUserRoleId result: ${currentRoleId}`);
@@ -1528,23 +1538,36 @@ bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
     await bot.sendMessage(msg.chat.id, `❌ ${manager.name} uchun amoCRM dan role_id olib bo'lmadi.\nServer loglarini tekshiring, API javobi o'sha yerda bo'ladi.`);
     return;
   }
-  await bot.sendMessage(msg.chat.id, `✅ Joriy rol: ${currentRoleId}\n🔄 "AI OKK cheklov" roli (${AMO_RESTRICTED_ROLE_ID}) ga almashtirilmoqda...`);
+  await bot.sendMessage(
+    msg.chat.id,
+    `✅ Joriy rol: ${currentRoleId}\n🔄 ${manager.name} uchun "Yangi lid" bosqichlari yashirilmoqda...`
+  );
 
   try {
-    await setAmoUserRole(manager.amoUserId, AMO_RESTRICTED_ROLE_ID);
-    console.log(`[test_restrict] setAmoUserRole OK: amoUserId=${manager.amoUserId} -> roleId=${AMO_RESTRICTED_ROLE_ID}`);
+    const { originalRights } = await restrictAmoRoleNewLeadAccess(
+      manager.amoUserId,
+      manager.amoRoleId
+    );
+    console.log(
+      `[test_restrict] restrictAmoRoleNewLeadAccess OK: amoUserId=${manager.amoUserId} roleId=${manager.amoRoleId}`
+    );
 
     await prisma.manager.update({
       where: { id: manager.id },
-      data: { isAmoCrmRestricted: true, amoRightsBeforeRestriction: { roleId: currentRoleId } },
+      data: {
+        isAmoCrmRestricted: true,
+        amoRightsBeforeRestriction: originalRights as unknown as Prisma.InputJsonValue,
+      },
     });
-    console.log(`[test_restrict] DB updated: manager ${manager.id} isAmoCrmRestricted=true savedRoleId=${currentRoleId}`);
+    console.log(
+      `[test_restrict] DB updated: manager ${manager.id} isAmoCrmRestricted=true savedRoleRights=true`
+    );
 
     await bot.sendMessage(
       msg.chat.id,
-      `✅ [TEST] ${manager.name} uchun rol almashtirildi:\n` +
-        `• Avvalgi rol: ${currentRoleId}\n` +
-        `• Yangi rol: ${AMO_RESTRICTED_ROLE_ID} (AI OKK cheklov)\n\n` +
+      `✅ [TEST] ${manager.name} uchun cheklov qo'llandi:\n` +
+        `• Role ID: ${manager.amoRoleId}\n` +
+        `• Yashirilgan bosqichlar: Yangi lid\n\n` +
         `Menejer /ask orqali normani bajargach kirish huquqini tiklaydi.`
     );
   } catch (err: any) {
@@ -1558,7 +1581,7 @@ bot.onText(/\/test_restrict (.+)/, async (msg, match) => {
     console.error(`[test_restrict] FAILED: status=${status} msg=${errMsg} detail=${detail}`);
     await bot.sendMessage(
       msg.chat.id,
-      `❌ Rolni almashtirishda xatolik yuz berdi:\n${errMsg}${detail ? `\n${detail}` : ""}`
+      `❌ Cheklovni qo'llashda xatolik yuz berdi:\n${errMsg}${detail ? `\n${detail}` : ""}`
     );
     return;
   }
@@ -1584,15 +1607,19 @@ bot.onText(/\/test_restore (.+)/, async (msg, match) => {
     return;
   }
 
-  const saved = manager.amoRightsBeforeRestriction as Record<string, unknown> | null;
+  if (!manager.amoRoleId) {
+    await bot.sendMessage(msg.chat.id, `❌ ${manager.name} uchun amoRoleId saqlanmagan.`);
+    return;
+  }
 
-  if (!saved || !manager.amoUserId) {
+  const saved = manager.amoRightsBeforeRestriction as AmoRoleRights | null;
+
+  if (!saved) {
     await bot.sendMessage(msg.chat.id, `❌ ${manager.name} uchun saqlangan huquqlar topilmadi.`);
     return;
   }
 
-  const rightsToRestore = (saved.rights ?? saved) as Record<string, unknown>;
-  await restoreAmoUserRights(manager.amoUserId, rightsToRestore);
+  await restoreAmoRoleRights(manager.amoRoleId, saved);
   await prisma.manager.update({
     where: { id: manager.id },
     data: { isAmoCrmRestricted: false, amoRightsBeforeRestriction: Prisma.DbNull },
