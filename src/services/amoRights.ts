@@ -52,6 +52,7 @@ interface AmoStatusRightPatch {
     view: AccessValue;
     edit: AccessValue;
     delete: AccessValue;
+    export?: AccessValue;
   };
 }
 
@@ -100,7 +101,7 @@ function normalizeAccessValue(value: AccessValue | undefined, fallback: AccessVa
 
 function normalizeStatusRight(item: AmoStatusRight): AmoStatusRightPatch {
   const fallback = item.rights.view ?? "D";
-  return {
+  const normalized: AmoStatusRightPatch = {
     ...item,
     rights: {
       view: normalizeAccessValue(item.rights.view, fallback),
@@ -108,6 +109,10 @@ function normalizeStatusRight(item: AmoStatusRight): AmoStatusRightPatch {
       delete: normalizeAccessValue(item.rights.delete, fallback),
     },
   };
+  if (item.rights.export) {
+    normalized.rights.export = normalizeAccessValue(item.rights.export, fallback);
+  }
+  return normalized;
 }
 
 function normalizeEntityRights(
@@ -181,6 +186,7 @@ function buildRestrictedRoleRights(originalRights: AmoRoleRights): AmoRoleRights
       view: "D",
       edit: "D",
       delete: "D",
+      export: "D",
     },
   }));
 
