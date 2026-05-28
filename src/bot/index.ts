@@ -371,7 +371,7 @@ function parseAskArg(arg: string): { period: AiPeriod; question: string } {
   if (lower === "неделя" || lower === "7 дней") return { period: "week", question: "" };
   if (lower === "месяц" || lower === "30 дней") return { period: "month", question: "" };
 
-  // Prefix: "/ask kun savol?" → period=day, question="savol?"
+  // Prefix: "/ask_kun savol?" → period=day, question="savol?"
   const prefixMatch = trimmed.match(/^(kun|bugun|hafta|oy|день|сегодня|неделя|месяц)\s+(.+)$/i);
   if (prefixMatch) {
     const kw = prefixMatch[1].toLowerCase();
@@ -382,6 +382,16 @@ function parseAskArg(arg: string): { period: AiPeriod; question: string } {
   }
 
   return { period: "30days", question: trimmed };
+}
+
+function parseAskArgWithAliases(arg: string): { period: AiPeriod; question: string } {
+  const normalized = arg
+    .trim()
+    .replace(/^_+/, "")
+    .replace(/^ask_kun\b/i, "kun")
+    .replace(/^ask_hafta\b/i, "hafta")
+    .replace(/^ask_oy\b/i, "oy");
+  return parseAskArg(normalized);
 }
 
 function periodLabel(period: AiPeriod): string {
@@ -495,9 +505,9 @@ bot.onText(/\/start$/, async (msg) => {
         `/period — ixtiyoriy davr\n\n` +
         `🤖 *AI-murabbiy:*\n` +
         `/ask — so'nggi 30 kun\n` +
-        `/ask kun — faqat bugun\n` +
-        `/ask hafta — 7 kun\n` +
-        `/ask oy — joriy oy\n\n` +
+        `/ask_kun — faqat bugun\n` +
+        `/ask_hafta — 7 kun\n` +
+        `/ask_oy — joriy oy\n\n` +
         `📋 *Boshqa:*\n` +
         `/errors — mening tez-tez xatolarim`,
       { parse_mode: "Markdown" }
@@ -590,9 +600,9 @@ bot.onText(/\/help$/, async (msg) => {
         "`/period` - ixtiyoriy sana oralig'i\n" +
         "`/errors` - so'nggi 30 kunlik eng ko'p xatolar\n" +
         "`/ask` - dialog rejimiga kirish (30 kun ma'lumotlari)\n" +
-        "`/ask kun` - faqat bugungi ma'lumotlar\n" +
-        "`/ask hafta` - 7 kunlik ma'lumotlar\n" +
-        "`/ask oy` - joriy oy ma'lumotlari\n" +
+        "`/ask_kun` - faqat bugungi ma'lumotlar\n" +
+        "`/ask_hafta` - 7 kunlik ma'lumotlar\n" +
+        "`/ask_oy` - joriy oy ma'lumotlari\n" +
         "`/stop_ai` - AI-murabbiy rejimidan chiqish\n\n" +
         `*Jamoa buyruqlari:*\n` +
         "`/team` - o'z jamoangizni ko'rish\n" +
@@ -620,9 +630,9 @@ bot.onText(/\/help$/, async (msg) => {
         "`/errors` - so'nggi 30 kunlik eng ko'p xatolar\n\n" +
         `*AI-murabbiy:*\n` +
         "`/ask` - dialog rejimiga kirish (30 kun ma'lumotlari)\n" +
-        "`/ask kun` - faqat bugungi ma'lumotlar\n" +
-        "`/ask hafta` - 7 kunlik ma'lumotlar\n" +
-        "`/ask oy` - joriy oy ma'lumotlari\n" +
+        "`/ask_kun` - faqat bugungi ma'lumotlar\n" +
+        "`/ask_hafta` - 7 kunlik ma'lumotlar\n" +
+        "`/ask_oy` - joriy oy ma'lumotlari\n" +
         "`/ask <savol>` - savolni darhol berish\n" +
         "`/stop_ai` - AI-murabbiy rejimidan chiqish",
       { parse_mode: "Markdown" }
@@ -988,7 +998,7 @@ bot.onText(/\/ask(.*)/, async (msg, match) => {
 
   const userId = msg.from!.id;
   const rawArg = match![1].trim();
-  const { period, question: inlineQuestion } = parseAskArg(rawArg);
+  const { period, question: inlineQuestion } = parseAskArgWithAliases(rawArg);
   const label = periodLabel(period);
 
   await bot.sendMessage(
@@ -1003,7 +1013,7 @@ bot.onText(/\/ask(.*)/, async (msg, match) => {
     `🤖 *AI-murabbiy faol!*\n\n` +
     `📅 Tahlil davri: *${label}*\n` +
     `Savollaringizni bering — men butun suhbatni eslayman.\n\n` +
-    `Davrni o'zgartirish: /ask kun · /ask hafta · /ask oy\n` +
+    `Davrni o'zgartirish: /ask_kun · /ask_hafta · /ask_oy\n` +
     `Chiqish: /stop\\_ai`;
 
   if (inlineQuestion) {
