@@ -140,10 +140,22 @@ function normalizeTaskRights(
 
 function normalizeRoleRights(rights: AmoRoleRights): AmoRoleRightsPatchPayload {
   const nextRights = cloneRights(rights);
+  const leads = normalizeEntityRights(nextRights.leads, "A");
+  const contacts = normalizeEntityRights(nextRights.contacts, "A");
+  const companies = normalizeEntityRights(nextRights.companies, "A");
+
+  // Keep top-level delete/export disabled regardless of discipline state.
+  leads.delete = "D";
+  leads.export = "D";
+  contacts.delete = "D";
+  contacts.export = "D";
+  companies.delete = "D";
+  companies.export = "D";
+
   return {
-    leads: normalizeEntityRights(nextRights.leads, "A"),
-    contacts: normalizeEntityRights(nextRights.contacts, "A"),
-    companies: normalizeEntityRights(nextRights.companies, "A"),
+    leads,
+    contacts,
+    companies,
     tasks: normalizeTaskRights(nextRights.tasks, "A"),
     mail_access: Boolean(nextRights.mail_access),
     catalog_access: Boolean(nextRights.catalog_access),
