@@ -9,8 +9,8 @@ export interface HiddenLeadStage {
   statusId: number;
 }
 
-export const MIN_DISCIPLINE_MESSAGES_PER_DAY = 5;
-export const MIN_DISCIPLINE_MESSAGE_WORDS = 10;
+export const MIN_DISCIPLINE_MESSAGES_PER_DAY = 3;
+export const MIN_DISCIPLINE_MESSAGE_WORDS = 5;
 
 export const PILOT_MANAGER_CONFIGS: PilotManagerConfig[] = [
   { amoUserId: 12695650, amoRoleId: 1207102, name: "Абубакир Сиддик" },
