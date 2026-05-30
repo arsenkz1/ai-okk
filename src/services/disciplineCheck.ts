@@ -108,9 +108,10 @@ export async function runDisciplineCheck(
       if (chatId) {
         await sendFn(
           chatId,
-          "🔒 Ваш доступ в amoCRM ограничен: скрыты лиды на стадии Новый лид.\n" +
-            `Для восстановления отправьте ${MIN_DISCIPLINE_MESSAGES_PER_DAY} осмысленных сообщений в AI-сессии,\n` +
-            `каждое минимум по ${MIN_DISCIPLINE_MESSAGE_WORDS} слов.`
+          `Cheklov: amoCRM dagi kirish huquqingiz vaqtincha cheklandi: "Yangi lid" bosqichlari yashirildi.\n` +
+            `Bugun soat 11:00 gacha normani bajarmagansiz.\n` +
+            `Kirishni tiklash uchun AI-sessiyada ${MIN_DISCIPLINE_MESSAGES_PER_DAY} ta mazmunli xabar yuboring,\n` +
+            `har biri kamida ${MIN_DISCIPLINE_MESSAGE_WORDS} ta so'z bo'lsin. Normani bajarganingizdan keyin kirish avtomatik tiklanadi.`
         ).catch((e) =>
           console.error(`[Discipline] Notify failed for manager ${manager.id}:`, e.message)
         );
