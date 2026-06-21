@@ -28,6 +28,37 @@ export interface ManagerSyncResult {
   sheetError?: string;
 }
 
+/**
+ * Защита от коллизий уникального поля internalNumber после смены мэппинга PBX.
+ * Перед установкой internalNumber очищаем старую связь у другого менеджера (если есть),
+ * чтобы синхронизация не падала на Prisma P2002.
+ */
+async function ensureInternalNumberUnique(internalNumber: string, exceptManagerId?: number): Promise<void> {
+  if (!internalNumber) return;
+
+  const conflict = await prisma.manager.findFirst({
+    where: {
+      internalNumber,
+      ...(exceptManagerId ? { id: { not: exceptManagerId } } : {}),
+    },
+    select: { id: true, amoUserId: true, name: true, isActive: true },
+  });
+
+  if (!conflict) return;
+
+  console.warn(
+    `[ManagerSync] internalNumber conflict detected: uid=${internalNumber} already belongs to manager id=${conflict.id} amoUserId=${conflict.amoUserId ?? "—"}, name=${conflict.name}.` +
+      ` It will be cleared before reassign.`
+  );
+
+  // keep conflict but отцепляем old link, чтобы новый менеджер из PBX мог быть синхронизирован
+  // (менеджеры, которых больше нет в PBX, будут снова вычищены/деактивированы в шаге 2).
+  await prisma.manager.update({
+    where: { id: conflict.id },
+    data: { internalNumber: null },
+  });
+}
+
 export async function applyPilotDisciplineManagerConfig(): Promise<void> {
   await prisma.manager.updateMany({
     where: { isDisciplinePilot: true, amoUserId: { notIn: PILOT_MANAGER_AMO_IDS } },
@@ -105,13 +136,21 @@ export async function syncManagersFromPbx(): Promise<ManagerSyncResult> {
   console.log("[ManagerSync] Starting sync from OnlinePBX...");
 
   const mapping = await fetchPbxUsersMapping();
-  console.log(`[ManagerSync] Got ${mapping.length} users from PBX`);
+  const dedupedMapping = Array.from(
+    mapping.reduce((acc, user) => {
+      const key = String(user.amo_id);
+      if (!acc.has(key)) acc.set(key, user);
+      return acc;
+    }, new Map<string, PbxUserMapping>())
+  ).map(([, user]) => user);
 
-  const pbxAmoIds = new Set(mapping.map((u) => parseInt(u.amo_id)));
+  console.log(`[ManagerSync] Got ${mapping.length} users from PBX, ${dedupedMapping.length} unique amo_id`);
+
+  const pbxAmoIds = new Set(dedupedMapping.map((u) => parseInt(u.amo_id)));
   let created = 0, updated = 0, deactivated = 0, reactivated = 0;
 
   // --- Шаг 1: Обрабатываем каждого пользователя из PBX ---
-  for (const user of mapping) {
+  for (const user of dedupedMapping) {
     const amoUserId = parseInt(user.amo_id);
     const pilot = getPilotManagerConfig(amoUserId);
 
@@ -128,6 +167,7 @@ export async function syncManagersFromPbx(): Promise<ManagerSyncResult> {
 
     if (existing) {
       const wasInactive = !existing.isActive;
+      await ensureInternalNumberUnique(user.uid, existing.id);
 
       await prisma.manager.update({
         where: { id: existing.id },
@@ -172,6 +212,7 @@ export async function syncManagersFromPbx(): Promise<ManagerSyncResult> {
 
       updated++;
     } else {
+      await ensureInternalNumberUnique(user.uid);
       // Новый менеджер
       const newManager = await prisma.manager.create({
         data: {
@@ -206,7 +247,7 @@ export async function syncManagersFromPbx(): Promise<ManagerSyncResult> {
     if (manager.amoUserId && !pbxAmoIds.has(manager.amoUserId)) {
       await prisma.manager.update({
         where: { id: manager.id },
-        data: { isActive: false, deactivatedAt: new Date() },
+        data: { isActive: false, deactivatedAt: new Date(), internalNumber: null },
       });
 
       // Устаревшие коды — помечаем expired
