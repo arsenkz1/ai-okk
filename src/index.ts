@@ -10,6 +10,7 @@ import "./workers/callProcessor";
 import { bot } from "./bot/index"; // запускает бот в режиме polling
 import { runDisciplineCheck } from "./services/disciplineCheck";
 import { notifyAdmins } from "./bot/notify";
+import { runStartupChecks } from "./startup";
 void bot; // используется через polling
 
 const app = express();
@@ -141,7 +142,9 @@ app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
   console.log(`Cron timezone: ${tz}`);
 
-  applyPilotDisciplineManagerConfig()
-    .then(() => console.log("[Startup] Pilot discipline manager config applied"))
-    .catch((err: any) => console.error("[Startup] Failed to apply pilot discipline config:", err.message));
+  void runStartupChecks({
+    applyPilotDisciplineManagerConfig,
+    checkAndRestoreAmoCrmWebhook,
+    notifyAdmins,
+  });
 });
