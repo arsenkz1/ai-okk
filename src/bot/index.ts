@@ -28,6 +28,7 @@ import { buildSupervisorAiPrompt } from "./supervisorAi";
 import { registerAdminRoleHandlers } from "./handlers/adminRoles";
 import { registerTeamLeadHandlers } from "./handlers/teamlead";
 import { registerRopHandlers } from "./handlers/rop";
+import { installSafeTelegramSender } from "./safeTelegram";
 
 // ---------------------------------------------------------------------------
 // Bot initialization
@@ -36,7 +37,7 @@ import { registerRopHandlers } from "./handlers/rop";
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) throw new Error("TELEGRAM_BOT_TOKEN is not set");
 
-export const bot = new TelegramBot(token, { polling: true });
+export const bot = installSafeTelegramSender(new TelegramBot(token, { polling: true }));
 console.log("[Bot] Telegram bot started (polling)");
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import TelegramBot from "node-telegram-bot-api";
 import { prisma } from "../config/database";
+import { installSafeTelegramSender } from "./safeTelegram";
 
 // Lazy singleton — создаём бота без polling только для отправки сообщений.
 // Основной polling-экземпляр живёт в bot/index.ts.
@@ -9,7 +10,7 @@ function getNotifyBot(): TelegramBot | null {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return null;
   if (!notifyBot) {
-    notifyBot = new TelegramBot(token, { polling: false });
+    notifyBot = installSafeTelegramSender(new TelegramBot(token, { polling: false }));
   }
   return notifyBot;
 }

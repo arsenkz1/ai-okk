@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only --exit-child src/index.ts",
     "build": "prisma generate && tsc",
+    "test": "npm run build && node --test tests/*.test.js",
     "start": "prisma migrate resolve --rolled-back 20260310000000_add_manager_isactive_botadmin || true && prisma migrate deploy && node dist/index.js",
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate"
