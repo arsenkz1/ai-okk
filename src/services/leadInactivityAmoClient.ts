@@ -59,7 +59,7 @@ export interface AmoInactivitySafeError {
 
 export type AmoInactivityMoveOutcome =
   | { kind: "confirmed"; lead: AmoInactivityLead }
-  | { kind: "not_moved"; reason: "not_in_source" | "patch_rejected" | "readback_not_target"; lead: AmoInactivityLead }
+  | { kind: "not_moved"; reason: "not_in_source" | "fence_cancelled" | "patch_rejected" | "readback_not_target"; lead: AmoInactivityLead }
   | { kind: "uncertain"; error: AmoInactivitySafeError; readback: AmoInactivityLead | null };
 
 export interface CreateLeadInactivityAmoClientOptions {
@@ -136,6 +136,12 @@ class AmoInactivityHttpStatusError extends Error {
   }
 }
 
+class AmoInactivityPrePatchFenceCancelledError extends Error {
+  constructor() {
+    super("durable mutation fence was cancelled before amoCRM PATCH");
+  }
+}
+
 function toSafeError(error: unknown): AmoInactivitySafeError {
   const status = errorStatus(error);
   const code = (error as { code?: unknown } | null)?.code;
@@ -199,7 +205,11 @@ function boundedInteger(value: number | undefined, fallback: number, maximum: nu
 export interface LeadInactivityAmoClient {
   readLead(leadId: number): Promise<AmoInactivityLead>;
   readLeadHistory(leadId: number, options?: { maxPages?: number; pageSize?: number }): Promise<AmoInactivityHistoryEvent[]>;
-  moveLeadToTarget(leadId: number, target: AmoInactivityMoveTarget): Promise<AmoInactivityMoveOutcome>;
+  moveLeadToTarget(
+    leadId: number,
+    target: AmoInactivityMoveTarget,
+    beforePatch?: () => Promise<boolean>,
+  ): Promise<AmoInactivityMoveOutcome>;
 }
 
 export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoClientOptions): LeadInactivityAmoClient {
@@ -253,12 +263,14 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
     path: string,
     data: unknown,
     retrySafe: boolean,
+    beforeSend?: () => Promise<boolean>,
   ): Promise<AmoInactivityHttpResponse> => {
     const attempts = retrySafe ? AMO_INACTIVITY_MAX_SAFE_ATTEMPTS : 1;
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       await waitForRateLimit();
+      if (beforeSend && !await beforeSend()) throw new AmoInactivityPrePatchFenceCancelledError();
       try {
         const response = await http.request({
           method,
@@ -331,10 +343,13 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
       return events;
     },
 
-    async moveLeadToTarget(leadId, target): Promise<AmoInactivityMoveOutcome> {
+    async moveLeadToTarget(leadId, target, beforePatch): Promise<AmoInactivityMoveOutcome> {
       const current = await readLead(leadId);
       if (!target.sourcePipelineIds.includes(current.pipelineId)) {
         return { kind: "not_moved", reason: "not_in_source", lead: current };
+      }
+      if (beforePatch && !await beforePatch()) {
+        return { kind: "not_moved", reason: "fence_cancelled", lead: current };
       }
 
       const patch = {
@@ -345,8 +360,11 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
       };
 
       try {
-        await makeRequest("PATCH", `/api/v4/leads/${current.id}`, patch, false);
+        await makeRequest("PATCH", `/api/v4/leads/${current.id}`, patch, false, beforePatch);
       } catch (error) {
+        if (error instanceof AmoInactivityPrePatchFenceCancelledError) {
+          return { kind: "not_moved", reason: "fence_cancelled", lead: current };
+        }
         if (!isAmbiguousMutationError(error)) {
           return { kind: "not_moved", reason: "patch_rejected", lead: current };
         }

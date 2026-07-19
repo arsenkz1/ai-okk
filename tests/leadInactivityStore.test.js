@@ -87,10 +87,65 @@ class MemoryPersistence {
 
   async releaseExpiredWatchLeases(now) {
     for (const [leadId, watch] of this.watches) {
-      if (watch.state === "leased" && watch.leaseExpiresAt <= now) {
+      if (["leased", "mutating"].includes(watch.state) && watch.leaseExpiresAt <= now) {
         this.watches.set(leadId, { ...watch, state: "watching", leaseToken: null, leaseExpiresAt: null });
       }
     }
+  }
+
+  async listDueWatchLeadIds(now, limit) {
+    return [...this.watches.values()]
+      .filter((watch) => watch.state === "watching" && watch.dueAt <= now)
+      .sort((left, right) => left.dueAt - right.dueAt || left.leadId - right.leadId)
+      .slice(0, limit)
+      .map((watch) => watch.leadId);
+  }
+
+  async isWatchClaimCurrent(lease) {
+    const current = this.watches.get(lease.leadId);
+    return Boolean(current && current.state === "leased" && current.leaseToken === lease.leaseToken && current.leaseGeneration === lease.leaseGeneration);
+  }
+
+  async beginMoveMutation(lease) {
+    const current = this.watches.get(lease.leadId);
+    if (!current || current.state !== "leased" || current.leaseToken !== lease.leaseToken || current.leaseGeneration !== lease.leaseGeneration) return false;
+    this.watches.set(lease.leadId, { ...current, state: "mutating" });
+    return true;
+  }
+
+  async isMoveMutationCurrent(lease) {
+    const current = this.watches.get(lease.leadId);
+    return Boolean(current && current.state === "mutating" && current.leaseToken === lease.leaseToken && current.leaseGeneration === lease.leaseGeneration);
+  }
+
+  async finishWatchClaim(lease, state, reason, now) {
+    const current = this.watches.get(lease.leadId);
+    if (!current || !["leased", "mutating"].includes(current.state) || current.leaseToken !== lease.leaseToken || current.leaseGeneration !== lease.leaseGeneration) return null;
+    const finished = {
+      ...current,
+      state,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      stoppedAt: state === "watching" ? null : now,
+      lastFailureReason: reason,
+    };
+    this.watches.set(lease.leadId, finished);
+    return finished;
+  }
+
+  async createMoveAudit(audit) {
+    if (!this.audits) this.audits = new Map();
+    if (this.audits.has(audit.id)) return false;
+    this.audits.set(audit.id, { ...audit, outcome: "reserved" });
+    return true;
+  }
+
+  async completeMoveAudit(auditId, outcome) {
+    const audit = this.audits?.get(auditId);
+    if (!audit) return null;
+    const completed = { ...audit, ...outcome };
+    this.audits.set(auditId, completed);
+    return completed;
   }
 
   async ensureTestSlots(limit) {
@@ -417,6 +472,65 @@ test("blocks a sixth confirmed testing move after five durable slots", async () 
   }
 
   assert.equal(await store.reserveTestSlot(6, "audit-6", now), null);
+});
+
+test("a newer webhook event atomically invalidates a mutating worker fence before PATCH", async () => {
+  const store = createFixture();
+  const initial = event();
+  await store.recordLeadEvent(initial);
+  const claimed = await store.claimDueWatch(100, new Date("2026-07-19T12:00:00.000Z"));
+  await store.beginMoveMutation(claimed);
+  assert.equal(await store.isMoveMutationCurrent(claimed), true);
+
+  await store.recordLeadEvent(event({
+    fingerprint: "event-2",
+    eventAt: new Date("2026-07-16T12:01:00.000Z"),
+    receivedAt: new Date("2026-07-19T12:00:01.000Z"),
+  }));
+
+  assert.equal(await store.isMoveMutationCurrent(claimed), false);
+});
+
+test("lists due watches deterministically and fences worker completion by its lease generation", async () => {
+  const persistence = new MemoryPersistence();
+  persistence.settings.set(ACTIVATION_BOUNDARY_SETTING_KEY, "2026-07-01T00:00:00.000Z");
+  const now = new Date("2026-07-19T12:00:00.000Z");
+  persistence.watches.set(100, {
+    leadId: 100,
+    leadCreatedAt: new Date("2026-07-16T10:00:00.000Z"),
+    lastActivityAt: new Date("2026-07-16T12:00:00.000Z"),
+    lastActivityReceivedAt: new Date("2026-07-16T12:00:01.000Z"),
+    dueAt: new Date("2026-07-19T11:59:00.000Z"),
+    pipelineId: 9055778,
+    statusId: 72917586,
+    cycle: 1,
+    state: "watching",
+    leaseToken: null,
+    leaseExpiresAt: null,
+    leaseGeneration: 0,
+    lastEventFingerprint: "one",
+  });
+  persistence.watches.set(101, {
+    ...persistence.watches.get(100),
+    leadId: 101,
+    dueAt: new Date("2026-07-19T11:58:00.000Z"),
+  });
+  persistence.watches.set(102, {
+    ...persistence.watches.get(100),
+    leadId: 102,
+    dueAt: new Date("2026-07-19T12:01:00.000Z"),
+  });
+  const store = createLeadInactivityStore(persistence, { clock: () => now, randomId: () => "lease-100" });
+
+  assert.deepEqual(await store.listDueWatchLeadIds(now, 2), [101, 100]);
+  const claimed = await store.claimDueWatch(100, now);
+  assert.equal(await store.isWatchClaimCurrent(claimed), true);
+  await store.finishWatchClaim(claimed, "moved", null, now);
+
+  assert.equal(persistence.watches.get(100).state, "moved");
+  assert.equal(await store.isWatchClaimCurrent(claimed), false);
+  assert.equal(persistence.watches.get(100).leaseToken, null);
+  await assert.rejects(store.finishWatchClaim(claimed, "moved", null, now), /unable to finish/);
 });
 
 test("blocks all further testing moves after an uncertain PATCH result", async () => {

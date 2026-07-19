@@ -188,6 +188,40 @@ test("reads bounded direct-lead history using the documented entity filters", as
   assert.match(requests[1].url, /page=2/);
 });
 
+test("aborts before PATCH when a durable worker mutation fence was invalidated", async () => {
+  const { client, requests } = createClient({ responses: [{ status: 200, data: lead(), headers: {} }] });
+
+  const result = await client.moveLeadToTarget(100, {
+    sourcePipelineIds: [9055778, 6909890],
+    targetPipelineId: 9055770,
+    targetStatusId: 72917546,
+  }, async () => false);
+
+  assert.equal(result.kind, "not_moved");
+  assert.equal(result.reason, "fence_cancelled");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, "GET");
+});
+
+test("rechecks the durable mutation fence after rate-limit waiting and before sending PATCH", async () => {
+  let fenceCurrent = true;
+  const { client, requests } = createClient({
+    responses: [{ status: 200, data: lead(), headers: {} }],
+    sleep: async () => { fenceCurrent = false; },
+  });
+
+  const result = await client.moveLeadToTarget(100, {
+    sourcePipelineIds: [9055778, 6909890],
+    targetPipelineId: 9055770,
+    targetStatusId: 72917546,
+  }, async () => fenceCurrent);
+
+  assert.equal(result.kind, "not_moved");
+  assert.equal(result.reason, "fence_cancelled");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, "GET");
+});
+
 test("moves a freshly read lead while preserving its responsible manager and confirms by read-back", async () => {
   const { client, requests } = createClient({
     responses: [

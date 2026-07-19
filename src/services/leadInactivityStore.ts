@@ -6,7 +6,7 @@ export const DEFAULT_WATCH_LEASE_MS = 5 * 60 * 1000;
 export const DEFAULT_TEST_SLOT_LEASE_MS = 10 * 60 * 1000;
 export const TESTING_LEADS_MOVEMENT_LIMIT = 5;
 
-export type LeadInactivityWatchState = "watching" | "leased" | "moved" | "outside_scope" | "skipped" | "uncertain";
+export type LeadInactivityWatchState = "watching" | "leased" | "mutating" | "moved" | "outside_scope" | "skipped" | "uncertain";
 export type LeadInactivityTestSlotState = "free" | "reserved" | "confirmed" | "uncertain";
 
 export interface LeadInactivityEventInput {
@@ -34,7 +34,26 @@ export interface LeadInactivityWatch {
   leaseExpiresAt: Date | null;
   leaseGeneration: number;
   lastEventFingerprint: string | null;
+  stoppedAt?: Date | null;
+  lastFailureReason?: string | null;
 }
+
+export interface LeadInactivityMoveAudit {
+  id: string;
+  leadId: number;
+  cycle: number;
+  sourcePipelineId: number;
+  sourceStatusId: number;
+  targetPipelineId: number;
+  targetStatusId: number;
+  eventCutoffAt: Date;
+}
+
+export type LeadInactivityMoveAuditOutcome =
+  | { kind: "confirmed"; slotNumber: number }
+  | { kind: "skipped"; slotNumber: null }
+  | { kind: "uncertain"; slotNumber: number }
+  | { kind: "failed"; slotNumber: number | null };
 
 export interface LeadInactivityTestSlot {
   slotNumber: number;
@@ -61,6 +80,18 @@ export interface LeadInactivityPersistence {
     leaseToken: string,
     leaseExpiresAt: Date
   ): Promise<LeadInactivityWatch | null>;
+  listDueWatchLeadIds(now: Date, limit: number): Promise<number[]>;
+  isWatchClaimCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
+  beginMoveMutation(claimed: LeadInactivityWatch): Promise<boolean>;
+  isMoveMutationCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
+  finishWatchClaim(
+    claimed: LeadInactivityWatch,
+    state: LeadInactivityWatchState,
+    reason: string | null,
+    now: Date,
+  ): Promise<LeadInactivityWatch | null>;
+  createMoveAudit(audit: LeadInactivityMoveAudit): Promise<boolean>;
+  completeMoveAudit(auditId: string, outcome: LeadInactivityMoveAuditOutcome, now: Date): Promise<boolean>;
   releaseExpiredWatchLeases(now: Date): Promise<void>;
   ensureTestSlots(limit: number): Promise<void>;
   reserveFreeTestSlot(
@@ -91,7 +122,19 @@ export type LeadInactivityRecordResult =
 export interface LeadInactivityStore {
   getOrCreateActivationBoundary(now?: Date): Promise<Date>;
   recordLeadEvent(input: LeadInactivityEventInput): Promise<LeadInactivityRecordResult>;
+  listDueWatchLeadIds(now: Date, limit: number): Promise<number[]>;
+  isWatchClaimCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
+  beginMoveMutation(claimed: LeadInactivityWatch): Promise<boolean>;
+  isMoveMutationCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
   claimDueWatch(leadId: number, now?: Date): Promise<LeadInactivityWatch | null>;
+  finishWatchClaim(
+    claimed: LeadInactivityWatch,
+    state: LeadInactivityWatchState,
+    reason: string | null,
+    now?: Date,
+  ): Promise<void>;
+  createMoveAudit(audit: LeadInactivityMoveAudit): Promise<void>;
+  completeMoveAudit(auditId: string, outcome: LeadInactivityMoveAuditOutcome, now?: Date): Promise<void>;
   releaseExpiredWatchLeases(now?: Date): Promise<void>;
   ensureTestSlots(limit: number): Promise<void>;
   reserveTestSlot(leadId: number, auditId: string, now?: Date): Promise<LeadInactivityTestSlot | null>;
@@ -220,13 +263,67 @@ export function createLeadInactivityStore(
       });
     },
 
+    async listDueWatchLeadIds(now, limit): Promise<number[]> {
+      if (Number.isNaN(now.getTime())) throw new Error("due-watch query time is invalid");
+      assertPositiveInteger(limit, "due-watch query limit");
+      return persistence.listDueWatchLeadIds(now, limit);
+    },
+
+    async isWatchClaimCurrent(claimed): Promise<boolean> {
+      if (!claimed.leaseToken || !Number.isInteger(claimed.leaseGeneration) || claimed.leaseGeneration <= 0) return false;
+      return persistence.isWatchClaimCurrent(claimed);
+    },
+
+    async beginMoveMutation(claimed): Promise<boolean> {
+      if (!claimed.leaseToken || !Number.isInteger(claimed.leaseGeneration) || claimed.leaseGeneration <= 0) return false;
+      return persistence.beginMoveMutation(claimed);
+    },
+
+    async isMoveMutationCurrent(claimed): Promise<boolean> {
+      if (!claimed.leaseToken || !Number.isInteger(claimed.leaseGeneration) || claimed.leaseGeneration <= 0) return false;
+      return persistence.isMoveMutationCurrent(claimed);
+    },
+
     async claimDueWatch(leadId, now = clock()): Promise<LeadInactivityWatch | null> {
       assertPositiveInteger(leadId, "leadId");
+      if (Number.isNaN(now.getTime())) throw new Error("due-watch claim time is invalid");
       const leaseExpiresAt = new Date(now.getTime() + watchLeaseMs);
       return persistence.claimDueWatch(leadId, now, randomId(), leaseExpiresAt);
     },
 
+    async finishWatchClaim(claimed, state, reason, now = clock()): Promise<void> {
+      assertPositiveInteger(claimed.leadId, "claimed leadId");
+      if (!claimed.leaseToken || !Number.isInteger(claimed.leaseGeneration) || claimed.leaseGeneration <= 0) {
+        throw new Error("claimed watch has no valid lease fence");
+      }
+      if (state === "leased") throw new Error("claimed watch cannot be finished in leased state");
+      if (Number.isNaN(now.getTime())) throw new Error("claimed-watch completion time is invalid");
+      const finished = await persistence.finishWatchClaim(claimed, state, reason, now);
+      if (!finished) throw new Error(`unable to finish claimed watch ${claimed.leadId}; its lease fence is stale`);
+    },
+
+    async createMoveAudit(audit): Promise<void> {
+      if (!audit.id) throw new Error("move audit id is required");
+      assertPositiveInteger(audit.leadId, "move audit leadId");
+      assertPositiveInteger(audit.cycle, "move audit cycle");
+      assertPositiveInteger(audit.sourcePipelineId, "move audit sourcePipelineId");
+      assertPositiveInteger(audit.sourceStatusId, "move audit sourceStatusId");
+      assertPositiveInteger(audit.targetPipelineId, "move audit targetPipelineId");
+      assertPositiveInteger(audit.targetStatusId, "move audit targetStatusId");
+      if (Number.isNaN(audit.eventCutoffAt.getTime())) throw new Error("move audit event cutoff is invalid");
+      const created = await persistence.createMoveAudit(audit);
+      if (!created) throw new Error(`move audit ${audit.id} already exists`);
+    },
+
+    async completeMoveAudit(auditId, outcome, now = clock()): Promise<void> {
+      if (!auditId) throw new Error("move audit id is required");
+      if (Number.isNaN(now.getTime())) throw new Error("move audit completion time is invalid");
+      const completed = await persistence.completeMoveAudit(auditId, outcome, now);
+      if (!completed) throw new Error(`unable to complete move audit ${auditId}`);
+    },
+
     async releaseExpiredWatchLeases(now = clock()): Promise<void> {
+      if (Number.isNaN(now.getTime())) throw new Error("lease-release time is invalid");
       return persistence.releaseExpiredWatchLeases(now);
     },
 

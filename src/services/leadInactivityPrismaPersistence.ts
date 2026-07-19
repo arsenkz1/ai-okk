@@ -1,6 +1,8 @@
 import type { PrismaClient } from "../generated/prisma/client";
 import type {
   LeadInactivityEventInput,
+  LeadInactivityMoveAudit,
+  LeadInactivityMoveAuditOutcome,
   LeadInactivityPersistence,
   LeadInactivityTestSlot,
   LeadInactivityTestSlotState,
@@ -13,6 +15,7 @@ type PrismaInactivityDb = Pick<
   | "leadInactivitySetting"
   | "leadInactivityEvent"
   | "leadInactivityWatch"
+  | "leadInactivityMoveAudit"
   | "leadInactivityTestSlot"
 >;
 
@@ -26,7 +29,7 @@ function isTransactionConflictError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2034";
 }
 
-const WATCH_STATES = new Set<LeadInactivityWatchState>(["watching", "leased", "moved", "outside_scope", "skipped", "uncertain"]);
+const WATCH_STATES = new Set<LeadInactivityWatchState>(["watching", "leased", "mutating", "moved", "outside_scope", "skipped", "uncertain"]);
 const TEST_SLOT_STATES = new Set<LeadInactivityTestSlotState>(["free", "reserved", "confirmed", "uncertain"]);
 
 function toWatch(record: Omit<LeadInactivityWatch, "state"> & { state: string }): LeadInactivityWatch {
@@ -180,9 +183,119 @@ function createAdapter(database: PrismaInactivityDb, transactionRunner?: Transac
       return watch ? toWatch(watch) : null;
     },
 
+    async listDueWatchLeadIds(now: Date, limit: number): Promise<number[]> {
+      const watches = await database.leadInactivityWatch.findMany({
+        where: { state: "watching", dueAt: { lte: now } },
+        orderBy: [{ dueAt: "asc" }, { leadId: "asc" }],
+        take: limit,
+        select: { leadId: true },
+      });
+      return watches.map((watch) => watch.leadId);
+    },
+
+    async isWatchClaimCurrent(claimed: LeadInactivityWatch): Promise<boolean> {
+      const current = await database.leadInactivityWatch.findFirst({
+        where: {
+          leadId: claimed.leadId,
+          state: "leased",
+          leaseToken: claimed.leaseToken,
+          leaseGeneration: claimed.leaseGeneration,
+        },
+        select: { leadId: true },
+      });
+      return current !== null;
+    },
+
+    async beginMoveMutation(claimed: LeadInactivityWatch): Promise<boolean> {
+      const begun = await database.leadInactivityWatch.updateMany({
+        where: {
+          leadId: claimed.leadId,
+          state: "leased",
+          leaseToken: claimed.leaseToken,
+          leaseGeneration: claimed.leaseGeneration,
+        },
+        data: { state: "mutating" },
+      });
+      return begun.count === 1;
+    },
+
+    async isMoveMutationCurrent(claimed: LeadInactivityWatch): Promise<boolean> {
+      const current = await database.leadInactivityWatch.findFirst({
+        where: {
+          leadId: claimed.leadId,
+          state: "mutating",
+          leaseToken: claimed.leaseToken,
+          leaseGeneration: claimed.leaseGeneration,
+        },
+        select: { leadId: true },
+      });
+      return current !== null;
+    },
+
+    async finishWatchClaim(
+      claimed: LeadInactivityWatch,
+      state: LeadInactivityWatchState,
+      reason: string | null,
+      now: Date,
+    ): Promise<LeadInactivityWatch | null> {
+      const finished = await database.leadInactivityWatch.updateMany({
+        where: {
+          leadId: claimed.leadId,
+          state: { in: ["leased", "mutating"] },
+          leaseToken: claimed.leaseToken,
+          leaseGeneration: claimed.leaseGeneration,
+        },
+        data: {
+          state,
+          leaseToken: null,
+          leaseExpiresAt: null,
+          stoppedAt: state === "watching" ? null : now,
+          lastFailureReason: reason,
+        },
+      });
+      if (finished.count !== 1) return null;
+      const watch = await database.leadInactivityWatch.findUnique({ where: { leadId: claimed.leadId } });
+      return watch ? toWatch(watch) : null;
+    },
+
+    async createMoveAudit(audit: LeadInactivityMoveAudit): Promise<boolean> {
+      try {
+        await database.leadInactivityMoveAudit.create({
+          data: {
+            id: audit.id,
+            leadId: audit.leadId,
+            cycle: audit.cycle,
+            outcome: "reserved",
+            sourcePipelineId: audit.sourcePipelineId,
+            sourceStatusId: audit.sourceStatusId,
+            targetPipelineId: audit.targetPipelineId,
+            targetStatusId: audit.targetStatusId,
+            eventCutoffAt: audit.eventCutoffAt,
+          },
+          select: { id: true },
+        });
+        return true;
+      } catch (error) {
+        if (isUniqueConstraintError(error)) return false;
+        throw error;
+      }
+    },
+
+    async completeMoveAudit(auditId: string, outcome: LeadInactivityMoveAuditOutcome, now: Date): Promise<boolean> {
+      const completed = await database.leadInactivityMoveAudit.updateMany({
+        where: { id: auditId, outcome: "reserved" },
+        data: {
+          outcome: outcome.kind,
+          slotNumber: outcome.slotNumber,
+          completedAt: now,
+        },
+      });
+      return completed.count === 1;
+    },
+
     async releaseExpiredWatchLeases(now: Date): Promise<void> {
       await database.leadInactivityWatch.updateMany({
-        where: { state: "leased", leaseExpiresAt: { lte: now } },
+        where: { state: { in: ["leased", "mutating"] }, leaseExpiresAt: { lte: now } },
         data: { state: "watching", leaseToken: null, leaseExpiresAt: null },
       });
     },

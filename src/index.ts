@@ -12,6 +12,7 @@ import { runDisciplineCheck } from "./services/disciplineCheck";
 import { notifyAdmins } from "./bot/notify";
 import { runStartupChecks } from "./startup";
 import { createConfiguredLeadInactivityWebhookRouter } from "./services/leadInactivityWebhookRuntime";
+import { startConfiguredLeadInactivityWorker } from "./services/leadInactivityWorkerRuntime";
 void bot; // используется через polling
 
 const app = express();
@@ -38,6 +39,10 @@ const leadInactivityWebhookRouter = createConfiguredLeadInactivityWebhookRouter(
 if (leadInactivityWebhookRouter) {
   app.use(leadInactivityWebhookRouter);
   console.log("[LeadInactivityWebhook] isolated endpoint enabled");
+}
+const leadInactivityWorker = startConfiguredLeadInactivityWorker();
+if (leadInactivityWorker) {
+  console.log("[LeadInactivityWorker] protected one-minute testing worker enabled");
 }
 
 /**
