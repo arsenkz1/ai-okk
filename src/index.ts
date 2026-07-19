@@ -11,6 +11,7 @@ import { bot } from "./bot/index"; // запускает бот в режиме 
 import { runDisciplineCheck } from "./services/disciplineCheck";
 import { notifyAdmins } from "./bot/notify";
 import { runStartupChecks } from "./startup";
+import { createConfiguredLeadInactivityWebhookRouter } from "./services/leadInactivityWebhookRuntime";
 void bot; // используется через polling
 
 const app = express();
@@ -33,6 +34,11 @@ app.get("/health", (_req, res) => {
 
 app.use(onlinepbxRouter);
 app.use(amocrmRouter);
+const leadInactivityWebhookRouter = createConfiguredLeadInactivityWebhookRouter();
+if (leadInactivityWebhookRouter) {
+  app.use(leadInactivityWebhookRouter);
+  console.log("[LeadInactivityWebhook] isolated endpoint enabled");
+}
 
 /**
  * POST /admin/sync-amocrm
