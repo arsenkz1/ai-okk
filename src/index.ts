@@ -12,6 +12,7 @@ import { runDisciplineCheck } from "./services/disciplineCheck";
 import { notifyAdmins } from "./bot/notify";
 import { runStartupChecks } from "./startup";
 import { createConfiguredLeadInactivityWebhookRouter } from "./services/leadInactivityWebhookRuntime";
+import { initializeConfiguredLeadInactivityActivation } from "./services/leadInactivityActivationRuntime";
 import { startConfiguredLeadInactivityWorker } from "./services/leadInactivityWorkerRuntime";
 void bot; // используется через polling
 
@@ -149,13 +150,25 @@ cron.schedule(
 // Start
 // ---------------------------------------------------------------------------
 
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-  console.log(`Cron timezone: ${tz}`);
+async function startServer(): Promise<void> {
+  const activationBoundary = await initializeConfiguredLeadInactivityActivation();
+  if (activationBoundary) {
+    console.log(`[LeadInactivityActivation] durable boundary initialized: ${activationBoundary.toISOString()}`);
+  }
 
-  void runStartupChecks({
-    applyPilotDisciplineManagerConfig,
-    checkAndRestoreAmoCrmWebhook,
-    notifyAdmins,
+  app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+    console.log(`Cron timezone: ${tz}`);
+
+    void runStartupChecks({
+      applyPilotDisciplineManagerConfig,
+      checkAndRestoreAmoCrmWebhook,
+      notifyAdmins,
+    });
   });
+}
+
+void startServer().catch((error: unknown) => {
+  console.error("[LeadInactivityActivation] startup initialization failed:", error instanceof Error ? error.message : "unknown error");
+  process.exit(1);
 });
