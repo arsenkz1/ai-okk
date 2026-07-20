@@ -1,4 +1,5 @@
 import { prisma } from "../config/database";
+import { notifyAdmins } from "../bot/notify";
 import { createLeadInactivityAmoClient } from "./leadInactivityAmoClient";
 import { createPrismaLeadInactivityPersistence } from "./leadInactivityPrismaPersistence";
 import { resolveInactivityDelayMs } from "./leadInactivityDelay";
@@ -46,7 +47,7 @@ function createProductionWorker(environment: LeadInactivityWorkerEnvironment): L
     { inactivityMs: resolveInactivityDelayMs(environment.AMOCRM_INACTIVITY_DELAY_HOURS) },
   );
   const amo = createLeadInactivityAmoClient({ baseUrl, accessToken });
-  return createLeadInactivityWorker({ store, amo });
+  return createLeadInactivityWorker({ store, amo, notifyAdmins });
 }
 
 /**

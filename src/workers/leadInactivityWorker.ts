@@ -76,6 +76,7 @@ export interface LeadInactivityWorker {
 export interface CreateLeadInactivityWorkerOptions {
   store: LeadInactivityWorkerStore;
   amo: LeadInactivityWorkerAmoClient;
+  notifyAdmins?: (text: string) => Promise<void>;
   clock?: () => Date;
   randomId?: () => string;
   maxWatchesPerRun?: number;
@@ -185,6 +186,17 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         watchWasFinalized = true;
         await options.store.completeMoveAudit(auditId, { kind: "confirmed", slotNumber: slot.slotNumber });
         result.moved += 1;
+        if (options.notifyAdmins) {
+          try {
+            await options.notifyAdmins([
+              "✅ Тестовое перемещение по неактивности",
+              `Сделка: #${claimed.leadId}`,
+              `Тестовый слот: ${slot.slotNumber}/${LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN}`,
+            ].join("\n"));
+          } catch {
+            console.error(`[LeadInactivityWorker] admin notification failed for lead ${claimed.leadId}`);
+          }
+        }
         return;
       }
       if (outcome.kind === "uncertain") {

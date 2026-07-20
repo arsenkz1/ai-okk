@@ -223,3 +223,49 @@ test("caps each one-minute pass before claiming more than five due watches", asy
   assert.equal(result.scanned, 5);
   assert.equal(calls.claim.length, 5);
 });
+
+test("emits an admin notification after a confirmed testing move", async () => {
+  const { store, amo } = fixture();
+  const notifications = [];
+  const worker = createLeadInactivityWorker({
+    store,
+    amo,
+    clock: () => NOW,
+    randomId: () => "audit-100",
+    notifyAdmins: async (text) => { notifications.push(text); },
+  });
+
+  const result = await worker.runOnce();
+
+  assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 1, deferred: 0, uncertain: 0, failed: 0 });
+  assert.deepEqual(notifications, [
+    "✅ Тестовое перемещение по неактивности\nСделка: #100\nТестовый слот: 1/5",
+  ]);
+});
+
+test("does not turn a confirmed move into a failure when admin notification fails", async () => {
+  const { store, amo } = fixture();
+  let notificationAttempts = 0;
+  const worker = createLeadInactivityWorker({
+    store,
+    amo,
+    clock: () => NOW,
+    randomId: () => "audit-100",
+    notifyAdmins: async () => {
+      notificationAttempts += 1;
+      throw new Error("telegram unavailable");
+    },
+  });
+
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  let result;
+  try {
+    result = await worker.runOnce();
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 1, deferred: 0, uncertain: 0, failed: 0 });
+  assert.equal(notificationAttempts, 1);
+});
