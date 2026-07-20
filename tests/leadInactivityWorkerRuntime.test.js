@@ -1,7 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { startConfiguredLeadInactivityWorker } = require("../dist/services/leadInactivityWorkerRuntime");
+const {
+  startConfiguredLeadInactivityWorker,
+  resolveInactivityDelayMs,
+} = require("../dist/services/leadInactivityWorkerRuntime");
 
 const enabledEnvironment = {
   AMOCRM_INACTIVITY_WORKER_ENABLED: "true",
@@ -10,6 +13,12 @@ const enabledEnvironment = {
   AMOCRM_BASE_URL: "https://example.amocrm.ru",
   AMOCRM_ACCESS_TOKEN: "test-token",
 };
+
+test("uses a whole-hour configured inactivity delay and retains the 72-hour default", () => {
+  assert.equal(resolveInactivityDelayMs("24"), 24 * 60 * 60 * 1000);
+  assert.equal(resolveInactivityDelayMs(undefined), 72 * 60 * 60 * 1000);
+  assert.throws(() => resolveInactivityDelayMs("0"), /positive whole number of hours/);
+});
 
 test("keeps the movement worker absent unless its explicit enable flag is true", () => {
   const started = startConfiguredLeadInactivityWorker({ environment: { ...enabledEnvironment, AMOCRM_INACTIVITY_WORKER_ENABLED: undefined } });

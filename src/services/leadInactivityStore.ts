@@ -110,6 +110,7 @@ export interface LeadInactivityPersistence {
 export interface LeadInactivityStoreOptions {
   clock?: () => Date;
   randomId?: () => string;
+  inactivityMs?: number;
   watchLeaseMs?: number;
   testSlotLeaseMs?: number;
 }
@@ -163,6 +164,8 @@ export function createLeadInactivityStore(
 ): LeadInactivityStore {
   const clock = options.clock ?? (() => new Date());
   const randomId = options.randomId ?? randomUUID;
+  const inactivityMs = options.inactivityMs ?? INACTIVITY_MS;
+  assertPositiveInteger(inactivityMs, "inactivityMs");
   const watchLeaseMs = options.watchLeaseMs ?? DEFAULT_WATCH_LEASE_MS;
   const testSlotLeaseMs = options.testSlotLeaseMs ?? DEFAULT_TEST_SLOT_LEASE_MS;
 
@@ -208,7 +211,7 @@ export function createLeadInactivityStore(
           leadCreatedAt: input.leadCreatedAt,
           lastActivityAt: input.eventAt,
           lastActivityReceivedAt: input.receivedAt,
-          dueAt: new Date(input.eventAt.getTime() + INACTIVITY_MS),
+          dueAt: new Date(input.eventAt.getTime() + inactivityMs),
           pipelineId: input.pipelineId,
           statusId: input.statusId,
           cycle: existing?.state === "moved" ? existing.cycle + 1 : (existing?.cycle ?? 1),

@@ -1,6 +1,7 @@
 import { prisma } from "../config/database";
 import { createLeadInactivityAmoClient } from "./leadInactivityAmoClient";
 import { createPrismaLeadInactivityPersistence } from "./leadInactivityPrismaPersistence";
+import { resolveInactivityDelayMs } from "./leadInactivityDelay";
 import { createLeadInactivityStore } from "./leadInactivityStore";
 import {
   createLeadInactivityWorker,
@@ -32,13 +33,18 @@ export interface StartConfiguredLeadInactivityWorkerOptions {
   dependencies?: LeadInactivityWorkerRuntimeDependencies;
 }
 
+export { resolveInactivityDelayMs };
+
 function createProductionWorker(environment: LeadInactivityWorkerEnvironment): LeadInactivityWorker {
   const baseUrl = environment.AMOCRM_BASE_URL?.trim();
   const accessToken = environment.AMOCRM_ACCESS_TOKEN?.trim();
   if (!baseUrl || !accessToken) {
     throw new Error("AMOCRM_INACTIVITY_WORKER_ENABLED requires AMOCRM_BASE_URL and AMOCRM_ACCESS_TOKEN");
   }
-  const store = createLeadInactivityStore(createPrismaLeadInactivityPersistence(prisma));
+  const store = createLeadInactivityStore(
+    createPrismaLeadInactivityPersistence(prisma),
+    { inactivityMs: resolveInactivityDelayMs(environment.AMOCRM_INACTIVITY_DELAY_HOURS) },
+  );
   const amo = createLeadInactivityAmoClient({ baseUrl, accessToken });
   return createLeadInactivityWorker({ store, amo });
 }

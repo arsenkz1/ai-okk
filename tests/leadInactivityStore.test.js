@@ -257,6 +257,17 @@ test("creates one durable activation boundary rounded up to the next second and 
   assert.equal(recorded.watch.dueAt.getTime(), recorded.watch.lastActivityAt.getTime() + INACTIVITY_MS);
 });
 
+test("uses an explicitly configured inactivity delay when creating a watch", async () => {
+  const persistence = new MemoryPersistence();
+  persistence.settings.set(ACTIVATION_BOUNDARY_SETTING_KEY, "2026-07-01T00:00:00.000Z");
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  const store = createLeadInactivityStore(persistence, { inactivityMs: oneDayMs });
+
+  const recorded = await store.recordLeadEvent(event({ fingerprint: "one-day-delay" }));
+
+  assert.equal(recorded.watch.dueAt.getTime(), recorded.watch.lastActivityAt.getTime() + oneDayMs);
+});
+
 test("rejects a malformed persisted activation boundary instead of silently accepting it", async () => {
   const persistence = new MemoryPersistence();
   persistence.settings.set(ACTIVATION_BOUNDARY_SETTING_KEY, "not-a-date");
