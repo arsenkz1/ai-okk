@@ -10,6 +10,7 @@
     "start": "prisma migrate resolve --rolled-back 20260310000000_add_manager_isactive_botadmin || true && prisma migrate deploy && node dist/index.js",
     "prisma:migrate": "prisma migrate dev",
     "lead-inactivity:activate": "node dist/scripts/initializeLeadInactivityActivation.js",
+    "lead-inactivity:subscribe": "node dist/scripts/subscribeLeadInactivityEvents.js",
     "prisma:generate": "prisma generate"
   },
   "keywords": [],
