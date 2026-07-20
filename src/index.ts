@@ -13,6 +13,7 @@ import { notifyAdmins } from "./bot/notify";
 import { runStartupChecks } from "./startup";
 import { createConfiguredLeadInactivityWebhookRouter } from "./services/leadInactivityWebhookRuntime";
 import { initializeConfiguredLeadInactivityActivation } from "./services/leadInactivityActivationRuntime";
+import { subscribeConfiguredLeadInactivityEvents } from "./services/leadInactivitySubscriptionRuntime";
 import { startConfiguredLeadInactivityWorker } from "./services/leadInactivityWorkerRuntime";
 void bot; // используется через polling
 
@@ -156,15 +157,25 @@ async function startServer(): Promise<void> {
     console.log(`[LeadInactivityActivation] durable boundary initialized: ${activationBoundary.toISOString()}`);
   }
 
-  app.listen(port, () => {
-    console.log(`Server listening on port ${port}`);
-    console.log(`Cron timezone: ${tz}`);
-
-    void runStartupChecks({
-      applyPilotDisciplineManagerConfig,
-      checkAndRestoreAmoCrmWebhook,
-      notifyAdmins,
+  await new Promise<void>((resolve, reject) => {
+    const server = app.listen(port, () => {
+      server.off("error", reject);
+      resolve();
     });
+    server.once("error", reject);
+  });
+
+  console.log(`Server listening on port ${port}`);
+  console.log(`Cron timezone: ${tz}`);
+
+  if (await subscribeConfiguredLeadInactivityEvents()) {
+    console.log("[LeadInactivitySubscription] dedicated amoCRM event subscription created");
+  }
+
+  void runStartupChecks({
+    applyPilotDisciplineManagerConfig,
+    checkAndRestoreAmoCrmWebhook,
+    notifyAdmins,
   });
 }
 
