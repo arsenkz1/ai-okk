@@ -142,6 +142,7 @@ test("applies PATCH Retry-After as a shared cooldown for the next amoCRM request
   const { client } = createClient({
     responses: [
       { status: 200, data: lead(), headers: {} },
+      { status: 200, data: lead(), headers: {} },
       rateLimited,
       { status: 200, data: lead(), headers: {} },
     ],
@@ -160,7 +161,61 @@ test("applies PATCH Retry-After as a shared cooldown for the next amoCRM request
   await client.readLead(101);
 
   assert.equal(outcome.kind, "not_moved");
-  assert.deepEqual(sleeps, [500, 2_000]);
+  assert.deepEqual(sleeps, [500, 500, 2_000]);
+});
+
+test("does not PATCH a source-pipeline lead outside the inactivity-stage whitelist", async () => {
+  const { client, requests } = createClient({ responses: [{ status: 200, data: lead({ status_id: 87347062 }), headers: {} }] });
+
+  const outcome = await client.moveLeadToTarget(100, {
+    sourcePipelineIds: [9055778, 6909890],
+    targetPipelineId: 9055770,
+    targetStatusId: 72917546,
+  });
+
+  assert.deepEqual(outcome, {
+    kind: "not_moved",
+    reason: "not_in_source",
+    lead: {
+      id: 100,
+      createdAt: new Date("2026-07-16T12:00:00.000Z"),
+      updatedAt: new Date("2026-07-16T14:00:00.000Z"),
+      pipelineId: 9055778,
+      statusId: 87347062,
+      responsibleUserId: 77,
+      name: "Fresh lead",
+    },
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, "GET");
+});
+
+test("does not PATCH when amoCRM moves a lead outside the whitelist during the PATCH cooldown", async () => {
+  let currentStatusId = 72917586;
+  const requests = [];
+  const client = createLeadInactivityAmoClient({
+    baseUrl: "https://example.amocrm.ru",
+    accessToken: "test-token",
+    now: () => new Date("2026-07-19T12:00:00.000Z"),
+    sleep: async () => { currentStatusId = 143; },
+    http: {
+      request: async (request) => {
+        requests.push(request);
+        return { status: 200, data: lead({ status_id: currentStatusId }), headers: {} };
+      },
+    },
+  });
+
+  const outcome = await client.moveLeadToTarget(100, {
+    sourcePipelineIds: [9055778, 6909890],
+    targetPipelineId: 9055770,
+    targetStatusId: 72917546,
+  });
+
+  assert.equal(outcome.kind, "not_moved");
+  assert.equal(outcome.reason, "not_in_source");
+  assert.equal(outcome.lead.statusId, 143);
+  assert.deepEqual(requests.map(({ method }) => method), ["GET", "GET"]);
 });
 
 test("reads bounded direct-lead history using the documented entity filters", async () => {
@@ -226,6 +281,7 @@ test("moves a freshly read lead while preserving its responsible manager and con
   const { client, requests } = createClient({
     responses: [
       { status: 200, data: lead(), headers: {} },
+      { status: 200, data: lead(), headers: {} },
       { status: 200, data: [lead({ pipeline_id: 9055770, status_id: 72917546 })], headers: {} },
       { status: 200, data: lead({ pipeline_id: 9055770, status_id: 72917546 }), headers: {} },
     ],
@@ -239,14 +295,14 @@ test("moves a freshly read lead while preserving its responsible manager and con
 
   assert.equal(outcome.kind, "confirmed");
   assert.equal(outcome.lead.responsibleUserId, 77);
-  assert.equal(requests[1].method, "PATCH");
-  assert.deepEqual(requests[1].data, {
+  assert.equal(requests[2].method, "PATCH");
+  assert.deepEqual(requests[2].data, {
     id: 100,
     pipeline_id: 9055770,
     status_id: 72917546,
     responsible_user_id: 77,
   });
-  assert.equal(requests[2].method, "GET");
+  assert.equal(requests[3].method, "GET");
 });
 
 test("treats an HTTP 408 PATCH response as uncertain and performs read-back", async () => {
@@ -255,6 +311,7 @@ test("treats an HTTP 408 PATCH response as uncertain and performs read-back", as
   });
   const { client, requests } = createClient({
     responses: [
+      { status: 200, data: lead(), headers: {} },
       { status: 200, data: lead(), headers: {} },
       timeoutResponse,
       { status: 200, data: lead(), headers: {} },
@@ -268,12 +325,13 @@ test("treats an HTTP 408 PATCH response as uncertain and performs read-back", as
   });
 
   assert.equal(outcome.kind, "uncertain");
-  assert.equal(requests.length, 3);
+  assert.equal(requests.length, 4);
 });
 
 test("treats a resolved HTTP 409 PATCH response as uncertain rather than confirming it", async () => {
   const { client, requests } = createClient({
     responses: [
+      { status: 200, data: lead(), headers: {} },
       { status: 200, data: lead(), headers: {} },
       { status: 409, data: { title: "Conflict" }, headers: {} },
       { status: 200, data: lead({ pipeline_id: 9055770, status_id: 72917546 }), headers: {} },
@@ -287,7 +345,7 @@ test("treats a resolved HTTP 409 PATCH response as uncertain rather than confirm
   });
 
   assert.equal(outcome.kind, "uncertain");
-  assert.equal(requests.length, 3);
+  assert.equal(requests.length, 4);
 });
 
 test("never exposes request credentials in an uncertain movement outcome", async () => {
@@ -297,6 +355,7 @@ test("never exposes request credentials in an uncertain movement outcome", async
   });
   const { client } = createClient({
     responses: [
+      { status: 200, data: lead(), headers: {} },
       { status: 200, data: lead(), headers: {} },
       timeout,
       { status: 200, data: lead(), headers: {} },
@@ -327,6 +386,7 @@ test("never retries an ambiguous PATCH and reports uncertain even if read-back s
   const { client, requests } = createClient({
     responses: [
       { status: 200, data: lead(), headers: {} },
+      { status: 200, data: lead(), headers: {} },
       timeout,
       { status: 200, data: lead({ pipeline_id: 9055770, status_id: 72917546 }), headers: {} },
     ],
@@ -340,5 +400,5 @@ test("never retries an ambiguous PATCH and reports uncertain even if read-back s
 
   assert.equal(outcome.kind, "uncertain");
   assert.equal(outcome.readback?.pipelineId, 9055770);
-  assert.equal(requests.length, 3);
+  assert.equal(requests.length, 4);
 });

@@ -1,4 +1,5 @@
 import axios from "axios";
+import { isAllowedInactivitySourceStage } from "./leadInactivityPolicy";
 
 export const AMO_INACTIVITY_MAX_REQUESTS_PER_SECOND = 2;
 export const AMO_INACTIVITY_MIN_REQUEST_INTERVAL_MS = 1_000 / AMO_INACTIVITY_MAX_REQUESTS_PER_SECOND;
@@ -139,6 +140,18 @@ class AmoInactivityHttpStatusError extends Error {
 class AmoInactivityPrePatchFenceCancelledError extends Error {
   constructor() {
     super("durable mutation fence was cancelled before amoCRM PATCH");
+  }
+}
+
+class AmoInactivityPrePatchScopeChangedError extends Error {
+  constructor(readonly lead: AmoInactivityLead) {
+    super("amoCRM lead is no longer in an allowed inactivity source stage");
+  }
+}
+
+class AmoInactivityPrePatchReadFailedError extends Error {
+  constructor() {
+    super("amoCRM lead could not be refreshed before PATCH");
   }
 }
 
@@ -344,26 +357,49 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
     },
 
     async moveLeadToTarget(leadId, target, beforePatch): Promise<AmoInactivityMoveOutcome> {
+      const isAllowedSourceStage = (lead: AmoInactivityLead): boolean => (
+        target.sourcePipelineIds.includes(lead.pipelineId)
+        && isAllowedInactivitySourceStage(lead.pipelineId, lead.statusId)
+      );
       const current = await readLead(leadId);
-      if (!target.sourcePipelineIds.includes(current.pipelineId)) {
+      if (!isAllowedSourceStage(current)) {
         return { kind: "not_moved", reason: "not_in_source", lead: current };
       }
       if (beforePatch && !await beforePatch()) {
         return { kind: "not_moved", reason: "fence_cancelled", lead: current };
       }
 
-      const patch = {
+      const patch: { id: number; pipeline_id: number; status_id: number; responsible_user_id?: number } = {
         id: current.id,
         pipeline_id: target.targetPipelineId,
         status_id: target.targetStatusId,
         ...(current.responsibleUserId === null ? {} : { responsible_user_id: current.responsibleUserId }),
       };
+      const refreshSourceStageBeforePatch = async (): Promise<boolean> => {
+        if (beforePatch && !await beforePatch()) return false;
+        let latest: AmoInactivityLead;
+        try {
+          latest = await readLead(current.id);
+        } catch {
+          throw new AmoInactivityPrePatchReadFailedError();
+        }
+        if (!isAllowedSourceStage(latest)) throw new AmoInactivityPrePatchScopeChangedError(latest);
+        if (latest.responsibleUserId === null) delete patch.responsible_user_id;
+        else patch.responsible_user_id = latest.responsibleUserId;
+        return true;
+      };
 
       try {
-        await makeRequest("PATCH", `/api/v4/leads/${current.id}`, patch, false, beforePatch);
+        await makeRequest("PATCH", `/api/v4/leads/${current.id}`, patch, false, refreshSourceStageBeforePatch);
       } catch (error) {
         if (error instanceof AmoInactivityPrePatchFenceCancelledError) {
           return { kind: "not_moved", reason: "fence_cancelled", lead: current };
+        }
+        if (error instanceof AmoInactivityPrePatchScopeChangedError) {
+          return { kind: "not_moved", reason: "not_in_source", lead: error.lead };
+        }
+        if (error instanceof AmoInactivityPrePatchReadFailedError) {
+          return { kind: "not_moved", reason: "patch_rejected", lead: current };
         }
         if (!isAmbiguousMutationError(error)) {
           return { kind: "not_moved", reason: "patch_rejected", lead: current };

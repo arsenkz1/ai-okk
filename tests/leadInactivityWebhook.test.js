@@ -97,6 +97,20 @@ test("does not create a watch when the fresh lead read is outside EXODE and UZUM
   assert.equal(recordCalls, 0);
 });
 
+test("does not create a watch for a non-whitelisted active source stage", async () => {
+  let recordCalls = 0;
+  const processor = createLeadInactivityWebhookProcessor({
+    amo: { readLead: async () => freshLead({ pipelineId: 9055778, statusId: 87347062 }) },
+    store: { recordLeadEvent: async () => { recordCalls += 1; } },
+    now: () => new Date("2026-07-19T12:00:10.000Z"),
+  });
+
+  const result = await processor.process({ leads: { update: [{ id: "100", status_id: "87347062", date: "1784462400" }] } });
+
+  assert.deepEqual(result, { accepted: 0, ignored: 1, duplicates: 0, requiresFreshRead: 0 });
+  assert.equal(recordCalls, 0);
+});
+
 test("rejects the protected endpoint without processing when its path secret is wrong", async () => {
   let processCalls = 0;
   const handler = createProtectedLeadInactivityWebhookHandler({

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canWatchLeadInPipeline, SOURCE_PIPELINE_IDS, TARGET_PIPELINE_ID, TARGET_STATUS_ID } from "../services/leadInactivityPolicy";
+import { isAllowedInactivitySourceStage, SOURCE_PIPELINE_IDS, TARGET_PIPELINE_ID, TARGET_STATUS_ID } from "../services/leadInactivityPolicy";
 import type { AmoInactivityHistoryEvent, AmoInactivityLead, AmoInactivityMoveOutcome } from "../services/leadInactivityAmoClient";
 import type { LeadInactivityTestSlot, LeadInactivityWatch, LeadInactivityWatchState } from "../services/leadInactivityStore";
 
@@ -99,7 +99,7 @@ function hasNewerDirectLeadHistory(history: AmoInactivityHistoryEvent[], watch: 
 function isFreshLeadCompatible(lead: AmoInactivityLead, watch: LeadInactivityWatch): boolean {
   return lead.id === watch.leadId
     && lead.createdAt.getTime() === watch.leadCreatedAt.getTime()
-    && canWatchLeadInPipeline(lead.pipelineId);
+    && isAllowedInactivitySourceStage(lead.pipelineId, lead.statusId);
 }
 
 export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOptions): LeadInactivityWorker {

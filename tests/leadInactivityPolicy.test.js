@@ -13,6 +13,7 @@ const {
   isSupportedDirectLeadWebhookAction,
   isDirectLeadActivity,
   canWatchLeadInPipeline,
+  isAllowedInactivitySourceStage,
 } = require("../dist/services/leadInactivityPolicy");
 
 test("defines the approved source and target pipeline policy", () => {
@@ -32,6 +33,20 @@ test("treats exactly 72 elapsed calendar hours as due but never earlier", () => 
   assert.equal(INACTIVITY_MS, 72 * 60 * 60 * 1000);
   assert.equal(isDue(exactlyDue, now), true);
   assert.equal(isDue(oneMillisecondEarly, now), false);
+});
+
+test("allows inactivity watches only from taken, qualified, and OZHOP stages in UZUM and EXODE", () => {
+  for (const [pipelineId, statusId] of [
+    [6909890, 58160718], [6909890, 58160726], [6909890, 58160902],
+    [9055778, 72917582], [9055778, 72917586], [9055778, 72919958],
+  ]) {
+    assert.equal(isAllowedInactivitySourceStage(pipelineId, statusId), true);
+  }
+
+  assert.equal(isAllowedInactivitySourceStage(6909890, 58160714), false);
+  assert.equal(isAllowedInactivitySourceStage(9055778, 87347062), false);
+  assert.equal(isAllowedInactivitySourceStage(6909890, 142), false);
+  assert.equal(isAllowedInactivitySourceStage(9055778, 143), false);
 });
 
 test("accepts only active editable source stages", () => {
@@ -64,8 +79,8 @@ test("recognizes only the complete approved direct-lead webhook action list", ()
 test("never accepts contact events as direct lead activity", () => {
   assert.equal(isDirectLeadActivity({ action: "update_lead", entityType: "contacts", leadId: 100, pipelineId: 9055778 }), false);
   assert.equal(isDirectLeadActivity({ action: "add_task", entityType: "contacts", leadId: 100, pipelineId: 9055778 }), false);
-  assert.equal(isDirectLeadActivity({ action: "add_task", entityType: "leads", leadId: 100, pipelineId: 9055778 }), true);
-  assert.equal(isDirectLeadActivity({ action: "note_lead", entityType: "leads", leadId: 100, pipelineId: 9055778 }), true);
+  assert.equal(isDirectLeadActivity({ action: "add_task", entityType: "leads", leadId: 100, pipelineId: 9055778, statusId: 72917586 }), true);
+  assert.equal(isDirectLeadActivity({ action: "note_lead", entityType: "leads", leadId: 100, pipelineId: 9055778, statusId: 72917586 }), true);
   assert.equal(isDirectLeadActivity({ action: "unknown", entityType: "leads", leadId: 100 }), false);
 });
 

@@ -189,6 +189,7 @@ export function createLeadInactivityWebhookProcessor(
           entityType: "lead",
           leadId: lead.id,
           pipelineId: lead.pipelineId,
+          statusId: lead.statusId,
         })) {
           result.ignored += 1;
           continue;

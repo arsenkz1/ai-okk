@@ -1,4 +1,12 @@
 export const SOURCE_PIPELINE_IDS = Object.freeze([9055778, 6909890] as const);
+export const ALLOWED_INACTIVITY_SOURCE_STAGES = Object.freeze([
+  { pipelineId: 6909890, statusId: 58160718 }, // UZUM: взято в работу
+  { pipelineId: 6909890, statusId: 58160726 }, // UZUM: квалифицирован
+  { pipelineId: 6909890, statusId: 58160902 }, // UZUM: ОЖОП
+  { pipelineId: 9055778, statusId: 72917582 }, // EXODE: взято в работу
+  { pipelineId: 9055778, statusId: 72917586 }, // EXODE: квалифицирован
+  { pipelineId: 9055778, statusId: 72919958 }, // EXODE: ОЖОП
+] as const);
 export const TARGET_PIPELINE_ID = 9055770;
 export const TARGET_STATUS_ID = 72917546;
 export const INACTIVITY_MS = 72 * 60 * 60 * 1000;
@@ -17,6 +25,9 @@ export const DIRECT_LEAD_WEBHOOK_ACTIONS = Object.freeze([
 ] as const);
 
 const sourcePipelineIdSet = new Set<number>(SOURCE_PIPELINE_IDS);
+const allowedInactivitySourceStageKeys = new Set(
+  ALLOWED_INACTIVITY_SOURCE_STAGES.map(({ pipelineId, statusId }) => `${pipelineId}:${statusId}`),
+);
 const directLeadWebhookActionSet = new Set<string>(DIRECT_LEAD_WEBHOOK_ACTIONS);
 
 export interface AmoPipelineStage {
@@ -29,6 +40,7 @@ export interface DirectLeadActivityCandidate {
   entityType?: string | null;
   leadId?: number | null;
   pipelineId?: number | null;
+  statusId?: number | null;
 }
 
 function isLeadEntityType(entityType: string | null | undefined): boolean {
@@ -41,6 +53,15 @@ export function isSourcePipeline(pipelineId: number | null | undefined): boolean
 
 export function canWatchLeadInPipeline(pipelineId: number | null | undefined): boolean {
   return isSourcePipeline(pipelineId) && pipelineId !== TARGET_PIPELINE_ID;
+}
+
+export function isAllowedInactivitySourceStage(
+  pipelineId: number | null | undefined,
+  statusId: number | null | undefined,
+): boolean {
+  return typeof pipelineId === "number"
+    && typeof statusId === "number"
+    && allowedInactivitySourceStageKeys.has(`${pipelineId}:${statusId}`);
 }
 
 export function isDue(lastActivityAt: Date, now: Date): boolean {
@@ -63,7 +84,7 @@ export function isDirectLeadActivity(
     candidate !== undefined &&
     isSupportedDirectLeadWebhookAction(candidate.action) &&
     isLeadEntityType(candidate.entityType) &&
-    canWatchLeadInPipeline(candidate.pipelineId) &&
+    isAllowedInactivitySourceStage(candidate.pipelineId, candidate.statusId) &&
     typeof candidate.leadId === "number" &&
     Number.isInteger(candidate.leadId) &&
     candidate.leadId > 0

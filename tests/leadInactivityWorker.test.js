@@ -202,6 +202,21 @@ test("returns a failed result and releases only the lease when durable audit cre
   assert.equal(calls.move.length, 0);
 });
 
+test("marks an existing watch outside scope when the fresh amoCRM lead leaves the stage whitelist", async () => {
+  const { store, amo, calls } = fixture({
+    amo: { readLead: async (leadId) => lead(leadId, { statusId: 87347062 }) },
+  });
+  const worker = createLeadInactivityWorker({ store, amo, clock: () => NOW, randomId: () => "audit-100" });
+
+  const result = await worker.runOnce();
+
+  assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 0, deferred: 1, uncertain: 0, failed: 0 });
+  assert.deepEqual(calls.finish, [{ leadId: 100, state: "outside_scope", reason: "fresh amoCRM lead is no longer eligible" }]);
+  assert.equal(calls.reserve.length, 0);
+  assert.equal(calls.move.length, 0);
+  assert.deepEqual(calls.completeAudit, [{ auditId: "audit-100", outcome: { kind: "skipped", slotNumber: null } }]);
+});
+
 test("caps each one-minute pass before claiming more than five due watches", async () => {
   const { store, amo, calls } = fixture({
     store: {
