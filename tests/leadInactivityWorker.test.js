@@ -40,6 +40,7 @@ function fixture(overrides = {}) {
   const calls = { releaseLeases: 0, ensureSlots: 0, list: 0, claim: [], audit: [], completeAudit: [], reserve: [], confirm: [], releaseSlot: [], uncertainSlot: [], finish: [], record: [], move: [] };
   const claimed = new Map([[100, watch(100)]]);
   const store = {
+    isProductionBaselineComplete: async () => true,
     releaseExpiredWatchLeases: async () => { calls.releaseLeases += 1; },
     ensureTestSlots: async () => { calls.ensureSlots += 1; },
     listDueWatchLeadIds: async (_now, limit) => { calls.list += 1; return [...claimed.keys()].slice(0, limit); },
@@ -162,7 +163,7 @@ test("marks slot, watch, and audit uncertain when amoCRM confirms a move but dur
   assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 0, deferred: 0, uncertain: 0, failed: 1 });
   assert.deepEqual(calls.releaseSlot, []);
   assert.deepEqual(calls.uncertainSlot, [{ slotNumber: 1, auditId: "audit-100" }]);
-  assert.deepEqual(calls.finish, [{ leadId: 100, state: "uncertain", reason: "worker could not safely release its reserved testing slot" }]);
+  assert.deepEqual(calls.finish, [{ leadId: 100, state: "uncertain", reason: "worker could not safely finalize a confirmed amoCRM movement" }]);
   assert.deepEqual(calls.completeAudit, [{ auditId: "audit-100", outcome: { kind: "uncertain", slotNumber: 1 } }]);
 });
 
@@ -255,6 +256,102 @@ test("emits an admin notification after a confirmed testing move", async () => {
   assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 1, deferred: 0, uncertain: 0, failed: 0 });
   assert.deepEqual(notifications, [
     "✅ Тестовое перемещение по неактивности\nСделка: #100\nТестовый слот: 1/5",
+  ]);
+});
+
+test("refuses unrestricted production movement until the durable baseline is complete", async () => {
+  const { store, amo, calls } = fixture({
+    store: { isProductionBaselineComplete: async () => false },
+  });
+  const worker = createLeadInactivityWorker({ store, amo, testingMode: false, clock: () => NOW, randomId: () => "audit-100" });
+
+  await assert.rejects(worker.runOnce(), /production baseline is not complete/);
+
+  assert.equal(calls.releaseLeases, 0);
+  assert.equal(calls.list, 0);
+  assert.deepEqual(calls.claim, []);
+});
+
+test("moves an unrestricted production watch without creating or consuming a test slot", async () => {
+  const { store, amo, calls } = fixture();
+  const notifications = [];
+  const worker = createLeadInactivityWorker({
+    store,
+    amo,
+    testingMode: false,
+    clock: () => NOW,
+    randomId: () => "audit-100",
+    notifyAdmins: async (text) => { notifications.push(text); },
+  });
+
+  const result = await worker.runOnce();
+
+  assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 1, deferred: 0, uncertain: 0, failed: 0 });
+  assert.equal(calls.ensureSlots, 0);
+  assert.deepEqual(calls.reserve, []);
+  assert.deepEqual(calls.confirm, []);
+  assert.deepEqual(calls.releaseSlot, []);
+  assert.deepEqual(calls.completeAudit, [{ auditId: "audit-100", outcome: { kind: "confirmed", slotNumber: null } }]);
+  assert.deepEqual(notifications, ["✅ Перемещение по неактивности\nСделка: #100"]);
+});
+
+test("marks an unrestricted production move uncertain without touching test-slot capacity", async () => {
+  const { store, amo, calls } = fixture({
+    amo: {
+      moveLeadToTarget: async () => ({ kind: "uncertain", error: { kind: "network", status: null, code: null, message: "unknown" }, readback: null }),
+    },
+  });
+  const worker = createLeadInactivityWorker({ store, amo, testingMode: false, clock: () => NOW, randomId: () => "audit-100" });
+
+  const result = await worker.runOnce();
+
+  assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 0, deferred: 0, uncertain: 1, failed: 0 });
+  assert.equal(calls.ensureSlots, 0);
+  assert.deepEqual(calls.reserve, []);
+  assert.deepEqual(calls.uncertainSlot, []);
+  assert.deepEqual(calls.completeAudit, [{ auditId: "audit-100", outcome: { kind: "uncertain", slotNumber: null } }]);
+});
+
+test("never requeues an unrestricted production watch after a confirmed amoCRM move cannot be durably finalized", async () => {
+  const { store, amo, calls } = fixture({
+    store: {
+      finishWatchClaim: async (claimedWatch, state, reason) => {
+        calls.finish.push({ leadId: claimedWatch.leadId, state, reason });
+        if (state === "moved") throw new Error("simulated finalization failure");
+      },
+    },
+  });
+  const worker = createLeadInactivityWorker({ store, amo, testingMode: false, clock: () => NOW, randomId: () => "audit-100" });
+
+  const result = await worker.runOnce();
+
+  assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 0, deferred: 0, uncertain: 1, failed: 0 });
+  assert.equal(calls.ensureSlots, 0);
+  assert.deepEqual(calls.reserve, []);
+  assert.deepEqual(calls.finish.map(({ state }) => state), ["moved", "uncertain"]);
+  assert.deepEqual(calls.completeAudit.at(-1).outcome, { kind: "uncertain", slotNumber: null });
+});
+
+test("retains a confirmed production audit outcome when its first durable audit write fails", async () => {
+  const { store, amo, calls } = fixture({
+    store: {
+      completeMoveAudit: async (auditId, outcome) => {
+        calls.completeAudit.push({ auditId, outcome });
+        if (outcome.kind === "confirmed" && calls.completeAudit.filter((entry) => entry.outcome.kind === "confirmed").length === 1) {
+          throw new Error("simulated audit failure");
+        }
+      },
+    },
+  });
+  const worker = createLeadInactivityWorker({ store, amo, testingMode: false, clock: () => NOW, randomId: () => "audit-100" });
+
+  const result = await worker.runOnce();
+
+  assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 1, deferred: 0, uncertain: 0, failed: 0 });
+  assert.deepEqual(calls.finish.map(({ state }) => state), ["moved"]);
+  assert.deepEqual(calls.completeAudit.map(({ outcome }) => outcome), [
+    { kind: "confirmed", slotNumber: null },
+    { kind: "confirmed", slotNumber: null },
   ]);
 });
 

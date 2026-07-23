@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   startConfiguredLeadInactivityWorker,
   resolveInactivityDelayMs,
+  resolveTestingLeadMovementMode,
 } = require("../dist/services/leadInactivityWorkerRuntime");
 
 const enabledEnvironment = {
@@ -25,14 +26,51 @@ test("keeps the movement worker absent unless its explicit enable flag is true",
   assert.equal(started, null);
 });
 
-test("fails closed unless the strict testing movement flag and webhook prerequisites are present", () => {
+test("requires an explicit true or false movement mode while retaining webhook prerequisites", () => {
+  assert.equal(resolveTestingLeadMovementMode("true"), true);
+  assert.equal(resolveTestingLeadMovementMode("false"), false);
   assert.throws(
-    () => startConfiguredLeadInactivityWorker({ environment: { ...enabledEnvironment, TESTING_LEADS_MOVEMENT: "false" } }),
-    /requires TESTING_LEADS_MOVEMENT=true/,
+    () => resolveTestingLeadMovementMode(undefined),
+    /TESTING_LEADS_MOVEMENT must be explicitly true or false/,
+  );
+  assert.throws(
+    () => resolveTestingLeadMovementMode("enabled"),
+    /TESTING_LEADS_MOVEMENT must be explicitly true or false/,
   );
   assert.throws(
     () => startConfiguredLeadInactivityWorker({ environment: { ...enabledEnvironment, AMOCRM_INACTIVITY_WEBHOOK_SECRET: undefined } }),
     /requires AMOCRM_INACTIVITY_WEBHOOK_SECRET/,
+  );
+});
+
+test("passes the explicit unrestricted mode to the worker factory and rejects an unrestricted delay below 72 hours", () => {
+  const modes = [];
+  const started = startConfiguredLeadInactivityWorker({
+    environment: { ...enabledEnvironment, TESTING_LEADS_MOVEMENT: "false" },
+    dependencies: {
+      createWorker: (testingMode) => {
+        modes.push(testingMode);
+        return { runOnce: async () => ({ scanned: 0, claimed: 0, moved: 0, deferred: 0, uncertain: 0, failed: 0 }) };
+      },
+      schedule: () => ({ id: 1 }),
+      clearSchedule: () => {},
+      log: () => {},
+    },
+  });
+
+  assert.deepEqual(modes, [false]);
+  assert.equal(started.testingMode, false);
+  started.stop();
+  assert.throws(
+    () => startConfiguredLeadInactivityWorker({
+      environment: { ...enabledEnvironment, TESTING_LEADS_MOVEMENT: "false", AMOCRM_INACTIVITY_DELAY_HOURS: "24" },
+      dependencies: {
+        createWorker: () => ({ runOnce: async () => ({ scanned: 0, claimed: 0, moved: 0, deferred: 0, uncertain: 0, failed: 0 }) }),
+        schedule: () => ({ id: 1 }),
+        clearSchedule: () => {},
+      },
+    }),
+    /requires AMOCRM_INACTIVITY_DELAY_HOURS=72/,
   );
 });
 

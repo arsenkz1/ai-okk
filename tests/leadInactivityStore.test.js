@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const {
   createLeadInactivityStore,
   ACTIVATION_BOUNDARY_SETTING_KEY,
+  PRODUCTION_BASELINE_SETTING_KEY,
+  PRODUCTION_BASELINE_COMPLETED_SETTING_KEY,
   INACTIVITY_MS,
 } = require("../dist/services/leadInactivityStore");
 
@@ -34,6 +36,10 @@ class MemoryPersistence {
     if (this.events.has(event.fingerprint)) return false;
     this.events.set(event.fingerprint, event);
     return true;
+  }
+
+  async hasProductionBaselineEvent(leadId) {
+    return [...this.events.values()].some((event) => event.leadId === leadId && event.eventType === "production_baseline");
   }
 
   async getWatch(leadId) {
@@ -554,4 +560,94 @@ test("blocks all further testing moves after an uncertain PATCH result", async (
   const uncertain = await store.markTestSlotUncertain(reserved.slotNumber, "audit-uncertain", now);
   assert.equal(uncertain.state, "uncertain");
   assert.equal(await store.reserveTestSlot(101, "audit-after-uncertain", now), null);
+});
+
+test("baselines an eligible historical lead from one durable timestamp without weakening normal activation filtering", async () => {
+  const persistence = new MemoryPersistence();
+  persistence.settings.set(ACTIVATION_BOUNDARY_SETTING_KEY, "2026-07-19T12:00:00.000Z");
+  const store = createLeadInactivityStore(persistence, { inactivityMs: INACTIVITY_MS });
+  const baselineAt = await store.getOrCreateProductionBaseline(new Date("2026-07-22T10:00:00.123Z"));
+
+  const recorded = await store.recordProductionBaseline({
+    leadId: 900,
+    leadCreatedAt: new Date("2026-07-01T12:00:00.000Z"),
+    pipelineId: 9055778,
+    statusId: 72917586,
+  }, baselineAt);
+  const normalEvent = await store.recordLeadEvent(event({
+    fingerprint: "still-blocked-historical-event",
+    leadId: 901,
+    leadCreatedAt: new Date("2026-07-01T12:00:00.000Z"),
+  }));
+  const historicalActivityAfterBaseline = await store.recordLeadEvent(event({
+    fingerprint: "historical-lead-activity-after-baseline",
+    leadId: 900,
+    leadCreatedAt: new Date("2026-07-01T12:00:00.000Z"),
+    eventAt: new Date("2026-07-22T11:00:00.000Z"),
+    receivedAt: new Date("2026-07-22T11:00:00.000Z"),
+  }));
+
+  assert.equal(baselineAt.toISOString(), "2026-07-22T10:00:01.000Z");
+  assert.equal(persistence.settings.get(PRODUCTION_BASELINE_SETTING_KEY), baselineAt.toISOString());
+  assert.equal(recorded.ignored, false);
+  assert.equal(recorded.watch.lastActivityAt.toISOString(), baselineAt.toISOString());
+  assert.equal(recorded.watch.dueAt.getTime(), baselineAt.getTime() + INACTIVITY_MS);
+  assert.equal(normalEvent.ignored, true);
+  assert.equal(historicalActivityAfterBaseline.ignored, false);
+  assert.equal(historicalActivityAfterBaseline.watch.lastActivityAt.toISOString(), "2026-07-22T11:00:00.000Z");
+  assert.equal(historicalActivityAfterBaseline.watch.dueAt.getTime(), new Date("2026-07-25T11:00:00.000Z").getTime());
+  assert.equal(persistence.events.get(recorded.watch.lastEventFingerprint).eventType, "production_baseline");
+});
+
+test("locks a production baseline to one durable run and completes it only after enrollment", async () => {
+  const persistence = new MemoryPersistence();
+  const store = createLeadInactivityStore(persistence);
+  const run = await store.beginProductionBaseline("baseline-run-a", new Date("2026-07-22T10:00:00.000Z"));
+
+  assert.equal(await store.isProductionBaselineComplete(), false);
+  await assert.rejects(
+    store.beginProductionBaseline("baseline-run-b", new Date("2026-07-22T10:00:01.000Z")),
+    /baseline run is already in progress/,
+  );
+  await store.completeProductionBaseline(run);
+
+  assert.equal(await store.isProductionBaselineComplete(), true);
+  assert.match(persistence.settings.get(PRODUCTION_BASELINE_COMPLETED_SETTING_KEY), /baseline-run-a/);
+  const replay = await store.beginProductionBaseline("baseline-run-b", new Date("2026-07-23T10:00:00.000Z"));
+  assert.deepEqual(replay, { ...run, alreadyCompleted: true });
+  persistence.settings.set(PRODUCTION_BASELINE_COMPLETED_SETTING_KEY, "invalid");
+  await assert.rejects(store.isProductionBaselineComplete(), /completion marker is invalid/);
+});
+
+test("reuses a production baseline timestamp and never moves a newer activity deadline backwards on retry", async () => {
+  const persistence = new MemoryPersistence();
+  persistence.settings.set(ACTIVATION_BOUNDARY_SETTING_KEY, "2026-07-01T00:00:00.000Z");
+  const store = createLeadInactivityStore(persistence, { inactivityMs: INACTIVITY_MS });
+  const firstBaselineAt = await store.getOrCreateProductionBaseline(new Date("2026-07-22T10:00:00.000Z"));
+  await store.recordProductionBaseline({
+    leadId: 902,
+    leadCreatedAt: new Date("2026-07-16T12:00:00.000Z"),
+    pipelineId: 9055778,
+    statusId: 72917586,
+  }, firstBaselineAt);
+  const newerActivityAt = new Date("2026-07-22T10:01:00.000Z");
+  await store.recordLeadEvent(event({
+    fingerprint: "newer-after-baseline",
+    leadId: 902,
+    leadCreatedAt: new Date("2026-07-16T12:00:00.000Z"),
+    eventAt: newerActivityAt,
+    receivedAt: newerActivityAt,
+  }));
+  const retriedBaselineAt = await store.getOrCreateProductionBaseline(new Date("2026-07-23T10:00:00.000Z"));
+  const retried = await store.recordProductionBaseline({
+    leadId: 902,
+    leadCreatedAt: new Date("2026-07-16T12:00:00.000Z"),
+    pipelineId: 9055778,
+    statusId: 72917586,
+  }, retriedBaselineAt);
+
+  assert.equal(retriedBaselineAt.toISOString(), firstBaselineAt.toISOString());
+  assert.equal(retried.duplicate, true);
+  assert.equal(retried.watch.lastActivityAt.toISOString(), newerActivityAt.toISOString());
+  assert.equal(retried.watch.dueAt.getTime(), newerActivityAt.getTime() + INACTIVITY_MS);
 });

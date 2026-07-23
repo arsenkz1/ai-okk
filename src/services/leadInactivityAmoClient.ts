@@ -1,5 +1,5 @@
 import axios from "axios";
-import { isAllowedInactivitySourceStage } from "./leadInactivityPolicy";
+import { ALLOWED_INACTIVITY_SOURCE_STAGES, isAllowedInactivitySourceStage } from "./leadInactivityPolicy";
 
 export const AMO_INACTIVITY_MAX_REQUESTS_PER_SECOND = 2;
 export const AMO_INACTIVITY_MIN_REQUEST_INTERVAL_MS = 1_000 / AMO_INACTIVITY_MAX_REQUESTS_PER_SECOND;
@@ -7,6 +7,8 @@ export const AMO_INACTIVITY_REQUEST_TIMEOUT_MS = 10_000;
 export const AMO_INACTIVITY_MAX_SAFE_ATTEMPTS = 3;
 export const AMO_INACTIVITY_HISTORY_MAX_PAGES = 2;
 export const AMO_INACTIVITY_HISTORY_MAX_PAGE_SIZE = 100;
+export const AMO_INACTIVITY_LEAD_LIST_MAX_PAGES = 1_000;
+export const AMO_INACTIVITY_LEAD_LIST_MAX_PAGE_SIZE = 250;
 
 export interface AmoInactivityHttpRequest {
   method: "GET" | "PATCH";
@@ -217,6 +219,7 @@ function boundedInteger(value: number | undefined, fallback: number, maximum: nu
 
 export interface LeadInactivityAmoClient {
   readLead(leadId: number): Promise<AmoInactivityLead>;
+  listAllowedSourceStageLeads(options?: { maxPages?: number; pageSize?: number }): Promise<AmoInactivityLead[]>;
   readLeadHistory(leadId: number, options?: { maxPages?: number; pageSize?: number }): Promise<AmoInactivityHistoryEvent[]>;
   moveLeadToTarget(
     leadId: number,
@@ -320,6 +323,70 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
 
   return {
     readLead,
+
+    async listAllowedSourceStageLeads(listOptions = {}): Promise<AmoInactivityLead[]> {
+      const maxPages = boundedInteger(
+        listOptions.maxPages,
+        AMO_INACTIVITY_LEAD_LIST_MAX_PAGES,
+        AMO_INACTIVITY_LEAD_LIST_MAX_PAGES,
+        "lead-list maxPages",
+      );
+      const pageSize = boundedInteger(
+        listOptions.pageSize,
+        AMO_INACTIVITY_LEAD_LIST_MAX_PAGE_SIZE,
+        AMO_INACTIVITY_LEAD_LIST_MAX_PAGE_SIZE,
+        "lead-list pageSize",
+      );
+      const leadsById = new Map<number, AmoInactivityLead>();
+
+      for (const stage of ALLOWED_INACTIVITY_SOURCE_STAGES) {
+        let exhausted = false;
+        for (let page = 1; page <= maxPages; page += 1) {
+          const params = new URLSearchParams({
+            "filter[statuses][0][pipeline_id]": String(stage.pipelineId),
+            "filter[statuses][0][status_id]": String(stage.statusId),
+            limit: String(pageSize),
+            page: String(page),
+          });
+          const response = await makeRequest("GET", `/api/v4/leads?${params.toString()}`, undefined, true);
+          if (response.status === 204) {
+            exhausted = true;
+            break;
+          }
+          const rawLeads = (response.data as { _embedded?: { leads?: unknown } } | null)?._embedded?.leads;
+          if (!Array.isArray(rawLeads)) throw new Error("amoCRM lead list response is malformed");
+
+          for (const rawLead of rawLeads) {
+            const normalized = normalizeLead(rawLead);
+            if (
+              !isAllowedInactivitySourceStage(normalized.pipelineId, normalized.statusId)
+              || normalized.pipelineId !== stage.pipelineId
+              || normalized.statusId !== stage.statusId
+            ) {
+              throw new Error("amoCRM lead list contains a lead outside the allowed inactivity source stages");
+            }
+            const previous = leadsById.get(normalized.id);
+            if (
+              previous
+              && (previous.pipelineId !== normalized.pipelineId
+                || previous.statusId !== normalized.statusId
+                || previous.createdAt.getTime() !== normalized.createdAt.getTime())
+            ) {
+              throw new Error(`amoCRM lead list has conflicting records for lead ${normalized.id}`);
+            }
+            leadsById.set(normalized.id, normalized);
+          }
+
+          if (rawLeads.length < pageSize) {
+            exhausted = true;
+            break;
+          }
+        }
+        if (!exhausted) throw new Error("amoCRM lead list reached its maximum page limit");
+      }
+
+      return [...leadsById.values()];
+    },
 
     async readLeadHistory(leadId, historyOptions = {}): Promise<AmoInactivityHistoryEvent[]> {
       requiredPositiveInteger(leadId, "lead id");

@@ -11,6 +11,7 @@
     "prisma:migrate": "prisma migrate dev",
     "lead-inactivity:activate": "node dist/scripts/initializeLeadInactivityActivation.js",
     "lead-inactivity:subscribe": "node dist/scripts/subscribeLeadInactivityEvents.js",
+    "lead-inactivity:baseline-production": "node dist/scripts/baselineLeadInactivityEligibleLeads.js",
     "prisma:generate": "prisma generate"
   },
   "keywords": [],

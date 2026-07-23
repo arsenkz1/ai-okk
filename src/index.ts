@@ -44,7 +44,11 @@ if (leadInactivityWebhookRouter) {
 }
 const leadInactivityWorker = startConfiguredLeadInactivityWorker();
 if (leadInactivityWorker) {
-  console.log("[LeadInactivityWorker] protected one-minute testing worker enabled");
+  console.log(
+    leadInactivityWorker.testingMode
+      ? "[LeadInactivityWorker] protected one-minute testing worker enabled"
+      : "[LeadInactivityWorker] unrestricted one-minute production worker enabled",
+  );
 }
 
 /**

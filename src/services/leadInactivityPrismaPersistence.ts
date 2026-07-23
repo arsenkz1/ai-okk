@@ -90,6 +90,14 @@ function createAdapter(database: PrismaInactivityDb, transactionRunner?: Transac
       }
     },
 
+    async hasProductionBaselineEvent(leadId: number): Promise<boolean> {
+      const event = await database.leadInactivityEvent.findFirst({
+        where: { leadId, eventType: "production_baseline" },
+        select: { id: true },
+      });
+      return Boolean(event);
+    },
+
     async getWatch(leadId: number): Promise<LeadInactivityWatch | null> {
       const watch = await database.leadInactivityWatch.findUnique({ where: { leadId } });
       return watch ? toWatch(watch) : null;

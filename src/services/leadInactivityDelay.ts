@@ -15,3 +15,16 @@ export function resolveInactivityDelayMs(rawHours: string | undefined): number {
   }
   return hours * HOUR_MS;
 }
+
+export function resolveTestingLeadMovementMode(rawValue: string | undefined): boolean {
+  const normalized = rawValue?.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  throw new Error("TESTING_LEADS_MOVEMENT must be explicitly true or false when the inactivity worker is enabled");
+}
+
+export function assertUnrestrictedProductionDelay(testingMode: boolean, inactivityMs: number): void {
+  if (!testingMode && inactivityMs !== INACTIVITY_MS) {
+    throw new Error("unrestricted production mode requires AMOCRM_INACTIVITY_DELAY_HOURS=72");
+  }
+}

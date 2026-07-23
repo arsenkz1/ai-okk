@@ -18,12 +18,13 @@ export interface LeadInactivityWorkerAudit {
 }
 
 export type LeadInactivityWorkerAuditOutcome =
-  | { kind: "confirmed"; slotNumber: number }
+  | { kind: "confirmed"; slotNumber: number | null }
   | { kind: "skipped"; slotNumber: null }
-  | { kind: "uncertain"; slotNumber: number }
+  | { kind: "uncertain"; slotNumber: number | null }
   | { kind: "failed"; slotNumber: number | null };
 
 export interface LeadInactivityWorkerStore {
+  isProductionBaselineComplete(): Promise<boolean>;
   releaseExpiredWatchLeases(now?: Date): Promise<void>;
   ensureTestSlots(limit: number): Promise<void>;
   listDueWatchLeadIds(now: Date, limit: number): Promise<number[]>;
@@ -77,6 +78,7 @@ export interface CreateLeadInactivityWorkerOptions {
   store: LeadInactivityWorkerStore;
   amo: LeadInactivityWorkerAmoClient;
   notifyAdmins?: (text: string) => Promise<void>;
+  testingMode?: boolean;
   clock?: () => Date;
   randomId?: () => string;
   maxWatchesPerRun?: number;
@@ -105,12 +107,14 @@ function isFreshLeadCompatible(lead: AmoInactivityLead, watch: LeadInactivityWat
 export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOptions): LeadInactivityWorker {
   const clock = options.clock ?? (() => new Date());
   const randomId = options.randomId ?? randomUUID;
+  const testingMode = options.testingMode ?? true;
   const maxWatchesPerRun = assertBatchLimit(options.maxWatchesPerRun);
 
   const processClaim = async (claimed: LeadInactivityWatch, now: Date, result: LeadInactivityWorkerResult): Promise<void> => {
     const auditId = randomId();
     let slot: LeadInactivityTestSlot | null = null;
     let mutationConfirmed = false;
+    let confirmedMoveDurablyFinalized = false;
     let slotWasConfirmed = false;
     let watchWasFinalized = false;
     let auditCreated = false;
@@ -158,17 +162,19 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         return;
       }
 
-      slot = await options.store.reserveTestSlot(claimed.leadId, auditId, now);
-      if (!slot) {
-        await options.store.finishWatchClaim(claimed, "watching", "testing movement capacity is unavailable", now);
-        watchWasFinalized = true;
-        await options.store.completeMoveAudit(auditId, { kind: "skipped", slotNumber: null });
-        result.deferred += 1;
-        return;
+      if (testingMode) {
+        slot = await options.store.reserveTestSlot(claimed.leadId, auditId, now);
+        if (!slot) {
+          await options.store.finishWatchClaim(claimed, "watching", "testing movement capacity is unavailable", now);
+          watchWasFinalized = true;
+          await options.store.completeMoveAudit(auditId, { kind: "skipped", slotNumber: null });
+          result.deferred += 1;
+          return;
+        }
       }
 
       if (!await options.store.beginMoveMutation(claimed)) {
-        await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
+        if (slot) await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
         await options.store.completeMoveAudit(auditId, { kind: "skipped", slotNumber: null });
         result.deferred += 1;
         return;
@@ -180,19 +186,26 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
       }, () => options.store.isMoveMutationCurrent(claimed));
       if (outcome.kind === "confirmed") {
         mutationConfirmed = true;
-        await options.store.confirmTestSlot(slot.slotNumber, auditId, now);
-        slotWasConfirmed = true;
+        if (slot) {
+          await options.store.confirmTestSlot(slot.slotNumber, auditId, now);
+          slotWasConfirmed = true;
+        }
         await options.store.finishWatchClaim(claimed, "moved", null, now);
         watchWasFinalized = true;
-        await options.store.completeMoveAudit(auditId, { kind: "confirmed", slotNumber: slot.slotNumber });
+        confirmedMoveDurablyFinalized = true;
+        await options.store.completeMoveAudit(auditId, { kind: "confirmed", slotNumber: slot?.slotNumber ?? null });
         result.moved += 1;
         if (options.notifyAdmins) {
           try {
-            await options.notifyAdmins([
-              "✅ Тестовое перемещение по неактивности",
-              `Сделка: #${claimed.leadId}`,
-              `Тестовый слот: ${slot.slotNumber}/${LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN}`,
-            ].join("\n"));
+            await options.notifyAdmins(
+              testingMode
+                ? [
+                  "✅ Тестовое перемещение по неактивности",
+                  `Сделка: #${claimed.leadId}`,
+                  `Тестовый слот: ${slot?.slotNumber}/${LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN}`,
+                ].join("\n")
+                : ["✅ Перемещение по неактивности", `Сделка: #${claimed.leadId}`].join("\n"),
+            );
           } catch {
             console.error(`[LeadInactivityWorker] admin notification failed for lead ${claimed.leadId}`);
           }
@@ -200,22 +213,22 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         return;
       }
       if (outcome.kind === "uncertain") {
-        await options.store.markTestSlotUncertain(slot.slotNumber, auditId, now);
+        if (slot) await options.store.markTestSlotUncertain(slot.slotNumber, auditId, now);
         await options.store.finishWatchClaim(claimed, "uncertain", "amoCRM mutation outcome is uncertain", now);
         watchWasFinalized = true;
-        await options.store.completeMoveAudit(auditId, { kind: "uncertain", slotNumber: slot.slotNumber });
+        await options.store.completeMoveAudit(auditId, { kind: "uncertain", slotNumber: slot?.slotNumber ?? null });
         result.uncertain += 1;
         return;
       }
 
       if (outcome.kind === "not_moved" && outcome.reason === "fence_cancelled") {
-        await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
+        if (slot) await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
         await options.store.completeMoveAudit(auditId, { kind: "skipped", slotNumber: null });
         result.deferred += 1;
         return;
       }
 
-      await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
+      if (slot) await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
       const state: LeadInactivityWatchState = outcome.reason === "not_in_source" ? "outside_scope" : "skipped";
       await options.store.finishWatchClaim(claimed, state, `amoCRM move was not confirmed: ${outcome.reason}`, now);
       watchWasFinalized = true;
@@ -223,6 +236,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
       result.deferred += 1;
     } catch {
       let safeToRetry = true;
+      if (mutationConfirmed && !watchWasFinalized && !slotWasConfirmed) safeToRetry = false;
       if (slot && !slotWasConfirmed && !mutationConfirmed) {
         try {
           await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
@@ -247,7 +261,13 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
           await options.store.finishWatchClaim(
             claimed,
             slotWasConfirmed ? "moved" : (safeToRetry ? "watching" : "uncertain"),
-            slotWasConfirmed ? null : (safeToRetry ? "worker failed before a confirmed movement" : "worker could not safely release its reserved testing slot"),
+            slotWasConfirmed
+              ? null
+              : (safeToRetry
+                ? "worker failed before a confirmed movement"
+                : (mutationConfirmed
+                  ? "worker could not safely finalize a confirmed amoCRM movement"
+                  : "worker could not safely release its reserved testing slot")),
             now,
           );
           watchWasFinalized = true;
@@ -259,8 +279,10 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         try {
           if (slotWasConfirmed && slot) {
             await options.store.completeMoveAudit(auditId, { kind: "confirmed", slotNumber: slot.slotNumber }, now);
-          } else if (!safeToRetry && slot) {
-            await options.store.completeMoveAudit(auditId, { kind: "uncertain", slotNumber: slot.slotNumber }, now);
+          } else if (confirmedMoveDurablyFinalized && !slot) {
+            await options.store.completeMoveAudit(auditId, { kind: "confirmed", slotNumber: null }, now);
+          } else if (!safeToRetry) {
+            await options.store.completeMoveAudit(auditId, { kind: "uncertain", slotNumber: slot?.slotNumber ?? null }, now);
           } else {
             await options.store.completeMoveAudit(auditId, { kind: "failed", slotNumber: slot?.slotNumber ?? null }, now);
           }
@@ -268,16 +290,21 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
           // Audit is intentionally left reserved for manual recovery rather than overwritten blindly.
         }
       }
-      result.failed += 1;
+      if (confirmedMoveDurablyFinalized && !slot) result.moved += 1;
+      else if (!safeToRetry && mutationConfirmed && !slot) result.uncertain += 1;
+      else result.failed += 1;
     }
   };
 
   return {
     async runOnce(): Promise<LeadInactivityWorkerResult> {
       const now = clock();
-      const result: LeadInactivityWorkerResult = { scanned: 0, claimed: 0, moved: 0, deferred: 0, uncertain: 0, failed: 0 };
+      const result = { scanned: 0, claimed: 0, moved: 0, deferred: 0, uncertain: 0, failed: 0 };
+      if (!testingMode && !await options.store.isProductionBaselineComplete()) {
+        throw new Error("unrestricted production movement is blocked: durable production baseline is not complete");
+      }
       await options.store.releaseExpiredWatchLeases(now);
-      await options.store.ensureTestSlots(LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN);
+      if (testingMode) await options.store.ensureTestSlots(LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN);
       const leadIds = await options.store.listDueWatchLeadIds(now, maxWatchesPerRun);
       result.scanned = leadIds.length;
       for (const leadId of leadIds) {

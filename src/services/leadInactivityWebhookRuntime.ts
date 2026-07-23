@@ -2,7 +2,11 @@ import { prisma } from "../config/database";
 import { createLeadInactivityWebhookRouter } from "../routes/leadInactivityWebhook";
 import { createLeadInactivityAmoClient } from "./leadInactivityAmoClient";
 import { createPrismaLeadInactivityPersistence } from "./leadInactivityPrismaPersistence";
-import { resolveInactivityDelayMs } from "./leadInactivityDelay";
+import {
+  assertUnrestrictedProductionDelay,
+  resolveInactivityDelayMs,
+  resolveTestingLeadMovementMode,
+} from "./leadInactivityDelay";
 import { createLeadInactivityStore, type LeadInactivityStore } from "./leadInactivityStore";
 import { createLeadInactivityWebhookProcessor } from "./leadInactivityWebhook";
 
@@ -31,6 +35,12 @@ export function createConfiguredLeadInactivityWebhookRouter(
   }
 
   const inactivityMs = resolveInactivityDelayMs(environment.AMOCRM_INACTIVITY_DELAY_HOURS);
+  if (environment.TESTING_LEADS_MOVEMENT !== undefined) {
+    assertUnrestrictedProductionDelay(
+      resolveTestingLeadMovementMode(environment.TESTING_LEADS_MOVEMENT),
+      inactivityMs,
+    );
+  }
   const amo = createLeadInactivityAmoClient({ baseUrl, accessToken });
   const store = dependencies.createStore?.(inactivityMs) ?? createLeadInactivityStore(
     createPrismaLeadInactivityPersistence(prisma),

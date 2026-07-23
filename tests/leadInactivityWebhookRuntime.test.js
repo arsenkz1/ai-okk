@@ -42,6 +42,13 @@ test("passes the configured inactivity delay into the webhook event store and re
   assert.equal(router.stack.find((layer) => layer.route)?.route?.path, "/webhooks/amocrm/inactivity/:secret");
   assert.equal(inactivityMs, 24 * 60 * 60 * 1000);
   assert.throws(
+    () => createConfiguredLeadInactivityWebhookRouter({
+      ...environment,
+      TESTING_LEADS_MOVEMENT: "false",
+    }),
+    /requires AMOCRM_INACTIVITY_DELAY_HOURS=72/,
+  );
+  assert.throws(
     () => createConfiguredLeadInactivityWebhookRouter({ ...environment, AMOCRM_INACTIVITY_DELAY_HOURS: "0" }),
     /positive whole number of hours/,
   );

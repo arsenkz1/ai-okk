@@ -2,7 +2,11 @@ import { prisma } from "../config/database";
 import { notifyAdmins } from "../bot/notify";
 import { createLeadInactivityAmoClient } from "./leadInactivityAmoClient";
 import { createPrismaLeadInactivityPersistence } from "./leadInactivityPrismaPersistence";
-import { resolveInactivityDelayMs } from "./leadInactivityDelay";
+import {
+  assertUnrestrictedProductionDelay,
+  resolveInactivityDelayMs,
+  resolveTestingLeadMovementMode,
+} from "./leadInactivityDelay";
 import { createLeadInactivityStore } from "./leadInactivityStore";
 import {
   createLeadInactivityWorker,
@@ -18,12 +22,13 @@ type Schedule = (callback: () => void | Promise<void>, intervalMs: number) => Ti
 type ClearSchedule = (handle: TimerHandle) => void;
 
 export interface LeadInactivityWorkerRuntime {
+  testingMode: boolean;
   runOnce(): Promise<void>;
   stop(): void;
 }
 
 export interface LeadInactivityWorkerRuntimeDependencies {
-  createWorker?: () => LeadInactivityWorker;
+  createWorker?: (testingMode: boolean) => LeadInactivityWorker;
   schedule?: Schedule;
   clearSchedule?: ClearSchedule;
   log?: (message: string, result?: LeadInactivityWorkerResult) => void;
@@ -34,9 +39,13 @@ export interface StartConfiguredLeadInactivityWorkerOptions {
   dependencies?: LeadInactivityWorkerRuntimeDependencies;
 }
 
-export { resolveInactivityDelayMs };
+export { resolveInactivityDelayMs, resolveTestingLeadMovementMode };
 
-function createProductionWorker(environment: LeadInactivityWorkerEnvironment): LeadInactivityWorker {
+function createProductionWorker(
+  environment: LeadInactivityWorkerEnvironment,
+  testingMode: boolean,
+  inactivityMs: number,
+): LeadInactivityWorker {
   const baseUrl = environment.AMOCRM_BASE_URL?.trim();
   const accessToken = environment.AMOCRM_ACCESS_TOKEN?.trim();
   if (!baseUrl || !accessToken) {
@@ -44,10 +53,10 @@ function createProductionWorker(environment: LeadInactivityWorkerEnvironment): L
   }
   const store = createLeadInactivityStore(
     createPrismaLeadInactivityPersistence(prisma),
-    { inactivityMs: resolveInactivityDelayMs(environment.AMOCRM_INACTIVITY_DELAY_HOURS) },
+    { inactivityMs },
   );
   const amo = createLeadInactivityAmoClient({ baseUrl, accessToken });
-  return createLeadInactivityWorker({ store, amo, notifyAdmins });
+  return createLeadInactivityWorker({ store, amo, notifyAdmins, testingMode });
 }
 
 /**
@@ -64,14 +73,14 @@ export function startConfiguredLeadInactivityWorker(
   if (enabled !== "true") {
     throw new Error("AMOCRM_INACTIVITY_WORKER_ENABLED must be true when configured");
   }
-  if (environment.TESTING_LEADS_MOVEMENT?.trim().toLowerCase() !== "true") {
-    throw new Error("AMOCRM_INACTIVITY_WORKER_ENABLED requires TESTING_LEADS_MOVEMENT=true");
-  }
+  const testingMode = resolveTestingLeadMovementMode(environment.TESTING_LEADS_MOVEMENT);
+  const inactivityMs = resolveInactivityDelayMs(environment.AMOCRM_INACTIVITY_DELAY_HOURS);
+  assertUnrestrictedProductionDelay(testingMode, inactivityMs);
   if (!environment.AMOCRM_INACTIVITY_WEBHOOK_SECRET?.trim()) {
     throw new Error("AMOCRM_INACTIVITY_WORKER_ENABLED requires AMOCRM_INACTIVITY_WEBHOOK_SECRET");
   }
 
-  const worker = options.dependencies?.createWorker?.() ?? createProductionWorker(environment);
+  const worker = options.dependencies?.createWorker?.(testingMode) ?? createProductionWorker(environment, testingMode, inactivityMs);
   const schedule = options.dependencies?.schedule ?? ((callback, intervalMs) => setInterval(() => void callback(), intervalMs));
   const clearSchedule = options.dependencies?.clearSchedule ?? clearInterval;
   const log = options.dependencies?.log ?? ((message, result) => console.info(message, result));
@@ -92,6 +101,7 @@ export function startConfiguredLeadInactivityWorker(
 
   const handle = schedule(runOnce, LEAD_INACTIVITY_WORKER_INTERVAL_MS);
   return {
+    testingMode,
     runOnce,
     stop: () => clearSchedule(handle),
   };

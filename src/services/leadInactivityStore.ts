@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 
 export const INACTIVITY_MS = 72 * 60 * 60 * 1000;
 export const ACTIVATION_BOUNDARY_SETTING_KEY = "lead_inactivity.activation_boundary";
+export const PRODUCTION_BASELINE_SETTING_KEY = "lead_inactivity.production_baseline";
+export const PRODUCTION_BASELINE_RUN_SETTING_KEY = "lead_inactivity.production_baseline_run";
+export const PRODUCTION_BASELINE_COMPLETED_SETTING_KEY = "lead_inactivity.production_baseline_completed";
 export const DEFAULT_WATCH_LEASE_MS = 5 * 60 * 1000;
 export const DEFAULT_TEST_SLOT_LEASE_MS = 10 * 60 * 1000;
 export const TESTING_LEADS_MOVEMENT_LIMIT = 5;
@@ -18,6 +21,19 @@ export interface LeadInactivityEventInput {
   leadCreatedAt: Date;
   pipelineId: number;
   statusId: number;
+}
+
+export interface LeadInactivityProductionBaselineInput {
+  leadId: number;
+  leadCreatedAt: Date;
+  pipelineId: number;
+  statusId: number;
+}
+
+export interface LeadInactivityProductionBaselineRun {
+  runId: string;
+  baselineAt: Date;
+  alreadyCompleted: boolean;
 }
 
 export interface LeadInactivityWatch {
@@ -50,9 +66,9 @@ export interface LeadInactivityMoveAudit {
 }
 
 export type LeadInactivityMoveAuditOutcome =
-  | { kind: "confirmed"; slotNumber: number }
+  | { kind: "confirmed"; slotNumber: number | null }
   | { kind: "skipped"; slotNumber: null }
-  | { kind: "uncertain"; slotNumber: number }
+  | { kind: "uncertain"; slotNumber: number | null }
   | { kind: "failed"; slotNumber: number | null };
 
 export interface LeadInactivityTestSlot {
@@ -70,6 +86,7 @@ export interface LeadInactivityPersistence {
   getSetting(key: string): Promise<string | null>;
   createSettingIfAbsent(key: string, value: string): Promise<string>;
   insertEventIfAbsent(event: LeadInactivityEventInput): Promise<boolean>;
+  hasProductionBaselineEvent(leadId: number): Promise<boolean>;
   getWatch(leadId: number): Promise<LeadInactivityWatch | null>;
   createWatchIfAbsent(watch: LeadInactivityWatch): Promise<LeadInactivityWatch>;
   advanceWatchIfNewer(leadId: number, next: LeadInactivityWatch): Promise<LeadInactivityWatch | null>;
@@ -122,7 +139,15 @@ export type LeadInactivityRecordResult =
 
 export interface LeadInactivityStore {
   getOrCreateActivationBoundary(now?: Date): Promise<Date>;
+  getOrCreateProductionBaseline(now?: Date): Promise<Date>;
+  beginProductionBaseline(runId: string, now?: Date): Promise<LeadInactivityProductionBaselineRun>;
+  isProductionBaselineComplete(): Promise<boolean>;
+  completeProductionBaseline(run: LeadInactivityProductionBaselineRun): Promise<void>;
   recordLeadEvent(input: LeadInactivityEventInput): Promise<LeadInactivityRecordResult>;
+  recordProductionBaseline(
+    input: LeadInactivityProductionBaselineInput,
+    baselineAt: Date,
+  ): Promise<LeadInactivityRecordResult>;
   listDueWatchLeadIds(now: Date, limit: number): Promise<number[]>;
   isWatchClaimCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
   beginMoveMutation(claimed: LeadInactivityWatch): Promise<boolean>;
@@ -158,6 +183,27 @@ function compareWatchActivityOrder(watch: LeadInactivityWatch, next: LeadInactiv
   return Math.sign(watch.lastActivityReceivedAt.getTime() - next.lastActivityReceivedAt.getTime());
 }
 
+interface PersistedProductionBaselineRun {
+  runId: string;
+  baselineAt: string;
+}
+
+function parseProductionBaselineRun(value: string, name: string): PersistedProductionBaselineRun {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(`${name} is invalid`);
+  }
+  if (!parsed || typeof parsed !== "object") throw new Error(`${name} is invalid`);
+  const candidate = parsed as { runId?: unknown; baselineAt?: unknown };
+  if (typeof candidate.runId !== "string" || !candidate.runId.trim() || typeof candidate.baselineAt !== "string") {
+    throw new Error(`${name} is invalid`);
+  }
+  if (Number.isNaN(new Date(candidate.baselineAt).getTime())) throw new Error(`${name} is invalid`);
+  return { runId: candidate.runId, baselineAt: candidate.baselineAt };
+}
+
 export function createLeadInactivityStore(
   persistence: LeadInactivityPersistence,
   options: LeadInactivityStoreOptions = {}
@@ -169,101 +215,228 @@ export function createLeadInactivityStore(
   const watchLeaseMs = options.watchLeaseMs ?? DEFAULT_WATCH_LEASE_MS;
   const testSlotLeaseMs = options.testSlotLeaseMs ?? DEFAULT_TEST_SLOT_LEASE_MS;
 
-  return {
-    async getOrCreateActivationBoundary(now = clock()): Promise<Date> {
-      if (Number.isNaN(now.getTime())) throw new Error("lead inactivity activation boundary input is invalid");
-      const existing = await persistence.getSetting(ACTIVATION_BOUNDARY_SETTING_KEY);
-      if (existing) {
-        const boundary = new Date(existing);
-        if (Number.isNaN(boundary.getTime())) throw new Error("lead inactivity activation boundary is invalid");
-        return boundary;
-      }
+  const getOrCreateTimestampSetting = async (key: string, now: Date, name: string): Promise<Date> => {
+    if (Number.isNaN(now.getTime())) throw new Error(`${name} input is invalid`);
+    const existing = await persistence.getSetting(key);
+    if (existing) {
+      const timestamp = new Date(existing);
+      if (Number.isNaN(timestamp.getTime())) throw new Error(`${name} is invalid`);
+      return timestamp;
+    }
+    const persisted = await persistence.createSettingIfAbsent(key, ceilToSecond(now).toISOString());
+    const timestamp = new Date(persisted);
+    if (Number.isNaN(timestamp.getTime())) throw new Error(`${name} is invalid`);
+    return timestamp;
+  };
 
-      const persisted = await persistence.createSettingIfAbsent(
-        ACTIVATION_BOUNDARY_SETTING_KEY,
-        ceilToSecond(now).toISOString()
-      );
-      return new Date(persisted);
-    },
+  const recordEvent = async (
+    input: LeadInactivityEventInput,
+    enforceActivationBoundary: boolean,
+  ): Promise<LeadInactivityRecordResult> => {
+    assertPositiveInteger(input.leadId, "leadId");
+    assertPositiveInteger(input.pipelineId, "pipelineId");
+    assertPositiveInteger(input.statusId, "statusId");
+    if (!input.fingerprint) throw new Error("fingerprint is required");
+    if (Number.isNaN(input.eventAt.getTime()) || Number.isNaN(input.receivedAt.getTime()) || Number.isNaN(input.leadCreatedAt.getTime())) {
+      throw new Error("lead inactivity event timestamps are invalid");
+    }
 
-    async recordLeadEvent(input): Promise<LeadInactivityRecordResult> {
-      assertPositiveInteger(input.leadId, "leadId");
-      if (!input.fingerprint) throw new Error("fingerprint is required");
-
+    let historicalLead = false;
+    if (enforceActivationBoundary) {
       const activationBoundary = await persistence.getSetting(ACTIVATION_BOUNDARY_SETTING_KEY);
       if (!activationBoundary) throw new Error("lead inactivity activation boundary is not initialized");
       const boundary = new Date(activationBoundary);
       if (Number.isNaN(boundary.getTime())) throw new Error("lead inactivity activation boundary is invalid");
-      if (input.leadCreatedAt.getTime() <= boundary.getTime()) {
+      historicalLead = input.leadCreatedAt.getTime() <= boundary.getTime();
+    }
+
+    return persistence.transaction(async (transaction) => {
+      if (historicalLead && !await transaction.hasProductionBaselineEvent(input.leadId)) {
         return { ignored: true, duplicate: false, watch: null };
       }
+      const inserted = await transaction.insertEventIfAbsent(input);
+      const existing = await transaction.getWatch(input.leadId);
+      if (!inserted) {
+        if (!existing) throw new Error(`duplicate event ${input.fingerprint} has no watch`);
+        return { ignored: false, duplicate: true, watch: existing };
+      }
 
-      return persistence.transaction(async (transaction) => {
-        const inserted = await transaction.insertEventIfAbsent(input);
-        const existing = await transaction.getWatch(input.leadId);
-        if (!inserted) {
-          if (!existing) throw new Error(`duplicate event ${input.fingerprint} has no watch`);
-          return { ignored: false, duplicate: true, watch: existing };
+      const next: LeadInactivityWatch = {
+        leadId: input.leadId,
+        leadCreatedAt: input.leadCreatedAt,
+        lastActivityAt: input.eventAt,
+        lastActivityReceivedAt: input.receivedAt,
+        dueAt: new Date(input.eventAt.getTime() + inactivityMs),
+        pipelineId: input.pipelineId,
+        statusId: input.statusId,
+        cycle: existing?.state === "moved" ? existing.cycle + 1 : (existing?.cycle ?? 1),
+        state: "watching",
+        leaseToken: null,
+        leaseExpiresAt: null,
+        leaseGeneration: existing?.leaseGeneration ?? 0,
+        lastEventFingerprint: input.fingerprint,
+      };
+
+      const reconcileWithCurrentWatch = async (current: LeadInactivityWatch): Promise<LeadInactivityRecordResult> => {
+        const order = compareWatchActivityOrder(current, next);
+        if (order > 0) return { ignored: false, duplicate: false, watch: current };
+        if (order === 0) {
+          if (current.lastEventFingerprint === input.fingerprint) {
+            return { ignored: false, duplicate: false, watch: current };
+          }
+          const uncertain = await transaction.markWatchUncertainForOrderConflict(
+            input.leadId,
+            input.eventAt,
+            input.receivedAt,
+          );
+          if (!uncertain) throw new Error(`watch ${input.leadId} disappeared while flagging ambiguous event order`);
+          return { ignored: false, duplicate: false, requiresFreshRead: true, watch: uncertain };
         }
 
-        const next: LeadInactivityWatch = {
-          leadId: input.leadId,
-          leadCreatedAt: input.leadCreatedAt,
-          lastActivityAt: input.eventAt,
-          lastActivityReceivedAt: input.receivedAt,
-          dueAt: new Date(input.eventAt.getTime() + inactivityMs),
-          pipelineId: input.pipelineId,
-          statusId: input.statusId,
-          cycle: existing?.state === "moved" ? existing.cycle + 1 : (existing?.cycle ?? 1),
-          state: "watching",
-          leaseToken: null,
-          leaseExpiresAt: null,
-          leaseGeneration: existing?.leaseGeneration ?? 0,
-          lastEventFingerprint: input.fingerprint,
-        };
+        const advanced = await transaction.advanceWatchIfNewer(input.leadId, next);
+        if (advanced) return { ignored: false, duplicate: false, watch: advanced };
 
-        const reconcileWithCurrentWatch = async (current: LeadInactivityWatch): Promise<LeadInactivityRecordResult> => {
-          const order = compareWatchActivityOrder(current, next);
-          if (order > 0) return { ignored: false, duplicate: false, watch: current };
-          if (order === 0) {
-            if (current.lastEventFingerprint === input.fingerprint) {
-              return { ignored: false, duplicate: false, watch: current };
-            }
-            const uncertain = await transaction.markWatchUncertainForOrderConflict(
-              input.leadId,
-              input.eventAt,
-              input.receivedAt,
-            );
-            if (!uncertain) throw new Error(`watch ${input.leadId} disappeared while flagging ambiguous event order`);
-            return { ignored: false, duplicate: false, requiresFreshRead: true, watch: uncertain };
-          }
-
-          const advanced = await transaction.advanceWatchIfNewer(input.leadId, next);
-          if (advanced) return { ignored: false, duplicate: false, watch: advanced };
-
-          const concurrent = await transaction.getWatch(input.leadId);
-          if (!concurrent) throw new Error(`watch ${input.leadId} disappeared while recording activity`);
-          const concurrentOrder = compareWatchActivityOrder(concurrent, next);
-          if (concurrentOrder > 0 || concurrent.lastEventFingerprint === input.fingerprint) {
-            return { ignored: false, duplicate: false, watch: concurrent };
-          }
-          if (concurrentOrder === 0) {
-            const uncertain = await transaction.markWatchUncertainForOrderConflict(
-              input.leadId,
-              input.eventAt,
-              input.receivedAt,
-            );
-            if (!uncertain) throw new Error(`watch ${input.leadId} changed while flagging ambiguous event order`);
-            return { ignored: false, duplicate: false, requiresFreshRead: true, watch: uncertain };
-          }
-          throw new Error(`watch ${input.leadId} did not advance to a newer event`);
-        };
-
-        if (!existing) {
-          return reconcileWithCurrentWatch(await transaction.createWatchIfAbsent(next));
+        const concurrent = await transaction.getWatch(input.leadId);
+        if (!concurrent) throw new Error(`watch ${input.leadId} disappeared while recording activity`);
+        const concurrentOrder = compareWatchActivityOrder(concurrent, next);
+        if (concurrentOrder > 0 || concurrent.lastEventFingerprint === input.fingerprint) {
+          return { ignored: false, duplicate: false, watch: concurrent };
         }
-        return reconcileWithCurrentWatch(existing);
-      });
+        if (concurrentOrder === 0) {
+          const uncertain = await transaction.markWatchUncertainForOrderConflict(
+            input.leadId,
+            input.eventAt,
+            input.receivedAt,
+          );
+          if (!uncertain) throw new Error(`watch ${input.leadId} changed while flagging ambiguous event order`);
+          return { ignored: false, duplicate: false, requiresFreshRead: true, watch: uncertain };
+        }
+        throw new Error(`watch ${input.leadId} did not advance to a newer event`);
+      };
+
+      if (!existing) {
+        return reconcileWithCurrentWatch(await transaction.createWatchIfAbsent(next));
+      }
+      return reconcileWithCurrentWatch(existing);
+    });
+  };
+
+  return {
+    async getOrCreateActivationBoundary(now = clock()): Promise<Date> {
+      return getOrCreateTimestampSetting(
+        ACTIVATION_BOUNDARY_SETTING_KEY,
+        now,
+        "lead inactivity activation boundary",
+      );
+    },
+
+    async getOrCreateProductionBaseline(now = clock()): Promise<Date> {
+      return getOrCreateTimestampSetting(
+        PRODUCTION_BASELINE_SETTING_KEY,
+        now,
+        "lead inactivity production baseline",
+      );
+    },
+
+    async beginProductionBaseline(runId, now = clock()): Promise<LeadInactivityProductionBaselineRun> {
+      if (!runId.trim()) throw new Error("lead inactivity production baseline run ID is required");
+      const baselineAt = await getOrCreateTimestampSetting(
+        PRODUCTION_BASELINE_SETTING_KEY,
+        now,
+        "lead inactivity production baseline",
+      );
+      const candidate = JSON.stringify({ runId, baselineAt: baselineAt.toISOString() });
+      const persisted = parseProductionBaselineRun(
+        await persistence.createSettingIfAbsent(PRODUCTION_BASELINE_RUN_SETTING_KEY, candidate),
+        "lead inactivity production baseline run",
+      );
+      if (persisted.baselineAt !== baselineAt.toISOString()) {
+        throw new Error("lead inactivity production baseline run does not match the durable baseline");
+      }
+
+      const completion = await persistence.getSetting(PRODUCTION_BASELINE_COMPLETED_SETTING_KEY);
+      if (completion) {
+        const completed = parseProductionBaselineRun(completion, "lead inactivity production baseline completion marker");
+        if (completed.runId !== persisted.runId || completed.baselineAt !== persisted.baselineAt) {
+          throw new Error("lead inactivity production baseline completion marker does not match the durable run");
+        }
+        return { runId: persisted.runId, baselineAt, alreadyCompleted: true };
+      }
+      if (persisted.runId !== runId) {
+        throw new Error("lead inactivity production baseline run is already in progress");
+      }
+      return { runId, baselineAt, alreadyCompleted: false };
+    },
+
+    async isProductionBaselineComplete(): Promise<boolean> {
+      const [baseline, run, completion] = await Promise.all([
+        persistence.getSetting(PRODUCTION_BASELINE_SETTING_KEY),
+        persistence.getSetting(PRODUCTION_BASELINE_RUN_SETTING_KEY),
+        persistence.getSetting(PRODUCTION_BASELINE_COMPLETED_SETTING_KEY),
+      ]);
+      if (!baseline || !run || !completion) return false;
+      const durableRun = parseProductionBaselineRun(run, "lead inactivity production baseline run");
+      const completed = parseProductionBaselineRun(completion, "lead inactivity production baseline completion marker");
+      if (
+        durableRun.runId !== completed.runId
+        || durableRun.baselineAt !== completed.baselineAt
+        || durableRun.baselineAt !== baseline
+      ) {
+        throw new Error("lead inactivity production baseline completion marker does not match the durable run");
+      }
+      return true;
+    },
+
+    async completeProductionBaseline(run): Promise<void> {
+      if (!run.runId.trim() || Number.isNaN(run.baselineAt.getTime())) {
+        throw new Error("lead inactivity production baseline completion input is invalid");
+      }
+      if (run.alreadyCompleted) return;
+      const [baseline, persistedRun] = await Promise.all([
+        persistence.getSetting(PRODUCTION_BASELINE_SETTING_KEY),
+        persistence.getSetting(PRODUCTION_BASELINE_RUN_SETTING_KEY),
+      ]);
+      if (!baseline || !persistedRun) throw new Error("lead inactivity production baseline run is not initialized");
+      const durableRun = parseProductionBaselineRun(persistedRun, "lead inactivity production baseline run");
+      if (
+        durableRun.runId !== run.runId
+        || durableRun.baselineAt !== run.baselineAt.toISOString()
+        || durableRun.baselineAt !== baseline
+      ) {
+        throw new Error("lead inactivity production baseline completion must be owned by the durable run");
+      }
+      const completion = parseProductionBaselineRun(
+        await persistence.createSettingIfAbsent(PRODUCTION_BASELINE_COMPLETED_SETTING_KEY, JSON.stringify(durableRun)),
+        "lead inactivity production baseline completion marker",
+      );
+      if (completion.runId !== durableRun.runId || completion.baselineAt !== durableRun.baselineAt) {
+        throw new Error("lead inactivity production baseline completion marker does not match the durable run");
+      }
+    },
+
+    async recordLeadEvent(input): Promise<LeadInactivityRecordResult> {
+      return recordEvent(input, true);
+    },
+
+    async recordProductionBaseline(input, baselineAt): Promise<LeadInactivityRecordResult> {
+      if (Number.isNaN(baselineAt.getTime())) throw new Error("lead inactivity production baseline input is invalid");
+      const persisted = await persistence.getSetting(PRODUCTION_BASELINE_SETTING_KEY);
+      if (!persisted) throw new Error("lead inactivity production baseline is not initialized");
+      const durableBaselineAt = new Date(persisted);
+      if (Number.isNaN(durableBaselineAt.getTime())) throw new Error("lead inactivity production baseline is invalid");
+      if (durableBaselineAt.getTime() !== baselineAt.getTime()) {
+        throw new Error("lead inactivity production baseline timestamp must match the durable baseline");
+      }
+      return recordEvent({
+        fingerprint: `amo-inactivity-production-baseline:${durableBaselineAt.toISOString()}:${input.leadId}`,
+        leadId: input.leadId,
+        eventType: "production_baseline",
+        eventAt: durableBaselineAt,
+        receivedAt: durableBaselineAt,
+        leadCreatedAt: input.leadCreatedAt,
+        pipelineId: input.pipelineId,
+        statusId: input.statusId,
+      }, false);
     },
 
     async listDueWatchLeadIds(now, limit): Promise<number[]> {
