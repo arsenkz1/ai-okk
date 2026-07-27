@@ -37,12 +37,54 @@ function lead(leadId = 100, overrides = {}) {
 }
 
 function fixture(overrides = {}) {
-  const calls = { releaseLeases: 0, ensureSlots: 0, list: 0, claim: [], audit: [], completeAudit: [], reserve: [], confirm: [], releaseSlot: [], uncertainSlot: [], finish: [], record: [], move: [] };
-  const claimed = new Map([[100, watch(100)]]);
+  const calls = {
+    releaseLeases: 0,
+    ensureSlots: 0,
+    ensureDailySlots: [],
+    hasDailyCapacity: [],
+    reserveDailySlot: [],
+    confirmDailySlot: [],
+    releaseDailySlot: [],
+    uncertainDailySlot: [],
+    list: 0,
+    claim: [],
+    audit: [],
+    completeAudit: [],
+    reserve: [],
+    confirm: [],
+    releaseSlot: [],
+    uncertainSlot: [],
+    finish: [],
+    record: [],
+    move: [],
+    readLead: [],
+    readHistory: [],
+  };
+  const claimed = new Map(overrides.claimed ?? [[100, watch(100)]]);
   const store = {
     isProductionBaselineComplete: async () => true,
     releaseExpiredWatchLeases: async () => { calls.releaseLeases += 1; },
     ensureTestSlots: async () => { calls.ensureSlots += 1; },
+    ensureDailyMovementSlots: async (bucketDate, limit) => { calls.ensureDailySlots.push({ bucketDate, limit }); },
+    hasDailyMovementCapacity: async (bucketDate, limit) => {
+      calls.hasDailyCapacity.push({ bucketDate, limit });
+      return true;
+    },
+    reserveDailyMovementSlot: async (bucketDate, leadId, auditId) => {
+      calls.reserveDailySlot.push({ bucketDate, leadId, auditId });
+      return { bucketDate, slotNumber: 1, state: "reserved", leadId, auditId };
+    },
+    confirmDailyMovementSlot: async (bucketDate, slotNumber, auditId) => {
+      calls.confirmDailySlot.push({ bucketDate, slotNumber, auditId });
+      return { bucketDate, slotNumber, state: "confirmed", auditId };
+    },
+    releaseDailyMovementSlotAfterKnownNoMove: async (bucketDate, slotNumber, auditId) => {
+      calls.releaseDailySlot.push({ bucketDate, slotNumber, auditId });
+    },
+    markDailyMovementSlotUncertain: async (bucketDate, slotNumber, auditId) => {
+      calls.uncertainDailySlot.push({ bucketDate, slotNumber, auditId });
+      return { bucketDate, slotNumber, state: "uncertain", auditId };
+    },
     listDueWatchLeadIds: async (_now, limit) => { calls.list += 1; return [...claimed.keys()].slice(0, limit); },
     claimDueWatch: async (leadId) => { calls.claim.push(leadId); return claimed.get(leadId) ?? null; },
     isWatchClaimCurrent: async () => true,
@@ -59,9 +101,32 @@ function fixture(overrides = {}) {
     ...overrides.store,
   };
   const amo = {
-    readLead: async (leadId) => lead(leadId),
-    readLeadHistory: async () => [],
-    moveLeadToTarget: async (leadId) => { calls.move.push(leadId); return { kind: "confirmed", lead: lead(leadId, { pipelineId: 9055770, statusId: 72917546 }) }; },
+    readLead: async (leadId) => {
+      calls.readLead.push(leadId);
+      return lead(leadId);
+    },
+    readLeadHistory: async (leadId) => {
+      calls.readHistory.push(leadId);
+      return [];
+    },
+    moveLeadToTarget: async (leadId, _target, hooks) => {
+      if (typeof hooks === "function" && !await hooks()) {
+        return { kind: "not_moved", reason: "fence_cancelled", lead: lead(leadId) };
+      }
+      if (hooks && typeof hooks !== "function") {
+        if (hooks.isMoveMutationCurrent && !await hooks.isMoveMutationCurrent()) {
+          return { kind: "not_moved", reason: "fence_cancelled", lead: lead(leadId) };
+        }
+        if (hooks.beforeFinalPatch && await hooks.beforeFinalPatch() === "daily_capacity_unavailable") {
+          return { kind: "not_moved", reason: "daily_capacity_unavailable", lead: lead(leadId) };
+        }
+        if (hooks.beforePatchSend && await hooks.beforePatchSend() === "daily_capacity_unavailable") {
+          return { kind: "not_moved", reason: "daily_capacity_unavailable", lead: lead(leadId) };
+        }
+      }
+      calls.move.push(leadId);
+      return { kind: "confirmed", lead: lead(leadId, { pipelineId: 9055770, statusId: 72917546 }) };
+    },
     ...overrides.amo,
   };
   return { calls, store, amo };
@@ -119,9 +184,9 @@ test("cancels the mutation when webhook activity invalidates the durable fence i
   const { store, amo, calls } = fixture({
     store: { isMoveMutationCurrent: async () => false },
     amo: {
-      moveLeadToTarget: async (_leadId, _target, beforePatch) => {
+      moveLeadToTarget: async (_leadId, _target, hooks) => {
         calls.move.push(100);
-        assert.equal(await beforePatch(), false);
+        assert.equal(await hooks.isMoveMutationCurrent(), false);
         return { kind: "not_moved", reason: "fence_cancelled", lead: lead() };
       },
     },
@@ -353,6 +418,117 @@ test("retains a confirmed production audit outcome when its first durable audit 
     { kind: "confirmed", slotNumber: null },
     { kind: "confirmed", slotNumber: null },
   ]);
+});
+
+test("queues at the cap and rechecks later-day activity", async () => {
+  let available = false;
+  let now = NOW;
+  const fresh = new Date("2026-07-20T12:00:00.000Z");
+  const { store, amo, calls } = fixture({
+    store: { hasDailyMovementCapacity: async (day, limit) => {
+      calls.hasDailyCapacity.push({ bucketDate: day, limit });
+      return available;
+    } },
+    amo: {
+      readLead: async (leadId) => {
+        calls.readLead.push(leadId);
+        return lead(leadId, { updatedAt: fresh });
+      },
+      readLeadHistory: async (leadId) => {
+        calls.readHistory.push(leadId);
+        return [{ id: "fresh-touch", entityType: "lead", entityId: leadId, createdAt: fresh, type: 1, raw: {} }];
+      },
+    },
+  });
+  const worker = createLeadInactivityWorker({ store, amo, testingMode: false, clock: () => now, randomId: () => "audit-100" });
+
+  assert.deepEqual(await worker.runOnce(), { scanned: 0, claimed: 0, moved: 0, deferred: 0, uncertain: 0, failed: 0 });
+  assert.deepEqual(calls.readLead, []);
+  available = true;
+  now = new Date("2026-07-20T12:00:01.000Z");
+
+  const later = await worker.runOnce();
+  assert.equal(later.moved, 0);
+  assert.equal(calls.readLead.length, 1);
+  assert.equal(calls.readHistory.length, 1);
+  assert.deepEqual(calls.move, []);
+});
+
+test("requeues a move when its reserved Almaty-day slot crosses midnight before PATCH", async () => {
+  let clockCalls = 0;
+  const initialNow = new Date("2026-07-19T18:59:59.900Z");
+  const reservedAt = new Date("2026-07-19T18:59:59.999Z");
+  const crossedMidnight = new Date("2026-07-19T19:00:00.001Z");
+  const { store, amo, calls } = fixture();
+  const worker = createLeadInactivityWorker({
+    store,
+    amo,
+    testingMode: false,
+    clock: () => {
+      clockCalls += 1;
+      return clockCalls === 1 ? initialNow : (clockCalls === 2 ? reservedAt : crossedMidnight);
+    },
+    randomId: () => "audit-100",
+  });
+
+  const result = await worker.runOnce();
+  assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 0, deferred: 1, uncertain: 0, failed: 0 });
+  assert.deepEqual(calls.move, []);
+  assert.deepEqual(calls.reserveDailySlot.map(({ bucketDate }) => bucketDate), ["2026-07-19"]);
+  assert.deepEqual(calls.releaseDailySlot.map(({ bucketDate }) => bucketDate), ["2026-07-19"]);
+  assert.equal(calls.finish.some(({ state }) => state === "watching"), true);
+});
+
+test("reserves a post-midnight Almaty move against the new calendar day", async () => {
+  let clockCalls = 0;
+  const beforeMidnight = new Date("2026-07-19T18:59:59.900Z");
+  const afterMidnight = new Date("2026-07-19T19:00:00.100Z");
+  const { store, amo, calls } = fixture();
+  const worker = createLeadInactivityWorker({
+    store,
+    amo,
+    testingMode: false,
+    clock: () => (++clockCalls === 1 ? beforeMidnight : afterMidnight),
+    randomId: () => "audit-100",
+  });
+
+  const result = await worker.runOnce();
+  assert.equal(result.moved, 1);
+  assert.deepEqual(calls.ensureDailySlots, [
+    { bucketDate: "2026-07-19", limit: 50 },
+    { bucketDate: "2026-07-20", limit: 50 },
+  ]);
+  assert.deepEqual(calls.reserveDailySlot.map(({ bucketDate }) => bucketDate), ["2026-07-20"]);
+});
+
+test("stops claiming the remaining batch as soon as the final daily slot is consumed", async () => {
+  let capacityChecks = 0;
+  const { store, amo, calls } = fixture({
+    claimed: [[100, watch(100)], [101, watch(101)]],
+    store: { hasDailyMovementCapacity: async () => ++capacityChecks === 1 },
+  });
+  const worker = createLeadInactivityWorker({
+    store, amo, testingMode: false, maxWatchesPerRun: 2, clock: () => NOW, randomId: () => "audit-100",
+  });
+
+  const result = await worker.runOnce();
+  assert.equal(result.moved, 1);
+  assert.deepEqual(calls.claim, [100]);
+  assert.deepEqual(calls.readLead, [100]);
+  assert.deepEqual(calls.move, [100]);
+});
+
+test("reserves and confirms one durable Almaty-day capacity slot around an unrestricted move", async () => {
+  const { store, amo, calls } = fixture();
+  const worker = createLeadInactivityWorker({ store, amo, testingMode: false, clock: () => NOW, randomId: () => "audit-100" });
+
+  const result = await worker.runOnce();
+
+  assert.deepEqual(result, { scanned: 1, claimed: 1, moved: 1, deferred: 0, uncertain: 0, failed: 0 });
+  assert.deepEqual(calls.reserveDailySlot, [{ bucketDate: "2026-07-19", leadId: 100, auditId: "audit-100" }]);
+  assert.deepEqual(calls.confirmDailySlot, [{ bucketDate: "2026-07-19", slotNumber: 1, auditId: "audit-100" }]);
+  assert.deepEqual(calls.releaseDailySlot, []);
+  assert.deepEqual(calls.uncertainDailySlot, []);
 });
 
 test("does not turn a confirmed move into a failure when admin notification fails", async () => {

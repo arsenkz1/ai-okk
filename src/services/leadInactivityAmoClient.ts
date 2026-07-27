@@ -53,6 +53,12 @@ export interface AmoInactivityMoveTarget {
   targetStatusId: number;
 }
 
+export interface AmoInactivityMoveHooks {
+  isMoveMutationCurrent?: () => Promise<boolean>;
+  beforeFinalPatch?: () => Promise<"allow" | "daily_capacity_unavailable">;
+  beforePatchSend?: () => Promise<"allow" | "daily_capacity_unavailable">;
+}
+
 export interface AmoInactivitySafeError {
   kind: "http" | "network";
   status: number | null;
@@ -62,7 +68,7 @@ export interface AmoInactivitySafeError {
 
 export type AmoInactivityMoveOutcome =
   | { kind: "confirmed"; lead: AmoInactivityLead }
-  | { kind: "not_moved"; reason: "not_in_source" | "fence_cancelled" | "patch_rejected" | "readback_not_target"; lead: AmoInactivityLead }
+  | { kind: "not_moved"; reason: "not_in_source" | "fence_cancelled" | "daily_capacity_unavailable" | "patch_rejected" | "readback_not_target"; lead: AmoInactivityLead }
   | { kind: "uncertain"; error: AmoInactivitySafeError; readback: AmoInactivityLead | null };
 
 export interface CreateLeadInactivityAmoClientOptions {
@@ -145,6 +151,12 @@ class AmoInactivityPrePatchFenceCancelledError extends Error {
   }
 }
 
+class AmoInactivityPrePatchDailyCapacityUnavailableError extends Error {
+  constructor() {
+    super("daily movement capacity became unavailable before amoCRM PATCH");
+  }
+}
+
 class AmoInactivityPrePatchScopeChangedError extends Error {
   constructor(readonly lead: AmoInactivityLead) {
     super("amoCRM lead is no longer in an allowed inactivity source stage");
@@ -224,7 +236,7 @@ export interface LeadInactivityAmoClient {
   moveLeadToTarget(
     leadId: number,
     target: AmoInactivityMoveTarget,
-    beforePatch?: () => Promise<boolean>,
+    hooks?: AmoInactivityMoveHooks | (() => Promise<boolean>),
   ): Promise<AmoInactivityMoveOutcome>;
 }
 
@@ -423,7 +435,10 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
       return events;
     },
 
-    async moveLeadToTarget(leadId, target, beforePatch): Promise<AmoInactivityMoveOutcome> {
+    async moveLeadToTarget(leadId, target, hooks): Promise<AmoInactivityMoveOutcome> {
+      const isMoveMutationCurrent = typeof hooks === "function" ? hooks : hooks?.isMoveMutationCurrent;
+      const beforeFinalPatch = typeof hooks === "function" ? undefined : hooks?.beforeFinalPatch;
+      const beforePatchSend = typeof hooks === "function" ? undefined : hooks?.beforePatchSend;
       const isAllowedSourceStage = (lead: AmoInactivityLead): boolean => (
         target.sourcePipelineIds.includes(lead.pipelineId)
         && isAllowedInactivitySourceStage(lead.pipelineId, lead.statusId)
@@ -432,7 +447,7 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
       if (!isAllowedSourceStage(current)) {
         return { kind: "not_moved", reason: "not_in_source", lead: current };
       }
-      if (beforePatch && !await beforePatch()) {
+      if (isMoveMutationCurrent && !await isMoveMutationCurrent()) {
         return { kind: "not_moved", reason: "fence_cancelled", lead: current };
       }
 
@@ -443,7 +458,7 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
         ...(current.responsibleUserId === null ? {} : { responsible_user_id: current.responsibleUserId }),
       };
       const refreshSourceStageBeforePatch = async (): Promise<boolean> => {
-        if (beforePatch && !await beforePatch()) return false;
+        if (isMoveMutationCurrent && !await isMoveMutationCurrent()) return false;
         let latest: AmoInactivityLead;
         try {
           latest = await readLead(current.id);
@@ -451,6 +466,13 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
           throw new AmoInactivityPrePatchReadFailedError();
         }
         if (!isAllowedSourceStage(latest)) throw new AmoInactivityPrePatchScopeChangedError(latest);
+        if (beforeFinalPatch && await beforeFinalPatch() === "daily_capacity_unavailable") {
+          throw new AmoInactivityPrePatchDailyCapacityUnavailableError();
+        }
+        if (isMoveMutationCurrent && !await isMoveMutationCurrent()) return false;
+        if (beforePatchSend && await beforePatchSend() === "daily_capacity_unavailable") {
+          throw new AmoInactivityPrePatchDailyCapacityUnavailableError();
+        }
         if (latest.responsibleUserId === null) delete patch.responsible_user_id;
         else patch.responsible_user_id = latest.responsibleUserId;
         return true;
@@ -461,6 +483,9 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
       } catch (error) {
         if (error instanceof AmoInactivityPrePatchFenceCancelledError) {
           return { kind: "not_moved", reason: "fence_cancelled", lead: current };
+        }
+        if (error instanceof AmoInactivityPrePatchDailyCapacityUnavailableError) {
+          return { kind: "not_moved", reason: "daily_capacity_unavailable", lead: current };
         }
         if (error instanceof AmoInactivityPrePatchScopeChangedError) {
           return { kind: "not_moved", reason: "not_in_source", lead: error.lead };

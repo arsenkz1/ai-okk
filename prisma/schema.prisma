@@ -307,3 +307,20 @@ model LeadInactivityTestSlot {
   @@index([state, slotNumber])
   @@index([leaseExpiresAt])
 }
+
+model LeadInactivityDailyMovementSlot {
+  bucketDate     String
+  slotNumber     Int
+  state          String   @default("free") // free|reserved|confirmed|uncertain
+  leadId         Int?
+  auditId        String?  @unique
+  reservedAt     DateTime? @db.Timestamptz(3)
+  confirmedAt    DateTime? @db.Timestamptz(3)
+  leaseExpiresAt DateTime? @db.Timestamptz(3)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+
+  @@id([bucketDate, slotNumber])
+  @@index([bucketDate, state, slotNumber])
+  @@index([bucketDate, leaseExpiresAt])
+}

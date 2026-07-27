@@ -3,6 +3,8 @@ import type {
   LeadInactivityEventInput,
   LeadInactivityMoveAudit,
   LeadInactivityMoveAuditOutcome,
+  LeadInactivityDailyMovementSlot,
+  LeadInactivityDailyMovementSlotState,
   LeadInactivityPersistence,
   LeadInactivityTestSlot,
   LeadInactivityTestSlotState,
@@ -17,6 +19,7 @@ type PrismaInactivityDb = Pick<
   | "leadInactivityWatch"
   | "leadInactivityMoveAudit"
   | "leadInactivityTestSlot"
+  | "leadInactivityDailyMovementSlot"
 >;
 
 type TransactionRunner = <T>(operation: (database: PrismaInactivityDb) => Promise<T>) => Promise<T>;
@@ -31,6 +34,7 @@ function isTransactionConflictError(error: unknown): boolean {
 
 const WATCH_STATES = new Set<LeadInactivityWatchState>(["watching", "leased", "mutating", "moved", "outside_scope", "skipped", "uncertain"]);
 const TEST_SLOT_STATES = new Set<LeadInactivityTestSlotState>(["free", "reserved", "confirmed", "uncertain"]);
+const DAILY_MOVEMENT_SLOT_STATES = new Set<LeadInactivityDailyMovementSlotState>(["free", "reserved", "confirmed", "uncertain"]);
 
 function toWatch(record: Omit<LeadInactivityWatch, "state"> & { state: string }): LeadInactivityWatch {
   if (!WATCH_STATES.has(record.state as LeadInactivityWatchState)) {
@@ -44,6 +48,15 @@ function toSlot(record: Omit<LeadInactivityTestSlot, "state"> & { state: string 
     throw new Error(`unknown lead inactivity test slot state: ${record.state}`);
   }
   return { ...record, state: record.state as LeadInactivityTestSlotState };
+}
+
+function toDailyMovementSlot(
+  record: Omit<LeadInactivityDailyMovementSlot, "state"> & { state: string },
+): LeadInactivityDailyMovementSlot {
+  if (!DAILY_MOVEMENT_SLOT_STATES.has(record.state as LeadInactivityDailyMovementSlotState)) {
+    throw new Error(`unknown daily movement slot state: ${record.state}`);
+  }
+  return { ...record, state: record.state as LeadInactivityDailyMovementSlotState };
 }
 
 function createAdapter(database: PrismaInactivityDb, transactionRunner?: TransactionRunner): LeadInactivityPersistence {
@@ -401,6 +414,112 @@ function createAdapter(database: PrismaInactivityDb, transactionRunner?: Transac
         select: { slotNumber: true },
       });
       return slot !== null;
+    },
+
+    async ensureDailyMovementSlots(bucketDate: string, limit: number): Promise<void> {
+      for (let slotNumber = 1; slotNumber <= limit; slotNumber += 1) {
+        await database.leadInactivityDailyMovementSlot.upsert({
+          where: { bucketDate_slotNumber: { bucketDate, slotNumber } },
+          create: { bucketDate, slotNumber, state: "free" },
+          update: {},
+          select: { slotNumber: true },
+        });
+      }
+    },
+
+    async hasAvailableDailyMovementSlot(bucketDate: string): Promise<boolean> {
+      const slot = await database.leadInactivityDailyMovementSlot.findFirst({
+        where: { bucketDate, state: "free" },
+        select: { slotNumber: true },
+      });
+      return slot !== null;
+    },
+
+    async reserveFreeDailyMovementSlot(
+      bucketDate: string,
+      leadId: number,
+      auditId: string,
+      now: Date,
+      leaseExpiresAt: Date,
+    ): Promise<LeadInactivityDailyMovementSlot | null> {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const candidate = await database.leadInactivityDailyMovementSlot.findFirst({
+          where: { bucketDate, state: "free" },
+          orderBy: { slotNumber: "asc" },
+          select: { slotNumber: true },
+        });
+        if (!candidate) return null;
+
+        const reserved = await database.leadInactivityDailyMovementSlot.updateMany({
+          where: { bucketDate, slotNumber: candidate.slotNumber, state: "free" },
+          data: { state: "reserved", leadId, auditId, reservedAt: now, leaseExpiresAt },
+        });
+        if (reserved.count !== 1) continue;
+
+        const slot = await database.leadInactivityDailyMovementSlot.findFirst({
+          where: { bucketDate, slotNumber: candidate.slotNumber, state: "reserved", auditId },
+        });
+        return slot ? toDailyMovementSlot(slot) : null;
+      }
+      return null;
+    },
+
+    async confirmDailyMovementSlot(
+      bucketDate: string,
+      slotNumber: number,
+      auditId: string,
+      confirmedAt: Date,
+    ): Promise<LeadInactivityDailyMovementSlot | null> {
+      const confirmed = await database.leadInactivityDailyMovementSlot.updateMany({
+        where: { bucketDate, slotNumber, state: "reserved", auditId },
+        data: { state: "confirmed", confirmedAt, leaseExpiresAt: null },
+      });
+      if (confirmed.count !== 1) return null;
+
+      const slot = await database.leadInactivityDailyMovementSlot.findFirst({
+        where: { bucketDate, slotNumber, state: "confirmed", auditId },
+      });
+      return slot ? toDailyMovementSlot(slot) : null;
+    },
+
+    async releaseDailyMovementSlotAfterKnownNoMove(bucketDate: string, slotNumber: number, auditId: string): Promise<boolean> {
+      const released = await database.leadInactivityDailyMovementSlot.updateMany({
+        where: { bucketDate, slotNumber, state: "reserved", auditId },
+        data: {
+          state: "free",
+          leadId: null,
+          auditId: null,
+          reservedAt: null,
+          confirmedAt: null,
+          leaseExpiresAt: null,
+        },
+      });
+      return released.count === 1;
+    },
+
+    async markExpiredDailyMovementSlotLeasesUncertain(bucketDate: string, now: Date): Promise<void> {
+      await database.leadInactivityDailyMovementSlot.updateMany({
+        where: { bucketDate, state: "reserved", leaseExpiresAt: { lte: now } },
+        data: { state: "uncertain", confirmedAt: now, leaseExpiresAt: null },
+      });
+    },
+
+    async markDailyMovementSlotUncertain(
+      bucketDate: string,
+      slotNumber: number,
+      auditId: string,
+      uncertainAt: Date,
+    ): Promise<LeadInactivityDailyMovementSlot | null> {
+      const marked = await database.leadInactivityDailyMovementSlot.updateMany({
+        where: { bucketDate, slotNumber, state: "reserved", auditId },
+        data: { state: "uncertain", confirmedAt: uncertainAt, leaseExpiresAt: null },
+      });
+      if (marked.count !== 1) return null;
+
+      const slot = await database.leadInactivityDailyMovementSlot.findFirst({
+        where: { bucketDate, slotNumber, state: "uncertain", auditId },
+      });
+      return slot ? toDailyMovementSlot(slot) : null;
     },
   };
 }

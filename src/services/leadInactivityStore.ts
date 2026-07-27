@@ -7,10 +7,12 @@ export const PRODUCTION_BASELINE_RUN_SETTING_KEY = "lead_inactivity.production_b
 export const PRODUCTION_BASELINE_COMPLETED_SETTING_KEY = "lead_inactivity.production_baseline_completed";
 export const DEFAULT_WATCH_LEASE_MS = 5 * 60 * 1000;
 export const DEFAULT_TEST_SLOT_LEASE_MS = 10 * 60 * 1000;
+export const DEFAULT_DAILY_MOVEMENT_SLOT_LEASE_MS = 10 * 60 * 1000;
 export const TESTING_LEADS_MOVEMENT_LIMIT = 5;
 
 export type LeadInactivityWatchState = "watching" | "leased" | "mutating" | "moved" | "outside_scope" | "skipped" | "uncertain";
 export type LeadInactivityTestSlotState = "free" | "reserved" | "confirmed" | "uncertain";
+export type LeadInactivityDailyMovementSlotState = "free" | "reserved" | "confirmed" | "uncertain";
 
 export interface LeadInactivityEventInput {
   fingerprint: string;
@@ -81,6 +83,17 @@ export interface LeadInactivityTestSlot {
   leaseExpiresAt?: Date | null;
 }
 
+export interface LeadInactivityDailyMovementSlot {
+  bucketDate: string;
+  slotNumber: number;
+  state: LeadInactivityDailyMovementSlotState;
+  leadId?: number | null;
+  auditId?: string | null;
+  reservedAt?: Date | null;
+  confirmedAt?: Date | null;
+  leaseExpiresAt?: Date | null;
+}
+
 export interface LeadInactivityPersistence {
   transaction<T>(operation: (persistence: LeadInactivityPersistence) => Promise<T>): Promise<T>;
   getSetting(key: string): Promise<string | null>;
@@ -122,6 +135,29 @@ export interface LeadInactivityPersistence {
   markTestSlotUncertain(slotNumber: number, auditId: string, uncertainAt: Date): Promise<LeadInactivityTestSlot | null>;
   markExpiredTestSlotLeasesUncertain(now: Date): Promise<void>;
   hasUncertainTestSlot(): Promise<boolean>;
+  ensureDailyMovementSlots(bucketDate: string, limit: number): Promise<void>;
+  hasAvailableDailyMovementSlot(bucketDate: string): Promise<boolean>;
+  reserveFreeDailyMovementSlot(
+    bucketDate: string,
+    leadId: number,
+    auditId: string,
+    now: Date,
+    leaseExpiresAt: Date,
+  ): Promise<LeadInactivityDailyMovementSlot | null>;
+  confirmDailyMovementSlot(
+    bucketDate: string,
+    slotNumber: number,
+    auditId: string,
+    confirmedAt: Date,
+  ): Promise<LeadInactivityDailyMovementSlot | null>;
+  releaseDailyMovementSlotAfterKnownNoMove(bucketDate: string, slotNumber: number, auditId: string): Promise<boolean>;
+  markExpiredDailyMovementSlotLeasesUncertain(bucketDate: string, now: Date): Promise<void>;
+  markDailyMovementSlotUncertain(
+    bucketDate: string,
+    slotNumber: number,
+    auditId: string,
+    uncertainAt: Date,
+  ): Promise<LeadInactivityDailyMovementSlot | null>;
 }
 
 export interface LeadInactivityStoreOptions {
@@ -130,6 +166,7 @@ export interface LeadInactivityStoreOptions {
   inactivityMs?: number;
   watchLeaseMs?: number;
   testSlotLeaseMs?: number;
+  dailyMovementSlotLeaseMs?: number;
 }
 
 export type LeadInactivityRecordResult =
@@ -167,10 +204,37 @@ export interface LeadInactivityStore {
   confirmTestSlot(slotNumber: number, auditId: string, confirmedAt?: Date): Promise<LeadInactivityTestSlot>;
   releaseTestSlotAfterKnownNoMove(slotNumber: number, auditId: string): Promise<void>;
   markTestSlotUncertain(slotNumber: number, auditId: string, uncertainAt?: Date): Promise<LeadInactivityTestSlot>;
+  ensureDailyMovementSlots(bucketDate: string, limit: number): Promise<void>;
+  hasDailyMovementCapacity(bucketDate: string, limit: number): Promise<boolean>;
+  reserveDailyMovementSlot(
+    bucketDate: string,
+    leadId: number,
+    auditId: string,
+    now?: Date,
+  ): Promise<LeadInactivityDailyMovementSlot | null>;
+  confirmDailyMovementSlot(
+    bucketDate: string,
+    slotNumber: number,
+    auditId: string,
+    confirmedAt?: Date,
+  ): Promise<LeadInactivityDailyMovementSlot>;
+  releaseDailyMovementSlotAfterKnownNoMove(bucketDate: string, slotNumber: number, auditId: string): Promise<void>;
+  markDailyMovementSlotUncertain(
+    bucketDate: string,
+    slotNumber: number,
+    auditId: string,
+    uncertainAt?: Date,
+  ): Promise<LeadInactivityDailyMovementSlot>;
 }
 
 function assertPositiveInteger(value: number, name: string): void {
   if (!Number.isInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
+}
+
+function assertDailyMovementBucketDate(bucketDate: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(bucketDate)) {
+    throw new Error("daily movement bucket date is invalid");
+  }
 }
 
 function ceilToSecond(date: Date): Date {
@@ -214,6 +278,7 @@ export function createLeadInactivityStore(
   assertPositiveInteger(inactivityMs, "inactivityMs");
   const watchLeaseMs = options.watchLeaseMs ?? DEFAULT_WATCH_LEASE_MS;
   const testSlotLeaseMs = options.testSlotLeaseMs ?? DEFAULT_TEST_SLOT_LEASE_MS;
+  const dailyMovementSlotLeaseMs = options.dailyMovementSlotLeaseMs ?? DEFAULT_DAILY_MOVEMENT_SLOT_LEASE_MS;
 
   const getOrCreateTimestampSetting = async (key: string, now: Date, name: string): Promise<Date> => {
     if (Number.isNaN(now.getTime())) throw new Error(`${name} input is invalid`);
@@ -548,6 +613,66 @@ export function createLeadInactivityStore(
         transaction.markTestSlotUncertain(slotNumber, auditId, uncertainAt),
       );
       if (!uncertain) throw new Error(`unable to mark reserved test slot ${slotNumber} uncertain`);
+      return uncertain;
+    },
+
+    async ensureDailyMovementSlots(bucketDate, limit): Promise<void> {
+      assertDailyMovementBucketDate(bucketDate);
+      assertPositiveInteger(limit, "daily movement limit");
+      return persistence.ensureDailyMovementSlots(bucketDate, limit);
+    },
+
+    async hasDailyMovementCapacity(bucketDate, limit): Promise<boolean> {
+      assertDailyMovementBucketDate(bucketDate);
+      assertPositiveInteger(limit, "daily movement limit");
+      return persistence.hasAvailableDailyMovementSlot(bucketDate);
+    },
+
+    async reserveDailyMovementSlot(bucketDate, leadId, auditId, now = clock()): Promise<LeadInactivityDailyMovementSlot | null> {
+      assertDailyMovementBucketDate(bucketDate);
+      assertPositiveInteger(leadId, "leadId");
+      if (!auditId) throw new Error("auditId is required");
+      if (Number.isNaN(now.getTime())) throw new Error("daily movement reservation time is invalid");
+      const leaseExpiresAt = new Date(now.getTime() + dailyMovementSlotLeaseMs);
+      return persistence.transaction(async (transaction) => {
+        await transaction.markExpiredDailyMovementSlotLeasesUncertain(bucketDate, now);
+        return transaction.reserveFreeDailyMovementSlot(bucketDate, leadId, auditId, now, leaseExpiresAt);
+      });
+    },
+
+    async confirmDailyMovementSlot(bucketDate, slotNumber, auditId, confirmedAt = clock()): Promise<LeadInactivityDailyMovementSlot> {
+      assertDailyMovementBucketDate(bucketDate);
+      assertPositiveInteger(slotNumber, "daily movement slotNumber");
+      if (!auditId) throw new Error("auditId is required");
+      if (Number.isNaN(confirmedAt.getTime())) throw new Error("daily movement confirmation time is invalid");
+      const confirmed = await persistence.transaction((transaction) =>
+        transaction.confirmDailyMovementSlot(bucketDate, slotNumber, auditId, confirmedAt),
+      );
+      if (!confirmed) throw new Error(`unable to confirm daily movement slot ${bucketDate}/${slotNumber}`);
+      return confirmed;
+    },
+
+    async releaseDailyMovementSlotAfterKnownNoMove(bucketDate, slotNumber, auditId): Promise<void> {
+      assertDailyMovementBucketDate(bucketDate);
+      assertPositiveInteger(slotNumber, "daily movement slotNumber");
+      if (!auditId) throw new Error("auditId is required");
+      const released = await persistence.transaction((transaction) =>
+        transaction.releaseDailyMovementSlotAfterKnownNoMove(bucketDate, slotNumber, auditId),
+      );
+      if (!released) {
+        throw new Error(`unable to release daily movement slot ${bucketDate}/${slotNumber} after a known no-move outcome`);
+      }
+    },
+
+    async markDailyMovementSlotUncertain(bucketDate, slotNumber, auditId, uncertainAt = clock()): Promise<LeadInactivityDailyMovementSlot> {
+      assertDailyMovementBucketDate(bucketDate);
+      assertPositiveInteger(slotNumber, "daily movement slotNumber");
+      if (!auditId) throw new Error("auditId is required");
+      if (Number.isNaN(uncertainAt.getTime())) throw new Error("daily movement uncertainty time is invalid");
+      const uncertain = await persistence.transaction((transaction) =>
+        transaction.markDailyMovementSlotUncertain(bucketDate, slotNumber, auditId, uncertainAt),
+      );
+      if (!uncertain) throw new Error(`unable to mark daily movement slot ${bucketDate}/${slotNumber} uncertain`);
       return uncertain;
     },
   };
