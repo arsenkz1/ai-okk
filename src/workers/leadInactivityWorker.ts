@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { isAllowedInactivitySourceStage, SOURCE_PIPELINE_IDS, TARGET_PIPELINE_ID, TARGET_STATUS_ID } from "../services/leadInactivityPolicy";
 import type { AmoInactivityHistoryEvent, AmoInactivityLead, AmoInactivityMoveOutcome } from "../services/leadInactivityAmoClient";
-import type { LeadInactivityTestSlot, LeadInactivityWatch, LeadInactivityWatchState } from "../services/leadInactivityStore";
+import type {
+  LeadInactivityDailyMovementSlot,
+  LeadInactivityTestSlot,
+  LeadInactivityWatch,
+  LeadInactivityWatchState,
+} from "../services/leadInactivityStore";
+import { DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT, almatyCalendarDay } from "../services/leadInactivityDailyCap";
 
 export const LEAD_INACTIVITY_WORKER_INTERVAL_MS = 60_000;
 export const LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN = 5;
@@ -38,6 +44,27 @@ export interface LeadInactivityWorkerStore {
   confirmTestSlot(slotNumber: number, auditId: string, confirmedAt?: Date): Promise<LeadInactivityTestSlot>;
   releaseTestSlotAfterKnownNoMove(slotNumber: number, auditId: string): Promise<void>;
   markTestSlotUncertain(slotNumber: number, auditId: string, uncertainAt?: Date): Promise<LeadInactivityTestSlot>;
+  ensureDailyMovementSlots(bucketDate: string, limit: number): Promise<void>;
+  hasDailyMovementCapacity(bucketDate: string, limit: number): Promise<boolean>;
+  reserveDailyMovementSlot(
+    bucketDate: string,
+    leadId: number,
+    auditId: string,
+    now?: Date,
+  ): Promise<LeadInactivityDailyMovementSlot | null>;
+  confirmDailyMovementSlot(
+    bucketDate: string,
+    slotNumber: number,
+    auditId: string,
+    confirmedAt?: Date,
+  ): Promise<LeadInactivityDailyMovementSlot>;
+  releaseDailyMovementSlotAfterKnownNoMove(bucketDate: string, slotNumber: number, auditId: string): Promise<void>;
+  markDailyMovementSlotUncertain(
+    bucketDate: string,
+    slotNumber: number,
+    auditId: string,
+    uncertainAt?: Date,
+  ): Promise<LeadInactivityDailyMovementSlot>;
   finishWatchClaim(watch: LeadInactivityWatch, state: LeadInactivityWatchState, reason: string | null, now?: Date): Promise<void>;
   recordLeadEvent(input: {
     fingerprint: string;
@@ -58,7 +85,11 @@ export interface LeadInactivityWorkerAmoClient {
     sourcePipelineIds: readonly number[];
     targetPipelineId: number;
     targetStatusId: number;
-  }, beforePatch?: () => Promise<boolean>): Promise<AmoInactivityMoveOutcome>;
+  }, hooks?: {
+    isMoveMutationCurrent?: () => Promise<boolean>;
+    beforeFinalPatch?: () => Promise<"allow" | "daily_capacity_unavailable">;
+    beforePatchSend?: () => Promise<"allow" | "daily_capacity_unavailable">;
+  } | (() => Promise<boolean>)): Promise<AmoInactivityMoveOutcome>;
 }
 
 export interface LeadInactivityWorkerResult {
@@ -110,9 +141,17 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
   const testingMode = options.testingMode ?? true;
   const maxWatchesPerRun = assertBatchLimit(options.maxWatchesPerRun);
 
-  const processClaim = async (claimed: LeadInactivityWatch, now: Date, result: LeadInactivityWorkerResult): Promise<void> => {
+  const processClaim = async (
+    claimed: LeadInactivityWatch,
+    now: Date,
+    dailyBucketDate: string,
+    result: LeadInactivityWorkerResult,
+  ): Promise<void> => {
     const auditId = randomId();
+    const dailyReservation = { slot: null as LeadInactivityDailyMovementSlot | null };
     let slot: LeadInactivityTestSlot | null = null;
+    let dailySlotWasConfirmed = false;
+    let patchDispatchedAt: Date | null = null;
     let mutationConfirmed = false;
     let confirmedMoveDurablyFinalized = false;
     let slotWasConfirmed = false;
@@ -183,12 +222,42 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         sourcePipelineIds: SOURCE_PIPELINE_IDS,
         targetPipelineId: TARGET_PIPELINE_ID,
         targetStatusId: TARGET_STATUS_ID,
-      }, () => options.store.isMoveMutationCurrent(claimed));
+      }, {
+        isMoveMutationCurrent: () => options.store.isMoveMutationCurrent(claimed),
+        ...(!testingMode ? {
+          beforeFinalPatch: async (): Promise<"allow" | "daily_capacity_unavailable"> => {
+            const finalNow = clock();
+            const finalBucketDate = almatyCalendarDay(finalNow);
+            if (finalBucketDate !== dailyBucketDate) {
+              await options.store.ensureDailyMovementSlots(finalBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT);
+            }
+            dailyReservation.slot = await options.store.reserveDailyMovementSlot(finalBucketDate, claimed.leadId, auditId, finalNow);
+            return dailyReservation.slot ? "allow" : "daily_capacity_unavailable";
+          },
+          beforePatchSend: async (): Promise<"allow" | "daily_capacity_unavailable"> => {
+            const dispatchNow = clock();
+            if (!dailyReservation.slot || almatyCalendarDay(dispatchNow) !== dailyReservation.slot.bucketDate) {
+              return "daily_capacity_unavailable";
+            }
+            patchDispatchedAt = dispatchNow;
+            return "allow";
+          },
+        } : {}),
+      });
       if (outcome.kind === "confirmed") {
         mutationConfirmed = true;
         if (slot) {
           await options.store.confirmTestSlot(slot.slotNumber, auditId, now);
           slotWasConfirmed = true;
+        }
+        if (dailyReservation.slot) {
+          await options.store.confirmDailyMovementSlot(
+            dailyReservation.slot.bucketDate,
+            dailyReservation.slot.slotNumber,
+            auditId,
+            patchDispatchedAt ?? now,
+          );
+          dailySlotWasConfirmed = true;
         }
         await options.store.finishWatchClaim(claimed, "moved", null, now);
         watchWasFinalized = true;
@@ -214,6 +283,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
       }
       if (outcome.kind === "uncertain") {
         if (slot) await options.store.markTestSlotUncertain(slot.slotNumber, auditId, now);
+        if (dailyReservation.slot) await options.store.markDailyMovementSlotUncertain(dailyReservation.slot.bucketDate, dailyReservation.slot.slotNumber, auditId, now);
         await options.store.finishWatchClaim(claimed, "uncertain", "amoCRM mutation outcome is uncertain", now);
         watchWasFinalized = true;
         await options.store.completeMoveAudit(auditId, { kind: "uncertain", slotNumber: slot?.slotNumber ?? null });
@@ -221,14 +291,31 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         return;
       }
 
+      if (outcome.kind === "not_moved" && outcome.reason === "daily_capacity_unavailable") {
+        if (slot) await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
+        if (dailyReservation.slot) await options.store.releaseDailyMovementSlotAfterKnownNoMove(dailyReservation.slot.bucketDate, dailyReservation.slot.slotNumber, auditId);
+        await options.store.finishWatchClaim(
+          claimed,
+          "watching",
+          "daily movement capacity is unavailable; queued for the next Almaty day",
+          now,
+        );
+        watchWasFinalized = true;
+        await options.store.completeMoveAudit(auditId, { kind: "skipped", slotNumber: null });
+        result.deferred += 1;
+        return;
+      }
+
       if (outcome.kind === "not_moved" && outcome.reason === "fence_cancelled") {
         if (slot) await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
+        if (dailyReservation.slot) await options.store.releaseDailyMovementSlotAfterKnownNoMove(dailyReservation.slot.bucketDate, dailyReservation.slot.slotNumber, auditId);
         await options.store.completeMoveAudit(auditId, { kind: "skipped", slotNumber: null });
         result.deferred += 1;
         return;
       }
 
       if (slot) await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
+      if (dailyReservation.slot) await options.store.releaseDailyMovementSlotAfterKnownNoMove(dailyReservation.slot.bucketDate, dailyReservation.slot.slotNumber, auditId);
       const state: LeadInactivityWatchState = outcome.reason === "not_in_source" ? "outside_scope" : "skipped";
       await options.store.finishWatchClaim(claimed, state, `amoCRM move was not confirmed: ${outcome.reason}`, now);
       watchWasFinalized = true;
@@ -236,7 +323,9 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
       result.deferred += 1;
     } catch {
       let safeToRetry = true;
-      if (mutationConfirmed && !watchWasFinalized && !slotWasConfirmed) safeToRetry = false;
+      if (mutationConfirmed && !watchWasFinalized) {
+        safeToRetry = false;
+      }
       if (slot && !slotWasConfirmed && !mutationConfirmed) {
         try {
           await options.store.releaseTestSlotAfterKnownNoMove(slot.slotNumber, auditId);
@@ -256,18 +345,40 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
           // Retaining the reserved slot is safer than making capacity reusable.
         }
       }
+      if (dailyReservation.slot && !dailySlotWasConfirmed && !mutationConfirmed) {
+        try {
+          await options.store.releaseDailyMovementSlotAfterKnownNoMove(dailyReservation.slot.bucketDate, dailyReservation.slot.slotNumber, auditId);
+        } catch {
+          safeToRetry = false;
+          try {
+            await options.store.markDailyMovementSlotUncertain(dailyReservation.slot.bucketDate, dailyReservation.slot.slotNumber, auditId, now);
+          } catch {
+            // The durable slot lease will become uncertain before daily capacity can be reused.
+          }
+        }
+      } else if (dailyReservation.slot && mutationConfirmed && !dailySlotWasConfirmed) {
+        safeToRetry = false;
+        try {
+          await options.store.markDailyMovementSlotUncertain(dailyReservation.slot.bucketDate, dailyReservation.slot.slotNumber, auditId, now);
+        } catch {
+          // Retaining the reserved daily capacity is safer than reusing it after a confirmed move.
+        }
+      }
+      const capacityWasConfirmed = testingMode
+        ? Boolean(slot && slotWasConfirmed)
+        : Boolean(dailyReservation.slot && dailySlotWasConfirmed && (!slot || slotWasConfirmed));
       if (!watchWasFinalized) {
         try {
           await options.store.finishWatchClaim(
             claimed,
-            slotWasConfirmed ? "moved" : (safeToRetry ? "watching" : "uncertain"),
-            slotWasConfirmed
+            capacityWasConfirmed && safeToRetry ? "moved" : (safeToRetry ? "watching" : "uncertain"),
+            capacityWasConfirmed && safeToRetry
               ? null
               : (safeToRetry
                 ? "worker failed before a confirmed movement"
                 : (mutationConfirmed
                   ? "worker could not safely finalize a confirmed amoCRM movement"
-                  : "worker could not safely release its reserved testing slot")),
+                  : "worker could not safely release its reserved movement capacity")),
             now,
           );
           watchWasFinalized = true;
@@ -277,10 +388,8 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
       }
       if (auditCreated) {
         try {
-          if (slotWasConfirmed && slot) {
-            await options.store.completeMoveAudit(auditId, { kind: "confirmed", slotNumber: slot.slotNumber }, now);
-          } else if (confirmedMoveDurablyFinalized && !slot) {
-            await options.store.completeMoveAudit(auditId, { kind: "confirmed", slotNumber: null }, now);
+          if (confirmedMoveDurablyFinalized) {
+            await options.store.completeMoveAudit(auditId, { kind: "confirmed", slotNumber: slot?.slotNumber ?? null }, now);
           } else if (!safeToRetry) {
             await options.store.completeMoveAudit(auditId, { kind: "uncertain", slotNumber: slot?.slotNumber ?? null }, now);
           } else {
@@ -304,6 +413,13 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         throw new Error("unrestricted production movement is blocked: durable production baseline is not complete");
       }
       await options.store.releaseExpiredWatchLeases(now);
+      const dailyBucketDate = almatyCalendarDay(now);
+      if (!testingMode) {
+        await options.store.ensureDailyMovementSlots(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT);
+        if (!await options.store.hasDailyMovementCapacity(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT)) {
+          return result;
+        }
+      }
       if (testingMode) await options.store.ensureTestSlots(LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN);
       const leadIds = await options.store.listDueWatchLeadIds(now, maxWatchesPerRun);
       result.scanned = leadIds.length;
@@ -311,8 +427,11 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         const claimed = await options.store.claimDueWatch(leadId, now);
         if (!claimed) continue;
         result.claimed += 1;
-        await processClaim(claimed, now, result);
-        if (result.uncertain > 0) break;
+        await processClaim(claimed, now, dailyBucketDate, result);
+        if (
+          result.uncertain > 0
+          || (!testingMode && !await options.store.hasDailyMovementCapacity(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT))
+        ) break;
       }
       return result;
     },

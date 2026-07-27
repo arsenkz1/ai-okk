@@ -318,6 +318,35 @@ test("aborts before PATCH when a durable worker mutation fence was invalidated",
   assert.equal(requests[0].method, "GET");
 });
 
+test("stops a reserved daily slot from crossing into the next Almaty day before PATCH", async () => {
+  const { client, requests } = createClient({
+    responses: [
+      { status: 200, data: lead(), headers: {} },
+      { status: 200, data: lead(), headers: {} },
+    ],
+  });
+  let finalHookCalls = 0;
+
+  const result = await client.moveLeadToTarget(100, {
+    sourcePipelineIds: [9055778, 6909890],
+    targetPipelineId: 9055770,
+    targetStatusId: 72917546,
+  }, {
+    isMoveMutationCurrent: async () => true,
+    beforeFinalPatch: async () => {
+      finalHookCalls += 1;
+      return "allow";
+    },
+    beforePatchSend: async () => "daily_capacity_unavailable",
+  });
+
+  assert.equal(result.kind, "not_moved");
+  assert.equal(result.reason, "daily_capacity_unavailable");
+  assert.equal(result.lead.id, 100);
+  assert.equal(finalHookCalls, 1);
+  assert.deepEqual(requests.map(({ method }) => method), ["GET", "GET"]);
+});
+
 test("rechecks the durable mutation fence after rate-limit waiting and before sending PATCH", async () => {
   let fenceCurrent = true;
   const { client, requests } = createClient({
