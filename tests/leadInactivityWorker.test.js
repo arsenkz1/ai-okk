@@ -343,18 +343,18 @@ test("prioritizes OZHOP, then qualified, then taken-in-work even when lower stag
 
   const result = await worker.runOnce();
 
-  assert.deepEqual(result, { scanned: 5, claimed: 5, moved: 5, deferred: 0, uncertain: 0, failed: 0 });
-  assert.deepEqual(calls.claim, [302, 301, 202, 201, 102]);
+  assert.deepEqual(result, { scanned: 6, claimed: 6, moved: 6, deferred: 0, uncertain: 0, failed: 0 });
+  assert.deepEqual(calls.claim, [302, 301, 202, 201, 102, 101]);
   assert.deepEqual(priorityQueries, [
-    { limit: 5, stagePairs: [
+    { limit: 50, stagePairs: [
       { pipelineId: 6909890, statusId: 58160902 },
       { pipelineId: 9055778, statusId: 72919958 },
     ] },
-    { limit: 3, stagePairs: [
+    { limit: 48, stagePairs: [
       { pipelineId: 6909890, statusId: 58160726 },
       { pipelineId: 9055778, statusId: 72917586 },
     ] },
-    { limit: 1, stagePairs: [
+    { limit: 46, stagePairs: [
       { pipelineId: 6909890, statusId: 58160718 },
       { pipelineId: 9055778, statusId: 72917582 },
     ] },
@@ -394,9 +394,9 @@ test("falls through to qualified and taken-in-work only when higher priority gro
   assert.deepEqual(result, { scanned: 3, claimed: 3, moved: 3, deferred: 0, uncertain: 0, failed: 0 });
   assert.deepEqual(calls.claim, [201, 101, 102]);
   assert.deepEqual(priorityQueries.map(({ limit, stagePairs }) => ({ limit, statusIds: stagePairs.map((stage) => stage.statusId) })), [
-    { limit: 5, statusIds: [58160902, 72919958] },
-    { limit: 5, statusIds: [58160726, 72917586] },
-    { limit: 4, statusIds: [58160718, 72917582] },
+    { limit: 50, statusIds: [58160902, 72919958] },
+    { limit: 50, statusIds: [58160726, 72917586] },
+    { limit: 49, statusIds: [58160718, 72917582] },
   ]);
 });
 
@@ -545,26 +545,28 @@ test("does not claim a preselected lower-priority watch after a replacement owne
   assert.deepEqual(calls.move, []);
 });
 
-test("caps each one-minute pass before claiming more than five due watches", async () => {
+test("unrestricted worker has no five-watch per-pass limit and queries the current daily capacity", async () => {
+  const dueLeadIds = Array.from({ length: 100 }, (_, index) => index + 100);
   const { store, amo, calls } = fixture({
     store: {
       listDueWatchLeadIds: async (_now, limit) => {
         calls.list += 1;
-        assert.equal(limit, 5);
-        return [100, 101, 102, 103, 104];
+        assert.equal(limit, 100);
+        return dueLeadIds;
       },
+      getDailyMovementOperationalStartDate: async () => "2026-07-19",
       claimDueWatchForWorkerRun: async (leadId) => {
         calls.claim.push(leadId);
-        return watch(leadId);
+        return null;
       },
     },
   });
-  const worker = createLeadInactivityWorker({ store, amo, clock: () => NOW, randomId: () => "audit" });
+  const worker = createLeadInactivityWorker({ store, amo, testingMode: false, clock: () => NOW, randomId: () => "audit" });
 
   const result = await worker.runOnce();
 
-  assert.equal(result.scanned, 5);
-  assert.equal(calls.claim.length, 5);
+  assert.equal(result.scanned, 100);
+  assert.equal(calls.claim.length, 100);
 });
 
 test("emits an admin notification after a confirmed testing move", async () => {

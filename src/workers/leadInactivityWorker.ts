@@ -14,10 +14,10 @@ import type {
   LeadInactivityWatch,
   LeadInactivityWatchState,
 } from "../services/leadInactivityStore";
+import { TESTING_LEADS_MOVEMENT_LIMIT } from "../services/leadInactivityStore";
 import { almatyDailyMovementBucket, dailyMovementLimitForBucket } from "../services/leadInactivityDailyCap";
 
 export const LEAD_INACTIVITY_WORKER_INTERVAL_MS = 60_000;
-export const LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN = 5;
 
 export interface LeadInactivityWorkerAudit {
   id: string;
@@ -126,12 +126,12 @@ export interface CreateLeadInactivityWorkerOptions {
   maxWatchesPerRun?: number;
 }
 
-function assertBatchLimit(value: number | undefined): number {
-  const limit = value ?? LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN;
-  if (!Number.isInteger(limit) || limit <= 0 || limit > LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN) {
-    throw new Error(`lead inactivity worker batch limit must be between 1 and ${LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN}`);
+function assertBatchLimit(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error("lead inactivity worker batch limit must be a positive integer");
   }
-  return limit;
+  return value;
 }
 
 function hasNewerDirectLeadHistory(history: AmoInactivityHistoryEvent[], watch: LeadInactivityWatch): AmoInactivityHistoryEvent | null {
@@ -150,9 +150,9 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
   const clock = options.clock ?? (() => new Date());
   const randomId = options.randomId ?? randomUUID;
   const testingMode = options.testingMode ?? true;
-  const maxWatchesPerRun = assertBatchLimit(options.maxWatchesPerRun);
+  const requestedBatchLimit = assertBatchLimit(options.maxWatchesPerRun);
 
-  const listPrioritizedDueWatchLeadIds = async (now: Date): Promise<number[]> => {
+  const listPrioritizedDueWatchLeadIds = async (now: Date, maxWatchesPerRun: number): Promise<number[]> => {
     const leadIds: number[] = [];
     for (const stagePairs of INACTIVITY_STAGE_PRIORITY_GROUPS) {
       const remaining = maxWatchesPerRun - leadIds.length;
@@ -297,7 +297,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
                 ? [
                   "✅ Тестовое перемещение по неактивности",
                   `Сделка: #${claimed.leadId}`,
-                  `Тестовый слот: ${slot?.slotNumber}/${LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN}`,
+                  `Тестовый слот: ${slot?.slotNumber}/${TESTING_LEADS_MOVEMENT_LIMIT}`,
                 ].join("\n")
                 : ["✅ Перемещение по неактивности", `Сделка: #${claimed.leadId}`].join("\n"),
             );
@@ -453,8 +453,11 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
             return result;
           }
         }
-        if (testingMode) await options.store.ensureTestSlots(LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN);
-        const leadIds = await listPrioritizedDueWatchLeadIds(now);
+        if (testingMode) await options.store.ensureTestSlots(TESTING_LEADS_MOVEMENT_LIMIT);
+        const maxWatchesPerRun = testingMode
+          ? Math.min(requestedBatchLimit ?? TESTING_LEADS_MOVEMENT_LIMIT, TESTING_LEADS_MOVEMENT_LIMIT)
+          : (requestedBatchLimit ?? dailyMovementLimit);
+        const leadIds = await listPrioritizedDueWatchLeadIds(now, maxWatchesPerRun);
         result.scanned = leadIds.length;
         for (const leadId of leadIds) {
           const claimed = await options.store.claimDueWatchForWorkerRun(leadId, runLeaseToken, clock());
