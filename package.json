@@ -13,6 +13,7 @@
     "lead-inactivity:subscribe": "node dist/scripts/subscribeLeadInactivityEvents.js",
     "lead-inactivity:baseline-production": "node dist/scripts/baselineLeadInactivityEligibleLeads.js",
     "call-task:activate": "node dist/scripts/initializeCallTaskAutomationActivation.js",
+    "call-stage:activate": "node dist/scripts/initializeCallStageAutomationActivation.js",
     "prisma:generate": "prisma generate"
   },
   "keywords": [],

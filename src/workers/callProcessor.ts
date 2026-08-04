@@ -14,6 +14,8 @@ import {
 import { appendCallRowToSheet } from "../services/googleSheets";
 import { runCallTaskAutomation } from "../services/callTaskAutomation";
 import { getCallTaskAutomationRuntime } from "../services/callTaskAutomationRuntime";
+import { runCallStageAutomation } from "../services/callStageAutomation";
+import { getCallStageAutomationRuntime } from "../services/callStageAutomationRuntime";
 import {
   addNoteToDeal,
   lookupDealByPhone,
@@ -171,6 +173,43 @@ async function maybeRunCallTaskAutomation(callId: number, transcript: string): P
     });
   } catch (error) {
     console.error("[CallTaskAutomation] Call action processing failed", {
+      callId,
+      reason: error instanceof Error ? error.message : "unknown error",
+    });
+  }
+}
+
+/**
+ * Separate from task automation: this may mutate only a verified UZUM stage.
+ * It is best-effort, so an integration failure cannot cause the completed-call
+ * worker itself to retry and replay a non-idempotent amoCRM PATCH.
+ */
+async function maybeRunCallStageAutomation(callId: number, transcript: string): Promise<void> {
+  try {
+    const runtime = getCallStageAutomationRuntime();
+    if (!runtime.config.enabled) return;
+    const call = await prisma.call.findUnique({
+      where: { id: callId },
+      select: { id: true, dealId: true, startedAt: true, endedAt: true },
+    });
+    if (!call?.dealId || !call.endedAt) return;
+    const result = await runCallStageAutomation({
+      callId: call.id,
+      dealId: call.dealId,
+      // Use source call timestamps, never local processing time, so historical
+      // imports cannot cross the durable activation boundary.
+      callCreatedAt: call.startedAt,
+      callEndedAt: call.endedAt,
+      transcript,
+    }, runtime.dependencies);
+    console.info("[CallStageAutomation] Processed call stage", {
+      callId: call.id,
+      dealId: call.dealId,
+      result: result.kind,
+      actionId: "actionId" in result ? result.actionId : undefined,
+    });
+  } catch (error) {
+    console.error("[CallStageAutomation] Call stage processing failed", {
       callId,
       reason: error instanceof Error ? error.message : "unknown error",
     });
@@ -344,9 +383,10 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
     return;
   }
 
-  // Gemini quality scoring and the isolated operational proposal are independent
-  // consumers of the same finished transcript, so run them in parallel.
+  // Quality scoring, task proposals, and UZUM stage routing are independent
+  // consumers of the same persisted finished transcript.
   const taskAutomationPromise = maybeRunCallTaskAutomation(callId, transcriptText);
+  const stageAutomationPromise = maybeRunCallStageAutomation(callId, transcriptText);
   const analysis = await analyzeCallWithGemini(transcriptText, {
     durationSeconds: payload.duration,
     direction: payload.direction,
@@ -478,9 +518,10 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
     }
   }
 
-  // The automation path catches and records its own failures. Await it before
-  // acknowledging the queue job so successful mutations are not cut short.
+  // Each path catches and records its own failures. They were started in parallel
+  // above, then explicitly awaited before acknowledging the queue job.
   await taskAutomationPromise;
+  await stageAutomationPromise;
 
   await prisma.call.update({
     where: { id: callId },
