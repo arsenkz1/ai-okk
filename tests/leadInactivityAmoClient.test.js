@@ -366,6 +366,35 @@ test("rechecks the durable mutation fence after rate-limit waiting and before se
   assert.equal(requests[0].method, "GET");
 });
 
+test("rechecks run ownership after awaited pre-PATCH work and immediately before sending PATCH", async () => {
+  let fenceCurrent = true;
+  const { client, requests } = createClient({
+    responses: [
+      { status: 200, data: lead(), headers: {} },
+      { status: 200, data: lead(), headers: {} },
+      { status: 200, data: [], headers: {} },
+      { status: 200, data: lead({ pipeline_id: 9055770, status_id: 72917546 }), headers: {} },
+    ],
+  });
+
+  const result = await client.moveLeadToTarget(100, {
+    sourcePipelineIds: [9055778, 6909890],
+    targetPipelineId: 9055770,
+    targetStatusId: 72917546,
+  }, {
+    isMoveMutationCurrent: async () => fenceCurrent,
+    beforeFinalPatch: async () => "allow",
+    beforePatchSend: async () => {
+      fenceCurrent = false;
+      return "allow";
+    },
+  });
+
+  assert.equal(result.kind, "not_moved");
+  assert.equal(result.reason, "fence_cancelled");
+  assert.deepEqual(requests.map(({ method }) => method), ["GET", "GET"]);
+});
+
 test("moves a freshly read lead while preserving its responsible manager and confirms by read-back", async () => {
   const { client, requests } = createClient({
     responses: [

@@ -85,6 +85,14 @@ function createAdapter(database: PrismaInactivityDb, transactionRunner?: Transac
       return setting.value;
     },
 
+    async replaceSettingIfValue(key: string, expectedValue: string, nextValue: string): Promise<boolean> {
+      const updated = await database.leadInactivitySetting.updateMany({
+        where: { key, value: expectedValue },
+        data: { value: nextValue },
+      });
+      return updated.count === 1;
+    },
+
     async insertEventIfAbsent(event: LeadInactivityEventInput): Promise<boolean> {
       try {
         await database.leadInactivityEvent.create({

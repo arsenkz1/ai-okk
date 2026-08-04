@@ -6,6 +6,7 @@ const {
   ACTIVATION_BOUNDARY_SETTING_KEY,
   PRODUCTION_BASELINE_SETTING_KEY,
   PRODUCTION_BASELINE_COMPLETED_SETTING_KEY,
+  WORKER_RUN_LEASE_SETTING_KEY,
   INACTIVITY_MS,
 } = require("../dist/services/leadInactivityStore");
 
@@ -30,6 +31,12 @@ class MemoryPersistence {
   async createSettingIfAbsent(key, value) {
     if (!this.settings.has(key)) this.settings.set(key, value);
     return this.settings.get(key);
+  }
+
+  async replaceSettingIfValue(key, expectedValue, nextValue) {
+    if (this.settings.get(key) !== expectedValue) return false;
+    this.settings.set(key, nextValue);
+    return true;
   }
 
   async insertEventIfAbsent(event) {
@@ -243,6 +250,67 @@ function event(overrides = {}) {
     ...overrides,
   };
 }
+
+test("elects only one cross-replica worker pass and releases it with a compare-and-set fence", async () => {
+  const persistence = new MemoryPersistence();
+  const now = new Date("2026-07-19T12:00:00.000Z");
+  const first = createLeadInactivityStore(persistence, { clock: () => now, workerRunLeaseMs: 60_000 });
+  const second = createLeadInactivityStore(persistence, { clock: () => now, workerRunLeaseMs: 60_000 });
+
+  assert.deepEqual(await Promise.all([
+    first.tryAcquireWorkerRunLease("worker-a", now),
+    second.tryAcquireWorkerRunLease("worker-b", now),
+  ]), [true, false]);
+  assert.equal(JSON.parse(persistence.settings.get(WORKER_RUN_LEASE_SETTING_KEY)).token, "worker-a");
+  assert.equal(await second.releaseWorkerRunLease("worker-b", now), false);
+  assert.equal(await first.releaseWorkerRunLease("worker-a", now), true);
+  const afterThirtySeconds = new Date("2026-07-19T12:00:30.000Z");
+  assert.equal(await second.tryAcquireWorkerRunLease("worker-b", afterThirtySeconds), false);
+  const nextMinute = new Date("2026-07-19T12:01:00.000Z");
+  assert.equal(await second.tryAcquireWorkerRunLease("worker-b", nextMinute), true);
+});
+
+test("does not claim a due watch under a run token replaced after its renewal window", async () => {
+  const persistence = new MemoryPersistence();
+  const startedAt = new Date("2026-07-19T12:00:00.000Z");
+  const takeoverAt = new Date("2026-07-19T12:01:00.000Z");
+  const first = createLeadInactivityStore(persistence, { clock: () => startedAt, workerRunLeaseMs: 1_000, randomId: () => "watch-a" });
+  const replacement = createLeadInactivityStore(persistence, { clock: () => takeoverAt, workerRunLeaseMs: 1_000, randomId: () => "watch-b" });
+  persistence.watches.set(100, {
+    leadId: 100,
+    leadCreatedAt: new Date("2026-07-16T10:00:00.000Z"),
+    lastActivityAt: new Date("2026-07-16T12:00:00.000Z"),
+    lastActivityReceivedAt: new Date("2026-07-16T12:00:01.000Z"),
+    dueAt: new Date("2026-07-19T11:59:59.000Z"),
+    pipelineId: 9055778,
+    statusId: 72917586,
+    cycle: 1,
+    state: "watching",
+    leaseToken: null,
+    leaseExpiresAt: null,
+    leaseGeneration: 0,
+    lastEventFingerprint: "event-1",
+  });
+
+  assert.equal(await first.tryAcquireWorkerRunLease("worker-a", startedAt), true);
+  assert.equal(await replacement.tryAcquireWorkerRunLease("worker-b", takeoverAt), true);
+  assert.equal(await first.claimDueWatchForWorkerRun(100, "worker-a", takeoverAt), null);
+  assert.equal(persistence.watches.get(100).state, "watching");
+});
+
+test("renews global worker cooldown before each additional claim", async () => {
+  const persistence = new MemoryPersistence();
+  const startedAt = new Date("2026-07-19T12:00:00.000Z");
+  const renewedAt = new Date("2026-07-19T12:00:30.000Z");
+  const store = createLeadInactivityStore(persistence, { clock: () => startedAt, workerRunLeaseMs: 60_000 });
+  const otherReplica = createLeadInactivityStore(persistence, { clock: () => startedAt, workerRunLeaseMs: 60_000 });
+
+  assert.equal(await store.tryAcquireWorkerRunLease("worker-a", startedAt), true);
+  assert.equal(await store.renewWorkerRunLease("worker-a", renewedAt), true);
+  assert.equal(await store.releaseWorkerRunLease("worker-a", renewedAt), true);
+  assert.equal(await otherReplica.tryAcquireWorkerRunLease("worker-b", new Date("2026-07-19T12:01:00.000Z")), false);
+  assert.equal(await otherReplica.tryAcquireWorkerRunLease("worker-b", new Date("2026-07-19T12:01:30.000Z")), true);
+});
 
 test("creates one durable activation boundary rounded up to the next second and one watch", async () => {
   const persistence = new MemoryPersistence();

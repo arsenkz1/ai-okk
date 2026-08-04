@@ -38,6 +38,24 @@ function watch(overrides = {}) {
   };
 }
 
+test("Prisma persistence conditionally replaces a setting with a compare-and-set fence", async () => {
+  let received = null;
+  const persistence = createPrismaLeadInactivityPersistence({
+    leadInactivitySetting: {
+      updateMany: async (query) => {
+        received = query;
+        return { count: 1 };
+      },
+    },
+  });
+
+  assert.equal(await persistence.replaceSettingIfValue("worker-run", "old", "new"), true);
+  assert.deepEqual(received, {
+    where: { key: "worker-run", value: "old" },
+    data: { value: "new" },
+  });
+});
+
 test("Prisma persistence accepts a mutating watch so an incoming webhook can revoke its fence", async () => {
   const persistence = createPrismaLeadInactivityPersistence({
     leadInactivityWatch: {
@@ -199,7 +217,16 @@ test("Prisma persistence selects due watches, fences completion, and records a s
     { pipelineId: 9055778, statusId: 72919958 },
   ];
   assert.deepEqual(await persistence.listDueWatchLeadIds(now, 5, priorityGroup), [101, 100]);
-  assert.deepEqual(calls.due.where.OR, priorityGroup);
+  assert.deepEqual(calls.due, {
+    where: {
+      state: "watching",
+      dueAt: { lte: now },
+      OR: priorityGroup,
+    },
+    orderBy: [{ dueAt: "asc" }, { leadId: "asc" }],
+    take: 5,
+    select: { leadId: true },
+  });
   assert.equal(await persistence.isWatchClaimCurrent(claimed), true);
   const finished = await persistence.finishWatchClaim(claimed, "moved", null, now);
   assert.equal(finished.state, "moved");

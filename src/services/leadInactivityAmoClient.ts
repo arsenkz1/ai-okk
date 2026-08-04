@@ -473,6 +473,7 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
         if (beforePatchSend && await beforePatchSend() === "daily_capacity_unavailable") {
           throw new AmoInactivityPrePatchDailyCapacityUnavailableError();
         }
+        if (isMoveMutationCurrent && !await isMoveMutationCurrent()) return false;
         if (latest.responsibleUserId === null) delete patch.responsible_user_id;
         else patch.responsible_user_id = latest.responsibleUserId;
         return true;

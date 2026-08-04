@@ -38,10 +38,13 @@ export type LeadInactivityWorkerAuditOutcome =
 
 export interface LeadInactivityWorkerStore {
   isProductionBaselineComplete(): Promise<boolean>;
+  tryAcquireWorkerRunLease(token: string, now?: Date): Promise<boolean>;
+  renewWorkerRunLease(token: string, now?: Date): Promise<boolean>;
+  releaseWorkerRunLease(token: string, now?: Date): Promise<boolean>;
   releaseExpiredWatchLeases(now?: Date): Promise<void>;
   ensureTestSlots(limit: number): Promise<void>;
   listDueWatchLeadIds(now: Date, limit: number, stagePairs?: readonly LeadInactivityStagePair[]): Promise<number[]>;
-  claimDueWatch(leadId: number, now?: Date): Promise<LeadInactivityWatch | null>;
+  claimDueWatchForWorkerRun(leadId: number, workerRunToken: string, now?: Date): Promise<LeadInactivityWatch | null>;
   isWatchClaimCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
   beginMoveMutation(claimed: LeadInactivityWatch): Promise<boolean>;
   isMoveMutationCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
@@ -163,6 +166,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
     now: Date,
     dailyBucketDate: string,
     result: LeadInactivityWorkerResult,
+    renewWorkerRunLease: () => Promise<boolean>,
   ): Promise<void> => {
     const auditId = randomId();
     const dailyReservation = { slot: null as LeadInactivityDailyMovementSlot | null };
@@ -240,7 +244,9 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         targetPipelineId: TARGET_PIPELINE_ID,
         targetStatusId: TARGET_STATUS_ID,
       }, {
-        isMoveMutationCurrent: () => options.store.isMoveMutationCurrent(claimed),
+        isMoveMutationCurrent: async (): Promise<boolean> => (
+          await renewWorkerRunLease() && await options.store.isMoveMutationCurrent(claimed)
+        ),
         ...(!testingMode ? {
           beforeFinalPatch: async (): Promise<"allow" | "daily_capacity_unavailable"> => {
             const finalNow = clock();
@@ -426,31 +432,43 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
     async runOnce(): Promise<LeadInactivityWorkerResult> {
       const now = clock();
       const result = { scanned: 0, claimed: 0, moved: 0, deferred: 0, uncertain: 0, failed: 0 };
-      if (!testingMode && !await options.store.isProductionBaselineComplete()) {
-        throw new Error("unrestricted production movement is blocked: durable production baseline is not complete");
-      }
-      await options.store.releaseExpiredWatchLeases(now);
-      const dailyBucketDate = almatyCalendarDay(now);
-      if (!testingMode) {
-        await options.store.ensureDailyMovementSlots(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT);
-        if (!await options.store.hasDailyMovementCapacity(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT)) {
-          return result;
+      const runLeaseToken = randomId();
+      if (!await options.store.tryAcquireWorkerRunLease(runLeaseToken, now)) return result;
+      try {
+        if (!testingMode && !await options.store.isProductionBaselineComplete()) {
+          throw new Error("unrestricted production movement is blocked: durable production baseline is not complete");
         }
+        await options.store.releaseExpiredWatchLeases(now);
+        const dailyBucketDate = almatyCalendarDay(now);
+        if (!testingMode) {
+          await options.store.ensureDailyMovementSlots(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT);
+          if (!await options.store.hasDailyMovementCapacity(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT)) {
+            return result;
+          }
+        }
+        if (testingMode) await options.store.ensureTestSlots(LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN);
+        const leadIds = await listPrioritizedDueWatchLeadIds(now);
+        result.scanned = leadIds.length;
+        for (const leadId of leadIds) {
+          const claimed = await options.store.claimDueWatchForWorkerRun(leadId, runLeaseToken, clock());
+          if (!claimed) continue;
+          result.claimed += 1;
+          await processClaim(
+            claimed,
+            now,
+            dailyBucketDate,
+            result,
+            () => options.store.renewWorkerRunLease(runLeaseToken, clock()),
+          );
+          if (
+            result.uncertain > 0
+            || (!testingMode && !await options.store.hasDailyMovementCapacity(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT))
+          ) break;
+        }
+        return result;
+      } finally {
+        await options.store.releaseWorkerRunLease(runLeaseToken, clock());
       }
-      if (testingMode) await options.store.ensureTestSlots(LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN);
-      const leadIds = await listPrioritizedDueWatchLeadIds(now);
-      result.scanned = leadIds.length;
-      for (const leadId of leadIds) {
-        const claimed = await options.store.claimDueWatch(leadId, now);
-        if (!claimed) continue;
-        result.claimed += 1;
-        await processClaim(claimed, now, dailyBucketDate, result);
-        if (
-          result.uncertain > 0
-          || (!testingMode && !await options.store.hasDailyMovementCapacity(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT))
-        ) break;
-      }
-      return result;
     },
   };
 }

@@ -4,7 +4,7 @@
 
 **Goal:** When several leads have reached the 72-hour inactivity deadline, move them to the trainee funnel in this business priority: **ОЖОП → Квалифицирован → Взято в работу**.
 
-**Architecture:** Preserve all existing eligibility, 72-hour, fresh amoCRM read/history, lease, daily-capacity, and mutation-fence safeguards. Change only the selection order of already-due `watching` records. The worker will ask the store for each ordered group in turn, filling its existing maximum of five records per minute; within the same group the existing stable order remains oldest `dueAt`, then lowest `leadId`.
+**Architecture:** Preserve all existing eligibility, 72-hour, fresh amoCRM read/history, lease, daily-capacity, and mutation-fence safeguards. Change only the selection order of already-due `watching` records. A durable compare-and-set run lease serializes each pass across replicas, retains a one-minute global cooldown after the most recent claim, and is renewed together with each due-watch claim inside one serializable persistence transaction. The run lease is also revalidated through the mutation fence after every awaited pre-PATCH hook; a second process therefore cannot consume lower-priority capacity while the leader is working on ОЖОП, and an expired owner cannot claim or PATCH. The leader asks the store for each ordered group in turn, filling its existing maximum of five records per minute; within the same group the existing stable order remains oldest `dueAt`, then lowest `leadId`.
 
 **Tech Stack:** TypeScript, Prisma, Node `node:test`, Railway source deployment.
 
@@ -24,6 +24,7 @@
 - [ ] Priority group 3: Взято в работу in both UZUM and EXODE.
 - [ ] Inside each group, keep oldest due record first and deterministic `leadId` tie-break.
 - [ ] Worker fills the existing five-per-minute cap across groups: lower group is requested only after higher group has no more due rows or has filled fewer than five.
+- [ ] A durable cross-replica run lease prevents a second worker from consuming a lower-priority record while a leader is processing OZHOP, preserves the global five-record cooldown across offset replica timers, renews atomically with each due-watch claim, and is revalidated after each awaited pre-PATCH hook.
 - [ ] Fresh-read, history, stage validation, movement cap, leases, and idempotency remain unchanged.
 - [ ] No schema migration and no rewriting/resetting persisted watches.
 
@@ -114,7 +115,7 @@ Expected: PASS.
 
 **Step 1: Write failing test**
 
-Create due watches from all three groups where lower-priority watches are older. Assert that a five-record pass asks groups in OZHOP → qualified → taken order and claims only the highest-priority available records until capacity is filled. Add a second test proving qualified/taken are used only when prior groups do not fill capacity.
+Create due watches from all three groups where lower-priority watches are older. Assert that a five-record pass asks groups in OZHOP → qualified → taken order and claims only the highest-priority available records until capacity is filled. Add a second test proving qualified/taken are used only when prior groups do not fill capacity. Add a two-worker regression: once a leader is processing OZHOP, a second replica must return without moving a lower-priority watch.
 
 **Step 2: Verify RED**
 
@@ -124,7 +125,7 @@ Expected: FAIL because the current worker makes one global chronological query.
 
 **Step 3: Implement minimal selection helper**
 
-Before claims, query `INACTIVITY_STAGE_PRIORITY_GROUPS` sequentially with the remaining per-pass capacity. Do not sort in memory across arbitrary watches and do not alter claim, fresh-read, history, daily-capacity, PATCH, or audit logic.
+Before selecting IDs, acquire a durable run lease via an exact compare-and-set on the existing settings table; return an empty pass if another replica owns an unexpired lease or the one-minute global cooldown has not elapsed. Renew the lease and claim each due watch within the same serializable persistence transaction, so a stale owner cannot claim a preselected lower-priority ID after its token expires or is replaced. Revalidate the run lease through the existing mutation fence after every awaited pre-PATCH hook, including immediately before the PATCH dispatch. Release only ownership in `finally`, retaining the rolling one-minute cooldown. The lease has a bounded expiry for crash recovery; existing per-watch lease/mutation fences prevent a stale leader from writing after its watch is reclaimed. Then query `INACTIVITY_STAGE_PRIORITY_GROUPS` sequentially with the remaining per-pass capacity. Do not sort in memory across arbitrary watches and do not alter claim, fresh-read, history, daily-capacity, PATCH, or audit logic.
 
 **Step 4: Verify GREEN**
 

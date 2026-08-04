@@ -8,6 +8,10 @@ export const PRODUCTION_BASELINE_COMPLETED_SETTING_KEY = "lead_inactivity.produc
 export const DEFAULT_WATCH_LEASE_MS = 5 * 60 * 1000;
 export const DEFAULT_TEST_SLOT_LEASE_MS = 10 * 60 * 1000;
 export const DEFAULT_DAILY_MOVEMENT_SLOT_LEASE_MS = 10 * 60 * 1000;
+/** Serializes an entire due-watch pass across Railway replicas. */
+export const DEFAULT_WORKER_RUN_LEASE_MS = 15 * 60 * 1000;
+export const WORKER_RUN_COOLDOWN_MS = 60 * 1000;
+export const WORKER_RUN_LEASE_SETTING_KEY = "lead_inactivity.worker_run_lease";
 export const TESTING_LEADS_MOVEMENT_LIMIT = 5;
 
 export type LeadInactivityWatchState = "watching" | "leased" | "mutating" | "moved" | "outside_scope" | "skipped" | "uncertain";
@@ -103,6 +107,7 @@ export interface LeadInactivityPersistence {
   transaction<T>(operation: (persistence: LeadInactivityPersistence) => Promise<T>): Promise<T>;
   getSetting(key: string): Promise<string | null>;
   createSettingIfAbsent(key: string, value: string): Promise<string>;
+  replaceSettingIfValue(key: string, expectedValue: string, nextValue: string): Promise<boolean>;
   insertEventIfAbsent(event: LeadInactivityEventInput): Promise<boolean>;
   hasProductionBaselineEvent(leadId: number): Promise<boolean>;
   getWatch(leadId: number): Promise<LeadInactivityWatch | null>;
@@ -172,6 +177,7 @@ export interface LeadInactivityStoreOptions {
   watchLeaseMs?: number;
   testSlotLeaseMs?: number;
   dailyMovementSlotLeaseMs?: number;
+  workerRunLeaseMs?: number;
 }
 
 export type LeadInactivityRecordResult =
@@ -184,6 +190,9 @@ export interface LeadInactivityStore {
   getOrCreateProductionBaseline(now?: Date): Promise<Date>;
   beginProductionBaseline(runId: string, now?: Date): Promise<LeadInactivityProductionBaselineRun>;
   isProductionBaselineComplete(): Promise<boolean>;
+  tryAcquireWorkerRunLease(token: string, now?: Date): Promise<boolean>;
+  renewWorkerRunLease(token: string, now?: Date): Promise<boolean>;
+  releaseWorkerRunLease(token: string, now?: Date): Promise<boolean>;
   completeProductionBaseline(run: LeadInactivityProductionBaselineRun): Promise<void>;
   recordLeadEvent(input: LeadInactivityEventInput): Promise<LeadInactivityRecordResult>;
   recordProductionBaseline(
@@ -195,6 +204,7 @@ export interface LeadInactivityStore {
   beginMoveMutation(claimed: LeadInactivityWatch): Promise<boolean>;
   isMoveMutationCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
   claimDueWatch(leadId: number, now?: Date): Promise<LeadInactivityWatch | null>;
+  claimDueWatchForWorkerRun(leadId: number, workerRunToken: string, now?: Date): Promise<LeadInactivityWatch | null>;
   finishWatchClaim(
     claimed: LeadInactivityWatch,
     state: LeadInactivityWatchState,
@@ -273,6 +283,40 @@ function parseProductionBaselineRun(value: string, name: string): PersistedProdu
   return { runId: candidate.runId, baselineAt: candidate.baselineAt };
 }
 
+interface PersistedWorkerRunLease {
+  token: string | null;
+  expiresAt: Date;
+  nextEligibleAt: Date;
+}
+
+function serializeWorkerRunLease(token: string | null, expiresAt: Date, nextEligibleAt: Date): string {
+  return JSON.stringify({ token, expiresAt: expiresAt.toISOString(), nextEligibleAt: nextEligibleAt.toISOString() });
+}
+
+function parseWorkerRunLease(value: string): PersistedWorkerRunLease {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("lead inactivity worker run lease is invalid");
+  }
+  if (!parsed || typeof parsed !== "object") throw new Error("lead inactivity worker run lease is invalid");
+  const candidate = parsed as { token?: unknown; expiresAt?: unknown; nextEligibleAt?: unknown };
+  if (
+    (candidate.token !== null && (typeof candidate.token !== "string" || !candidate.token.trim()))
+    || typeof candidate.expiresAt !== "string"
+    || typeof candidate.nextEligibleAt !== "string"
+  ) {
+    throw new Error("lead inactivity worker run lease is invalid");
+  }
+  const expiresAt = new Date(candidate.expiresAt);
+  const nextEligibleAt = new Date(candidate.nextEligibleAt);
+  if (Number.isNaN(expiresAt.getTime()) || Number.isNaN(nextEligibleAt.getTime())) {
+    throw new Error("lead inactivity worker run lease is invalid");
+  }
+  return { token: candidate.token, expiresAt, nextEligibleAt };
+}
+
 export function createLeadInactivityStore(
   persistence: LeadInactivityPersistence,
   options: LeadInactivityStoreOptions = {}
@@ -284,6 +328,8 @@ export function createLeadInactivityStore(
   const watchLeaseMs = options.watchLeaseMs ?? DEFAULT_WATCH_LEASE_MS;
   const testSlotLeaseMs = options.testSlotLeaseMs ?? DEFAULT_TEST_SLOT_LEASE_MS;
   const dailyMovementSlotLeaseMs = options.dailyMovementSlotLeaseMs ?? DEFAULT_DAILY_MOVEMENT_SLOT_LEASE_MS;
+  const workerRunLeaseMs = options.workerRunLeaseMs ?? DEFAULT_WORKER_RUN_LEASE_MS;
+  assertPositiveInteger(workerRunLeaseMs, "workerRunLeaseMs");
 
   const getOrCreateTimestampSetting = async (key: string, now: Date, name: string): Promise<Date> => {
     if (Number.isNaN(now.getTime())) throw new Error(`${name} input is invalid`);
@@ -457,6 +503,53 @@ export function createLeadInactivityStore(
       return true;
     },
 
+    async tryAcquireWorkerRunLease(token, now = clock()): Promise<boolean> {
+      if (!token?.trim() || Number.isNaN(now.getTime())) throw new Error("worker run lease input is invalid");
+      const leaseExpiresAt = new Date(now.getTime() + workerRunLeaseMs);
+      const nextEligibleAt = new Date(now.getTime() + WORKER_RUN_COOLDOWN_MS);
+      const nextValue = serializeWorkerRunLease(token, leaseExpiresAt, nextEligibleAt);
+      const persisted = await persistence.createSettingIfAbsent(WORKER_RUN_LEASE_SETTING_KEY, nextValue);
+      if (persisted === nextValue) return true;
+      const current = parseWorkerRunLease(persisted);
+      if (
+        (current.token !== null && current.expiresAt.getTime() > now.getTime())
+        || current.nextEligibleAt.getTime() > now.getTime()
+      ) {
+        return false;
+      }
+      return persistence.replaceSettingIfValue(WORKER_RUN_LEASE_SETTING_KEY, persisted, nextValue);
+    },
+
+    async renewWorkerRunLease(token, now = clock()): Promise<boolean> {
+      if (!token?.trim() || Number.isNaN(now.getTime())) throw new Error("worker run lease input is invalid");
+      const persisted = await persistence.getSetting(WORKER_RUN_LEASE_SETTING_KEY);
+      if (!persisted) return false;
+      const current = parseWorkerRunLease(persisted);
+      if (current.token !== token || current.expiresAt.getTime() <= now.getTime()) return false;
+      const nextEligibleAt = new Date(Math.max(
+        current.nextEligibleAt.getTime(),
+        now.getTime() + WORKER_RUN_COOLDOWN_MS,
+      ));
+      return persistence.replaceSettingIfValue(
+        WORKER_RUN_LEASE_SETTING_KEY,
+        persisted,
+        serializeWorkerRunLease(token, new Date(now.getTime() + workerRunLeaseMs), nextEligibleAt),
+      );
+    },
+
+    async releaseWorkerRunLease(token, now = clock()): Promise<boolean> {
+      if (!token?.trim() || Number.isNaN(now.getTime())) throw new Error("worker run lease input is invalid");
+      const persisted = await persistence.getSetting(WORKER_RUN_LEASE_SETTING_KEY);
+      if (!persisted) return false;
+      const current = parseWorkerRunLease(persisted);
+      if (current.token !== token) return false;
+      return persistence.replaceSettingIfValue(
+        WORKER_RUN_LEASE_SETTING_KEY,
+        persisted,
+        serializeWorkerRunLease(null, now, current.nextEligibleAt),
+      );
+    },
+
     async completeProductionBaseline(run): Promise<void> {
       if (!run.runId.trim() || Number.isNaN(run.baselineAt.getTime())) {
         throw new Error("lead inactivity production baseline completion input is invalid");
@@ -533,8 +626,35 @@ export function createLeadInactivityStore(
     async claimDueWatch(leadId, now = clock()): Promise<LeadInactivityWatch | null> {
       assertPositiveInteger(leadId, "leadId");
       if (Number.isNaN(now.getTime())) throw new Error("due-watch claim time is invalid");
+      return persistence.claimDueWatch(
+        leadId,
+        now,
+        randomId(),
+        new Date(now.getTime() + watchLeaseMs),
+      );
+    },
+
+    async claimDueWatchForWorkerRun(leadId, workerRunToken, now = clock()): Promise<LeadInactivityWatch | null> {
+      assertPositiveInteger(leadId, "leadId");
+      if (!workerRunToken?.trim() || Number.isNaN(now.getTime())) throw new Error("worker run lease input is invalid");
       const leaseExpiresAt = new Date(now.getTime() + watchLeaseMs);
-      return persistence.claimDueWatch(leadId, now, randomId(), leaseExpiresAt);
+      return persistence.transaction(async (transaction) => {
+        const persisted = await transaction.getSetting(WORKER_RUN_LEASE_SETTING_KEY);
+        if (!persisted) return null;
+        const current = parseWorkerRunLease(persisted);
+        if (current.token !== workerRunToken || current.expiresAt.getTime() <= now.getTime()) return null;
+        const nextEligibleAt = new Date(Math.max(
+          current.nextEligibleAt.getTime(),
+          now.getTime() + WORKER_RUN_COOLDOWN_MS,
+        ));
+        const renewed = await transaction.replaceSettingIfValue(
+          WORKER_RUN_LEASE_SETTING_KEY,
+          persisted,
+          serializeWorkerRunLease(workerRunToken, new Date(now.getTime() + workerRunLeaseMs), nextEligibleAt),
+        );
+        if (!renewed) return null;
+        return transaction.claimDueWatch(leadId, now, randomId(), leaseExpiresAt);
+      });
     },
 
     async finishWatchClaim(claimed, state, reason, now = clock()): Promise<void> {
