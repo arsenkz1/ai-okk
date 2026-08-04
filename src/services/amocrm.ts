@@ -1,5 +1,6 @@
 import "dotenv/config";
 import axios from "axios";
+import { normalizeAmoCrmTenantBaseUrl } from "./amoCrmRateLimiter";
 import { prisma } from "../config/database";
 import { markDealAsWon, markDealAsLost } from "./googleSheets";
 import { callProcessingQueue } from "../queues/callProcessing";
@@ -9,7 +10,9 @@ import { notifyAdmins } from "../bot/notify";
 // Конфигурация
 // ---------------------------------------------------------------------------
 
-const AMO_BASE_URL = process.env.AMOCRM_BASE_URL;
+const AMO_BASE_URL = process.env.AMOCRM_BASE_URL
+  ? normalizeAmoCrmTenantBaseUrl(process.env.AMOCRM_BASE_URL)
+  : undefined;
 const AMO_ACCESS_TOKEN = process.env.AMOCRM_ACCESS_TOKEN;
 
 // Pipeline IDs и qualifying stage IDs по воронкам
@@ -44,22 +47,11 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 }
 
 // ---------------------------------------------------------------------------
-// Rate limiter: не более 2 запросов в секунду к amoCRM
+// amoCRM request pacing is installed once by ./amoCrmRateLimiter. It is durable
+// across service replicas and governs every axios request to an amoCRM tenant.
 // ---------------------------------------------------------------------------
 
-let lastAmoRequestAt = 0;
-const AMO_MIN_INTERVAL_MS = 334; // 1000ms / 3 req
-
-async function amoRateLimit(): Promise<void> {
-  const now = Date.now();
-  const nextAllowed = lastAmoRequestAt + AMO_MIN_INTERVAL_MS;
-  lastAmoRequestAt = Math.max(now, nextAllowed); // резервируем слот до sleep
-  const wait = nextAllowed - now;
-  if (wait > 0) await sleep(wait);
-}
-
 async function amoGet(path: string): Promise<any> {
-  await amoRateLimit();
   try {
     const r = await axios.get(`${AMO_BASE_URL}${path}`, { headers: amoHeaders() });
     return r.data;
@@ -73,7 +65,6 @@ async function amoGet(path: string): Promise<any> {
 }
 
 async function amoPost(path: string, data: unknown): Promise<any> {
-  await amoRateLimit();
   try {
     const r = await axios.post(`${AMO_BASE_URL}${path}`, data, { headers: amoHeaders() });
     return r.data;

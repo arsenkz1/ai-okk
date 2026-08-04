@@ -1,8 +1,11 @@
 import "dotenv/config";
 import axios from "axios";
+import { normalizeAmoCrmTenantBaseUrl } from "./amoCrmRateLimiter";
 import { HIDDEN_NEW_LEAD_STAGES } from "../config/disciplinePilot";
 
-const AMO_BASE_URL = process.env.AMOCRM_BASE_URL;
+const AMO_BASE_URL = process.env.AMOCRM_BASE_URL
+  ? normalizeAmoCrmTenantBaseUrl(process.env.AMOCRM_BASE_URL)
+  : undefined;
 const AMO_ACCESS_TOKEN = process.env.AMOCRM_ACCESS_TOKEN;
 
 export const AMO_RESTRICTED_ROLE_ID = parseInt(process.env.AMO_RESTRICTED_ROLE_ID ?? "1201342");

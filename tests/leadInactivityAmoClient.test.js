@@ -19,12 +19,19 @@ function lead(overrides = {}) {
   };
 }
 
-function createClient({ responses, now = () => new Date("2026-07-19T12:00:00.000Z"), sleep = async () => {} }) {
+function createClient({
+  responses,
+  now = () => new Date("2026-07-19T12:00:00.000Z"),
+  sleep = async () => {},
+  globalRateLimiter = { waitForRequestSlot: async () => {} },
+  onRequest,
+}) {
   const requests = [];
   const queue = [...responses];
   const http = {
     request: async (config) => {
       requests.push(config);
+      onRequest?.(config);
       const response = queue.shift();
       if (response instanceof Error) throw response;
       return response;
@@ -38,6 +45,7 @@ function createClient({ responses, now = () => new Date("2026-07-19T12:00:00.000
       http,
       now,
       sleep,
+      globalRateLimiter,
     }),
   };
 }
@@ -157,6 +165,7 @@ test("applies Retry-After as a shared cooldown to a concurrent safe read", async
     baseUrl: "https://example.amocrm.ru",
     accessToken: "test-token",
     now: () => currentTime,
+    globalRateLimiter: { waitForRequestSlot: async () => {} },
     sleep: (ms) => new Promise((resolve) => {
       waits.push(ms);
       sleepers.push({ ms, resolve });
@@ -221,7 +230,7 @@ test("applies PATCH Retry-After as a shared cooldown for the next amoCRM request
   await client.readLead(101);
 
   assert.equal(outcome.kind, "not_moved");
-  assert.deepEqual(sleeps, [500, 500, 2_000]);
+  assert.deepEqual(sleeps, [200, 200, 2_000]);
 });
 
 test("does not PATCH a source-pipeline lead outside the inactivity-stage whitelist", async () => {
@@ -257,6 +266,7 @@ test("does not PATCH when amoCRM moves a lead outside the whitelist during the P
     baseUrl: "https://example.amocrm.ru",
     accessToken: "test-token",
     now: () => new Date("2026-07-19T12:00:00.000Z"),
+    globalRateLimiter: { waitForRequestSlot: async () => {} },
     sleep: async () => { currentStatusId = 143; },
     http: {
       request: async (request) => {
@@ -364,6 +374,64 @@ test("rechecks the durable mutation fence after rate-limit waiting and before se
   assert.equal(result.reason, "fence_cancelled");
   assert.equal(requests.length, 1);
   assert.equal(requests[0].method, "GET");
+});
+
+test("rechecks the durable mutation fence after global rate-slot waiting and before sending PATCH", async () => {
+  let fenceCurrent = true;
+  let globalSlotCalls = 0;
+  const { client, requests } = createClient({
+    responses: [
+      { status: 200, data: lead(), headers: {} },
+      { status: 200, data: lead(), headers: {} },
+    ],
+    globalRateLimiter: {
+      waitForRequestSlot: async () => {
+        globalSlotCalls += 1;
+        if (globalSlotCalls === 3) fenceCurrent = false;
+      },
+    },
+  });
+
+  const result = await client.moveLeadToTarget(100, {
+    sourcePipelineIds: [9055778, 6909890],
+    targetPipelineId: 9055770,
+    targetStatusId: 72917546,
+  }, async () => fenceCurrent);
+
+  assert.equal(result.kind, "not_moved");
+  assert.equal(result.reason, "fence_cancelled");
+  assert.equal(globalSlotCalls, 3);
+  assert.deepEqual(requests.map(({ method }) => method), ["GET", "GET"]);
+});
+
+test("does not let a pre-PATCH refresh GET overtake the PATCH's final global dispatch slot", async () => {
+  const events = [];
+  const { client } = createClient({
+    responses: [
+      { status: 200, data: lead(), headers: {} },
+      { status: 200, data: lead(), headers: {} },
+      { status: 200, data: [lead({ pipeline_id: 9055770, status_id: 72917546 })], headers: {} },
+      { status: 200, data: lead({ pipeline_id: 9055770, status_id: 72917546 }), headers: {} },
+    ],
+    globalRateLimiter: {
+      waitForRequestSlot: async () => { events.push("slot"); },
+    },
+    onRequest: ({ method }) => { events.push(`send:${method}`); },
+  });
+
+  const result = await client.moveLeadToTarget(100, {
+    sourcePipelineIds: [9055778, 6909890],
+    targetPipelineId: 9055770,
+    targetStatusId: 72917546,
+  }, async () => true);
+
+  assert.equal(result.kind, "confirmed");
+  assert.deepEqual(events, [
+    "slot", "send:GET",
+    "slot", "send:GET",
+    "slot", "slot", "send:PATCH",
+    "slot", "send:GET",
+  ]);
 });
 
 test("rechecks run ownership after awaited pre-PATCH work and immediately before sending PATCH", async () => {

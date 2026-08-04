@@ -1,4 +1,5 @@
 import axios from "axios";
+import "./amoCrmRateLimiter";
 
 export const AMO_CALL_TASK_REQUEST_TIMEOUT_MS = 10_000;
 export const AMO_CALL_TASK_MAX_SAFE_READ_ATTEMPTS = 3;

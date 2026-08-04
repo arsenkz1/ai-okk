@@ -1,7 +1,12 @@
 import axios from "axios";
+import {
+  AMOCRM_GLOBAL_MAX_REQUESTS_PER_SECOND,
+  type AmoCrmGlobalRateLimiter,
+  waitForGlobalAmoCrmRequestSlot,
+} from "./amoCrmRateLimiter";
 import { ALLOWED_INACTIVITY_SOURCE_STAGES, isAllowedInactivitySourceStage } from "./leadInactivityPolicy";
 
-export const AMO_INACTIVITY_MAX_REQUESTS_PER_SECOND = 2;
+export const AMO_INACTIVITY_MAX_REQUESTS_PER_SECOND = AMOCRM_GLOBAL_MAX_REQUESTS_PER_SECOND;
 export const AMO_INACTIVITY_MIN_REQUEST_INTERVAL_MS = 1_000 / AMO_INACTIVITY_MAX_REQUESTS_PER_SECOND;
 export const AMO_INACTIVITY_REQUEST_TIMEOUT_MS = 10_000;
 export const AMO_INACTIVITY_MAX_SAFE_ATTEMPTS = 3;
@@ -16,6 +21,7 @@ export interface AmoInactivityHttpRequest {
   headers: Record<string, string>;
   timeout: number;
   data?: unknown;
+  __amoCrmGlobalRateLimitReserved?: true;
 }
 
 export interface AmoInactivityHttpResponse {
@@ -77,6 +83,7 @@ export interface CreateLeadInactivityAmoClientOptions {
   http?: AmoInactivityHttpClient;
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
+  globalRateLimiter?: AmoCrmGlobalRateLimiter;
 }
 
 interface RawAmoLead {
@@ -262,6 +269,7 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
   };
   const now = options.now ?? (() => new Date());
   const sleep = options.sleep ?? defaultSleep;
+  const globalRateLimiter = options.globalRateLimiter ?? { waitForRequestSlot: waitForGlobalAmoCrmRequestSlot };
   let nextAllowedAt = 0;
   let serverCooldownUntil = 0;
   let logicalNow = 0;
@@ -291,20 +299,30 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
     path: string,
     data: unknown,
     retrySafe: boolean,
-    beforeSend?: () => Promise<boolean>,
+    beforeRateLimit?: () => Promise<boolean>,
+    beforeDispatch?: () => Promise<boolean>,
   ): Promise<AmoInactivityHttpResponse> => {
     const attempts = retrySafe ? AMO_INACTIVITY_MAX_SAFE_ATTEMPTS : 1;
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       await waitForRateLimit();
-      if (beforeSend && !await beforeSend()) throw new AmoInactivityPrePatchFenceCancelledError();
+      if (beforeRateLimit && !await beforeRateLimit()) throw new AmoInactivityPrePatchFenceCancelledError();
+      await globalRateLimiter.waitForRequestSlot();
+      if (beforeDispatch) {
+        if (!await beforeDispatch()) throw new AmoInactivityPrePatchFenceCancelledError();
+        // The final mutation fence is itself asynchronous. Re-admit immediately
+        // afterward so this PATCH can never overtake an amoCRM request whose
+        // later global slot was consumed while that fence was running.
+        await globalRateLimiter.waitForRequestSlot();
+      }
       try {
         const response = await http.request({
           method,
           url: `${baseUrl}${path}`,
           headers: headers(),
           timeout: AMO_INACTIVITY_REQUEST_TIMEOUT_MS,
+          __amoCrmGlobalRateLimitReserved: true,
           ...(data === undefined ? {} : { data }),
         });
         if (response.status < 200 || response.status >= 300) {
@@ -480,7 +498,14 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
       };
 
       try {
-        await makeRequest("PATCH", `/api/v4/leads/${current.id}`, patch, false, refreshSourceStageBeforePatch);
+        await makeRequest(
+          "PATCH",
+          `/api/v4/leads/${current.id}`,
+          patch,
+          false,
+          refreshSourceStageBeforePatch,
+          async () => !isMoveMutationCurrent || await isMoveMutationCurrent(),
+        );
       } catch (error) {
         if (error instanceof AmoInactivityPrePatchFenceCancelledError) {
           return { kind: "not_moved", reason: "fence_cancelled", lead: current };
