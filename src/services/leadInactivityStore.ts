@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dailyMovementLimitForBucket, isIsoCalendarDate } from "./leadInactivityDailyCap";
 
 export const INACTIVITY_MS = 72 * 60 * 60 * 1000;
 export const ACTIVATION_BOUNDARY_SETTING_KEY = "lead_inactivity.activation_boundary";
@@ -12,6 +13,7 @@ export const DEFAULT_DAILY_MOVEMENT_SLOT_LEASE_MS = 10 * 60 * 1000;
 export const DEFAULT_WORKER_RUN_LEASE_MS = 15 * 60 * 1000;
 export const WORKER_RUN_COOLDOWN_MS = 60 * 1000;
 export const WORKER_RUN_LEASE_SETTING_KEY = "lead_inactivity.worker_run_lease";
+export const DAILY_MOVEMENT_OPERATIONAL_START_DATE_SETTING_KEY = "lead_inactivity.daily_movement_operational_start_date";
 export const TESTING_LEADS_MOVEMENT_LIMIT = 5;
 
 export type LeadInactivityWatchState = "watching" | "leased" | "mutating" | "moved" | "outside_scope" | "skipped" | "uncertain";
@@ -190,6 +192,7 @@ export interface LeadInactivityStore {
   getOrCreateProductionBaseline(now?: Date): Promise<Date>;
   beginProductionBaseline(runId: string, now?: Date): Promise<LeadInactivityProductionBaselineRun>;
   isProductionBaselineComplete(): Promise<boolean>;
+  getDailyMovementOperationalStartDate(): Promise<string>;
   tryAcquireWorkerRunLease(token: string, now?: Date): Promise<boolean>;
   renewWorkerRunLease(token: string, now?: Date): Promise<boolean>;
   releaseWorkerRunLease(token: string, now?: Date): Promise<boolean>;
@@ -247,9 +250,18 @@ function assertPositiveInteger(value: number, name: string): void {
 }
 
 function assertDailyMovementBucketDate(bucketDate: string): void {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(bucketDate)) {
+  const isOperational = bucketDate.startsWith("operational:");
+  const calendarDate = isOperational ? bucketDate.slice("operational:".length) : bucketDate;
+  if (!isIsoCalendarDate(calendarDate)) {
     throw new Error("daily movement bucket date is invalid");
   }
+}
+
+function assertDailyMovementLimit(bucketDate: string, limit: number): void {
+  assertDailyMovementBucketDate(bucketDate);
+  assertPositiveInteger(limit, "daily movement limit");
+  const expectedLimit = dailyMovementLimitForBucket(bucketDate);
+  if (limit !== expectedLimit) throw new Error(`daily movement limit must be exactly ${expectedLimit}`);
 }
 
 function ceilToSecond(date: Date): Date {
@@ -503,6 +515,14 @@ export function createLeadInactivityStore(
       return true;
     },
 
+    async getDailyMovementOperationalStartDate(): Promise<string> {
+      const value = await persistence.getSetting(DAILY_MOVEMENT_OPERATIONAL_START_DATE_SETTING_KEY);
+      if (!value || !isIsoCalendarDate(value)) {
+        throw new Error("daily movement operational start date is unavailable or invalid");
+      }
+      return value;
+    },
+
     async tryAcquireWorkerRunLease(token, now = clock()): Promise<boolean> {
       if (!token?.trim() || Number.isNaN(now.getTime())) throw new Error("worker run lease input is invalid");
       const leaseExpiresAt = new Date(now.getTime() + workerRunLeaseMs);
@@ -742,14 +762,12 @@ export function createLeadInactivityStore(
     },
 
     async ensureDailyMovementSlots(bucketDate, limit): Promise<void> {
-      assertDailyMovementBucketDate(bucketDate);
-      assertPositiveInteger(limit, "daily movement limit");
+      assertDailyMovementLimit(bucketDate, limit);
       return persistence.ensureDailyMovementSlots(bucketDate, limit);
     },
 
     async hasDailyMovementCapacity(bucketDate, limit): Promise<boolean> {
-      assertDailyMovementBucketDate(bucketDate);
-      assertPositiveInteger(limit, "daily movement limit");
+      assertDailyMovementLimit(bucketDate, limit);
       return persistence.hasAvailableDailyMovementSlot(bucketDate);
     },
 

@@ -7,6 +7,7 @@ const {
   PRODUCTION_BASELINE_SETTING_KEY,
   PRODUCTION_BASELINE_COMPLETED_SETTING_KEY,
   WORKER_RUN_LEASE_SETTING_KEY,
+  DAILY_MOVEMENT_OPERATIONAL_START_DATE_SETTING_KEY,
   INACTIVITY_MS,
 } = require("../dist/services/leadInactivityStore");
 
@@ -225,6 +226,11 @@ class MemoryPersistence {
   async hasUncertainTestSlot() {
     return [...this.slots.values()].some((slot) => slot.state === "uncertain");
   }
+
+  async ensureDailyMovementSlots(bucketDate, limit) {
+    if (!this.dailyMovementEnsures) this.dailyMovementEnsures = [];
+    this.dailyMovementEnsures.push({ bucketDate, limit });
+  }
 }
 
 function createFixture(options = {}) {
@@ -250,6 +256,30 @@ function event(overrides = {}) {
     ...overrides,
   };
 }
+
+test("reads only a valid durable operational-day start date and fails closed otherwise", async () => {
+  const persistence = new MemoryPersistence();
+  const store = createLeadInactivityStore(persistence);
+
+  await assert.rejects(store.getDailyMovementOperationalStartDate(), /unavailable or invalid/);
+  persistence.settings.set(DAILY_MOVEMENT_OPERATIONAL_START_DATE_SETTING_KEY, "not-a-date");
+  await assert.rejects(store.getDailyMovementOperationalStartDate(), /unavailable or invalid/);
+  persistence.settings.set(DAILY_MOVEMENT_OPERATIONAL_START_DATE_SETTING_KEY, "2026-02-30");
+  await assert.rejects(store.getDailyMovementOperationalStartDate(), /unavailable or invalid/);
+  persistence.settings.set(DAILY_MOVEMENT_OPERATIONAL_START_DATE_SETTING_KEY, "2026-08-05");
+  assert.equal(await store.getDailyMovementOperationalStartDate(), "2026-08-05");
+});
+
+test("accepts new operational capacity buckets but rejects malformed bucket identifiers", async () => {
+  const persistence = new MemoryPersistence();
+  const store = createLeadInactivityStore(persistence);
+
+  await store.ensureDailyMovementSlots("operational:2026-08-05", 100);
+  assert.deepEqual(persistence.dailyMovementEnsures, [{ bucketDate: "operational:2026-08-05", limit: 100 }]);
+  await assert.rejects(store.ensureDailyMovementSlots("2026-08-05", 100), /limit must be exactly 50/);
+  await assert.rejects(store.ensureDailyMovementSlots("operational:2026-02-30", 100), /bucket date is invalid/);
+  await assert.rejects(store.ensureDailyMovementSlots("operational:2026-8-5", 100), /bucket date is invalid/);
+});
 
 test("elects only one cross-replica worker pass and releases it with a compare-and-set fence", async () => {
   const persistence = new MemoryPersistence();

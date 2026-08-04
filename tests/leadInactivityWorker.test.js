@@ -76,6 +76,7 @@ function fixture(overrides = {}) {
       return true;
     },
     releaseExpiredWatchLeases: async () => { calls.releaseLeases += 1; },
+    getDailyMovementOperationalStartDate: async () => "2026-08-05",
     ensureTestSlots: async () => { calls.ensureSlots += 1; },
     ensureDailyMovementSlots: async (bucketDate, limit) => { calls.ensureDailySlots.push({ bucketDate, limit }); },
     hasDailyMovementCapacity: async (bucketDate, limit) => {
@@ -761,6 +762,25 @@ test("reserves a post-midnight Almaty move against the new calendar day", async 
     { bucketDate: "2026-07-20", limit: 50 },
   ]);
   assert.deepEqual(calls.reserveDailySlot.map(({ bucketDate }) => bucketDate), ["2026-07-20"]);
+});
+
+test("resets production capacity at 14:00 Almaty into a fresh 100-slot operational bucket", async () => {
+  const atOperationalBoundary = new Date("2026-08-05T09:00:00.000Z");
+  const { store, amo, calls } = fixture();
+  const worker = createLeadInactivityWorker({
+    store,
+    amo,
+    testingMode: false,
+    clock: () => atOperationalBoundary,
+    randomId: () => "audit-100",
+  });
+
+  const result = await worker.runOnce();
+
+  assert.equal(result.moved, 1);
+  assert.deepEqual(calls.ensureDailySlots, [{ bucketDate: "operational:2026-08-05", limit: 100 }]);
+  assert.deepEqual(calls.reserveDailySlot, [{ bucketDate: "operational:2026-08-05", leadId: 100, auditId: "audit-100" }]);
+  assert.deepEqual(calls.confirmDailySlot, [{ bucketDate: "operational:2026-08-05", slotNumber: 1, auditId: "audit-100" }]);
 });
 
 test("stops claiming the remaining batch as soon as the final daily slot is consumed", async () => {

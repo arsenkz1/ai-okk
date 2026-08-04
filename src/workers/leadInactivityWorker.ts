@@ -14,7 +14,7 @@ import type {
   LeadInactivityWatch,
   LeadInactivityWatchState,
 } from "../services/leadInactivityStore";
-import { DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT, almatyCalendarDay } from "../services/leadInactivityDailyCap";
+import { almatyDailyMovementBucket, dailyMovementLimitForBucket } from "../services/leadInactivityDailyCap";
 
 export const LEAD_INACTIVITY_WORKER_INTERVAL_MS = 60_000;
 export const LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN = 5;
@@ -38,6 +38,7 @@ export type LeadInactivityWorkerAuditOutcome =
 
 export interface LeadInactivityWorkerStore {
   isProductionBaselineComplete(): Promise<boolean>;
+  getDailyMovementOperationalStartDate(): Promise<string>;
   tryAcquireWorkerRunLease(token: string, now?: Date): Promise<boolean>;
   renewWorkerRunLease(token: string, now?: Date): Promise<boolean>;
   releaseWorkerRunLease(token: string, now?: Date): Promise<boolean>;
@@ -165,6 +166,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
     claimed: LeadInactivityWatch,
     now: Date,
     dailyBucketDate: string,
+    operationalStartDate: string,
     result: LeadInactivityWorkerResult,
     renewWorkerRunLease: () => Promise<boolean>,
   ): Promise<void> => {
@@ -250,16 +252,17 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         ...(!testingMode ? {
           beforeFinalPatch: async (): Promise<"allow" | "daily_capacity_unavailable"> => {
             const finalNow = clock();
-            const finalBucketDate = almatyCalendarDay(finalNow);
+            const finalBucketDate = almatyDailyMovementBucket(finalNow, operationalStartDate);
+            const finalLimit = dailyMovementLimitForBucket(finalBucketDate);
             if (finalBucketDate !== dailyBucketDate) {
-              await options.store.ensureDailyMovementSlots(finalBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT);
+              await options.store.ensureDailyMovementSlots(finalBucketDate, finalLimit);
             }
             dailyReservation.slot = await options.store.reserveDailyMovementSlot(finalBucketDate, claimed.leadId, auditId, finalNow);
             return dailyReservation.slot ? "allow" : "daily_capacity_unavailable";
           },
           beforePatchSend: async (): Promise<"allow" | "daily_capacity_unavailable"> => {
             const dispatchNow = clock();
-            if (!dailyReservation.slot || almatyCalendarDay(dispatchNow) !== dailyReservation.slot.bucketDate) {
+            if (!dailyReservation.slot || almatyDailyMovementBucket(dispatchNow, operationalStartDate) !== dailyReservation.slot.bucketDate) {
               return "daily_capacity_unavailable";
             }
             patchDispatchedAt = dispatchNow;
@@ -439,10 +442,14 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
           throw new Error("unrestricted production movement is blocked: durable production baseline is not complete");
         }
         await options.store.releaseExpiredWatchLeases(now);
-        const dailyBucketDate = almatyCalendarDay(now);
+        const operationalStartDate = testingMode
+          ? "9999-12-31"
+          : await options.store.getDailyMovementOperationalStartDate();
+        const dailyBucketDate = almatyDailyMovementBucket(now, operationalStartDate);
+        const dailyMovementLimit = dailyMovementLimitForBucket(dailyBucketDate);
         if (!testingMode) {
-          await options.store.ensureDailyMovementSlots(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT);
-          if (!await options.store.hasDailyMovementCapacity(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT)) {
+          await options.store.ensureDailyMovementSlots(dailyBucketDate, dailyMovementLimit);
+          if (!await options.store.hasDailyMovementCapacity(dailyBucketDate, dailyMovementLimit)) {
             return result;
           }
         }
@@ -457,12 +464,15 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
             claimed,
             now,
             dailyBucketDate,
+            operationalStartDate,
             result,
             () => options.store.renewWorkerRunLease(runLeaseToken, clock()),
           );
+          const currentDailyBucketDate = almatyDailyMovementBucket(clock(), operationalStartDate);
+          const currentDailyMovementLimit = dailyMovementLimitForBucket(currentDailyBucketDate);
           if (
             result.uncertain > 0
-            || (!testingMode && !await options.store.hasDailyMovementCapacity(dailyBucketDate, DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT))
+            || (!testingMode && !await options.store.hasDailyMovementCapacity(currentDailyBucketDate, currentDailyMovementLimit))
           ) break;
         }
         return result;
