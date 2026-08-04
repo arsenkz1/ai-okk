@@ -194,7 +194,12 @@ test("Prisma persistence selects due watches, fences completion, and records a s
   };
   const persistence = createPrismaLeadInactivityPersistence(database);
 
-  assert.deepEqual(await persistence.listDueWatchLeadIds(now, 5), [101, 100]);
+  const priorityGroup = [
+    { pipelineId: 6909890, statusId: 58160902 },
+    { pipelineId: 9055778, statusId: 72919958 },
+  ];
+  assert.deepEqual(await persistence.listDueWatchLeadIds(now, 5, priorityGroup), [101, 100]);
+  assert.deepEqual(calls.due.where.OR, priorityGroup);
   assert.equal(await persistence.isWatchClaimCurrent(claimed), true);
   const finished = await persistence.finishWatchClaim(claimed, "moved", null, now);
   assert.equal(finished.state, "moved");

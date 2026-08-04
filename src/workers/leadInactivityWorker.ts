@@ -1,8 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { isAllowedInactivitySourceStage, SOURCE_PIPELINE_IDS, TARGET_PIPELINE_ID, TARGET_STATUS_ID } from "../services/leadInactivityPolicy";
+import {
+  INACTIVITY_STAGE_PRIORITY_GROUPS,
+  isAllowedInactivitySourceStage,
+  SOURCE_PIPELINE_IDS,
+  TARGET_PIPELINE_ID,
+  TARGET_STATUS_ID,
+} from "../services/leadInactivityPolicy";
 import type { AmoInactivityHistoryEvent, AmoInactivityLead, AmoInactivityMoveOutcome } from "../services/leadInactivityAmoClient";
 import type {
   LeadInactivityDailyMovementSlot,
+  LeadInactivityStagePair,
   LeadInactivityTestSlot,
   LeadInactivityWatch,
   LeadInactivityWatchState,
@@ -33,7 +40,7 @@ export interface LeadInactivityWorkerStore {
   isProductionBaselineComplete(): Promise<boolean>;
   releaseExpiredWatchLeases(now?: Date): Promise<void>;
   ensureTestSlots(limit: number): Promise<void>;
-  listDueWatchLeadIds(now: Date, limit: number): Promise<number[]>;
+  listDueWatchLeadIds(now: Date, limit: number, stagePairs?: readonly LeadInactivityStagePair[]): Promise<number[]>;
   claimDueWatch(leadId: number, now?: Date): Promise<LeadInactivityWatch | null>;
   isWatchClaimCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
   beginMoveMutation(claimed: LeadInactivityWatch): Promise<boolean>;
@@ -140,6 +147,16 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
   const randomId = options.randomId ?? randomUUID;
   const testingMode = options.testingMode ?? true;
   const maxWatchesPerRun = assertBatchLimit(options.maxWatchesPerRun);
+
+  const listPrioritizedDueWatchLeadIds = async (now: Date): Promise<number[]> => {
+    const leadIds: number[] = [];
+    for (const stagePairs of INACTIVITY_STAGE_PRIORITY_GROUPS) {
+      const remaining = maxWatchesPerRun - leadIds.length;
+      if (remaining <= 0) break;
+      leadIds.push(...await options.store.listDueWatchLeadIds(now, remaining, stagePairs));
+    }
+    return leadIds;
+  };
 
   const processClaim = async (
     claimed: LeadInactivityWatch,
@@ -421,7 +438,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         }
       }
       if (testingMode) await options.store.ensureTestSlots(LEAD_INACTIVITY_WORKER_MAX_WATCHES_PER_RUN);
-      const leadIds = await options.store.listDueWatchLeadIds(now, maxWatchesPerRun);
+      const leadIds = await listPrioritizedDueWatchLeadIds(now);
       result.scanned = leadIds.length;
       for (const leadId of leadIds) {
         const claimed = await options.store.claimDueWatch(leadId, now);

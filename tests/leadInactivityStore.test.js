@@ -99,9 +99,12 @@ class MemoryPersistence {
     }
   }
 
-  async listDueWatchLeadIds(now, limit) {
+  async listDueWatchLeadIds(now, limit, stagePairs) {
     return [...this.watches.values()]
       .filter((watch) => watch.state === "watching" && watch.dueAt <= now)
+      .filter((watch) => !stagePairs?.length || stagePairs.some((stage) => (
+        stage.pipelineId === watch.pipelineId && stage.statusId === watch.statusId
+      )))
       .sort((left, right) => left.dueAt - right.dueAt || left.leadId - right.leadId)
       .slice(0, limit)
       .map((watch) => watch.leadId);
@@ -531,6 +534,8 @@ test("lists due watches deterministically and fences worker completion by its le
     ...persistence.watches.get(100),
     leadId: 101,
     dueAt: new Date("2026-07-19T11:58:00.000Z"),
+    pipelineId: 6909890,
+    statusId: 58160902,
   });
   persistence.watches.set(102, {
     ...persistence.watches.get(100),
@@ -540,6 +545,10 @@ test("lists due watches deterministically and fences worker completion by its le
   const store = createLeadInactivityStore(persistence, { clock: () => now, randomId: () => "lease-100" });
 
   assert.deepEqual(await store.listDueWatchLeadIds(now, 2), [101, 100]);
+  assert.deepEqual(
+    await store.listDueWatchLeadIds(now, 2, [{ pipelineId: 6909890, statusId: 58160902 }]),
+    [101],
+  );
   const claimed = await store.claimDueWatch(100, now);
   assert.equal(await store.isWatchClaimCurrent(claimed), true);
   await store.finishWatchClaim(claimed, "moved", null, now);

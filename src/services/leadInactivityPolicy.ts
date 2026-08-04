@@ -7,6 +7,26 @@ export const ALLOWED_INACTIVITY_SOURCE_STAGES = Object.freeze([
   { pipelineId: 9055778, statusId: 72917586 }, // EXODE: квалифицирован
   { pipelineId: 9055778, statusId: 72919958 }, // EXODE: ОЖОП
 ] as const);
+
+/**
+ * Business ordering for due inactivity movements. The order inside one group is
+ * deliberately not a pipeline priority; persisted dueAt/leadId ordering breaks
+ * ties after the worker has selected the business stage group.
+ */
+export const INACTIVITY_STAGE_PRIORITY_GROUPS = Object.freeze([
+  Object.freeze([
+    { pipelineId: 6909890, statusId: 58160902 }, // UZUM: ОЖОП
+    { pipelineId: 9055778, statusId: 72919958 }, // EXODE: ОЖОП
+  ]),
+  Object.freeze([
+    { pipelineId: 6909890, statusId: 58160726 }, // UZUM: квалифицирован
+    { pipelineId: 9055778, statusId: 72917586 }, // EXODE: квалифицирован
+  ]),
+  Object.freeze([
+    { pipelineId: 6909890, statusId: 58160718 }, // UZUM: взято в работу
+    { pipelineId: 9055778, statusId: 72917582 }, // EXODE: взято в работу
+  ]),
+] as const);
 export const TARGET_PIPELINE_ID = 9055770;
 export const TARGET_STATUS_ID = 72917546;
 export const INACTIVITY_MS = 72 * 60 * 60 * 1000;

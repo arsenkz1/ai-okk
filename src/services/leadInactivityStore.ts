@@ -94,6 +94,11 @@ export interface LeadInactivityDailyMovementSlot {
   leaseExpiresAt?: Date | null;
 }
 
+export interface LeadInactivityStagePair {
+  pipelineId: number;
+  statusId: number;
+}
+
 export interface LeadInactivityPersistence {
   transaction<T>(operation: (persistence: LeadInactivityPersistence) => Promise<T>): Promise<T>;
   getSetting(key: string): Promise<string | null>;
@@ -110,7 +115,7 @@ export interface LeadInactivityPersistence {
     leaseToken: string,
     leaseExpiresAt: Date
   ): Promise<LeadInactivityWatch | null>;
-  listDueWatchLeadIds(now: Date, limit: number): Promise<number[]>;
+  listDueWatchLeadIds(now: Date, limit: number, stagePairs?: readonly LeadInactivityStagePair[]): Promise<number[]>;
   isWatchClaimCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
   beginMoveMutation(claimed: LeadInactivityWatch): Promise<boolean>;
   isMoveMutationCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
@@ -185,7 +190,7 @@ export interface LeadInactivityStore {
     input: LeadInactivityProductionBaselineInput,
     baselineAt: Date,
   ): Promise<LeadInactivityRecordResult>;
-  listDueWatchLeadIds(now: Date, limit: number): Promise<number[]>;
+  listDueWatchLeadIds(now: Date, limit: number, stagePairs?: readonly LeadInactivityStagePair[]): Promise<number[]>;
   isWatchClaimCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
   beginMoveMutation(claimed: LeadInactivityWatch): Promise<boolean>;
   isMoveMutationCurrent(claimed: LeadInactivityWatch): Promise<boolean>;
@@ -504,10 +509,10 @@ export function createLeadInactivityStore(
       }, false);
     },
 
-    async listDueWatchLeadIds(now, limit): Promise<number[]> {
+    async listDueWatchLeadIds(now, limit, stagePairs): Promise<number[]> {
       if (Number.isNaN(now.getTime())) throw new Error("due-watch query time is invalid");
       assertPositiveInteger(limit, "due-watch query limit");
-      return persistence.listDueWatchLeadIds(now, limit);
+      return persistence.listDueWatchLeadIds(now, limit, stagePairs);
     },
 
     async isWatchClaimCurrent(claimed): Promise<boolean> {

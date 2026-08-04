@@ -6,6 +6,7 @@ import type {
   LeadInactivityDailyMovementSlot,
   LeadInactivityDailyMovementSlotState,
   LeadInactivityPersistence,
+  LeadInactivityStagePair,
   LeadInactivityTestSlot,
   LeadInactivityTestSlotState,
   LeadInactivityWatch,
@@ -204,9 +205,19 @@ function createAdapter(database: PrismaInactivityDb, transactionRunner?: Transac
       return watch ? toWatch(watch) : null;
     },
 
-    async listDueWatchLeadIds(now: Date, limit: number): Promise<number[]> {
+    async listDueWatchLeadIds(
+      now: Date,
+      limit: number,
+      stagePairs?: readonly LeadInactivityStagePair[],
+    ): Promise<number[]> {
       const watches = await database.leadInactivityWatch.findMany({
-        where: { state: "watching", dueAt: { lte: now } },
+        where: {
+          state: "watching",
+          dueAt: { lte: now },
+          ...(stagePairs?.length
+            ? { OR: stagePairs.map(({ pipelineId, statusId }) => ({ pipelineId, statusId })) }
+            : {}),
+        },
         orderBy: [{ dueAt: "asc" }, { leadId: "asc" }],
         take: limit,
         select: { leadId: true },

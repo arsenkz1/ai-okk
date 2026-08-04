@@ -85,7 +85,15 @@ function fixture(overrides = {}) {
       calls.uncertainDailySlot.push({ bucketDate, slotNumber, auditId });
       return { bucketDate, slotNumber, state: "uncertain", auditId };
     },
-    listDueWatchLeadIds: async (_now, limit) => { calls.list += 1; return [...claimed.keys()].slice(0, limit); },
+    listDueWatchLeadIds: async (_now, limit, stagePairs) => {
+      calls.list += 1;
+      return [...claimed.values()]
+        .filter((claimedWatch) => !stagePairs?.length || stagePairs.some((stage) => (
+          stage.pipelineId === claimedWatch.pipelineId && stage.statusId === claimedWatch.statusId
+        )))
+        .slice(0, limit)
+        .map((claimedWatch) => claimedWatch.leadId);
+    },
     claimDueWatch: async (leadId) => { calls.claim.push(leadId); return claimed.get(leadId) ?? null; },
     isWatchClaimCurrent: async () => true,
     beginMoveMutation: async () => true,
@@ -281,6 +289,98 @@ test("marks an existing watch outside scope when the fresh amoCRM lead leaves th
   assert.equal(calls.reserve.length, 0);
   assert.equal(calls.move.length, 0);
   assert.deepEqual(calls.completeAudit, [{ auditId: "audit-100", outcome: { kind: "skipped", slotNumber: null } }]);
+});
+
+test("prioritizes OZHOP, then qualified, then taken-in-work even when lower stages are older", async () => {
+  const priorityQueries = [];
+  const claimed = new Map([
+    [301, watch(301, { pipelineId: 6909890, statusId: 58160902 })],
+    [302, watch(302, { pipelineId: 9055778, statusId: 72919958 })],
+    [201, watch(201, { pipelineId: 6909890, statusId: 58160726 })],
+    [202, watch(202, { pipelineId: 9055778, statusId: 72917586 })],
+    [101, watch(101, { pipelineId: 6909890, statusId: 58160718 })],
+    [102, watch(102, { pipelineId: 9055778, statusId: 72917582 })],
+  ]);
+  const idsByStage = new Map([
+    ["6909890:58160902", [301]], ["9055778:72919958", [302]],
+    ["6909890:58160726", [201]], ["9055778:72917586", [202]],
+    ["6909890:58160718", [101]], ["9055778:72917582", [102]],
+  ]);
+  const { store, amo, calls } = fixture({
+    claimed,
+    store: {
+      listDueWatchLeadIds: async (_now, limit, stagePairs) => {
+        priorityQueries.push({ limit, stagePairs });
+        if (!stagePairs) return [101, 102, 201, 202, 301].slice(0, limit);
+        return stagePairs.flatMap((stage) => idsByStage.get(`${stage.pipelineId}:${stage.statusId}`) ?? []).slice(0, limit);
+      },
+    },
+    amo: {
+      readLead: async (leadId) => {
+        const claimedWatch = claimed.get(leadId);
+        return lead(leadId, { pipelineId: claimedWatch.pipelineId, statusId: claimedWatch.statusId });
+      },
+    },
+  });
+  const worker = createLeadInactivityWorker({ store, amo, testingMode: false, clock: () => NOW, randomId: () => "audit" });
+
+  const result = await worker.runOnce();
+
+  assert.deepEqual(result, { scanned: 5, claimed: 5, moved: 5, deferred: 0, uncertain: 0, failed: 0 });
+  assert.deepEqual(calls.claim, [301, 302, 201, 202, 101]);
+  assert.deepEqual(priorityQueries, [
+    { limit: 5, stagePairs: [
+      { pipelineId: 6909890, statusId: 58160902 },
+      { pipelineId: 9055778, statusId: 72919958 },
+    ] },
+    { limit: 3, stagePairs: [
+      { pipelineId: 6909890, statusId: 58160726 },
+      { pipelineId: 9055778, statusId: 72917586 },
+    ] },
+    { limit: 1, stagePairs: [
+      { pipelineId: 6909890, statusId: 58160718 },
+      { pipelineId: 9055778, statusId: 72917582 },
+    ] },
+  ]);
+});
+
+test("falls through to qualified and taken-in-work only when higher priority groups have no due watches", async () => {
+  const priorityQueries = [];
+  const claimed = new Map([
+    [201, watch(201, { pipelineId: 6909890, statusId: 58160726 })],
+    [101, watch(101, { pipelineId: 6909890, statusId: 58160718 })],
+    [102, watch(102, { pipelineId: 9055778, statusId: 72917582 })],
+  ]);
+  const idsByStage = new Map([
+    ["6909890:58160726", [201]],
+    ["6909890:58160718", [101]], ["9055778:72917582", [102]],
+  ]);
+  const { store, amo, calls } = fixture({
+    claimed,
+    store: {
+      listDueWatchLeadIds: async (_now, limit, stagePairs) => {
+        priorityQueries.push({ limit, stagePairs });
+        return stagePairs.flatMap((stage) => idsByStage.get(`${stage.pipelineId}:${stage.statusId}`) ?? []).slice(0, limit);
+      },
+    },
+    amo: {
+      readLead: async (leadId) => {
+        const claimedWatch = claimed.get(leadId);
+        return lead(leadId, { pipelineId: claimedWatch.pipelineId, statusId: claimedWatch.statusId });
+      },
+    },
+  });
+  const worker = createLeadInactivityWorker({ store, amo, testingMode: false, clock: () => NOW, randomId: () => "audit" });
+
+  const result = await worker.runOnce();
+
+  assert.deepEqual(result, { scanned: 3, claimed: 3, moved: 3, deferred: 0, uncertain: 0, failed: 0 });
+  assert.deepEqual(calls.claim, [201, 101, 102]);
+  assert.deepEqual(priorityQueries.map(({ limit, stagePairs }) => ({ limit, statusIds: stagePairs.map((stage) => stage.statusId) })), [
+    { limit: 5, statusIds: [58160902, 72919958] },
+    { limit: 5, statusIds: [58160726, 72917586] },
+    { limit: 4, statusIds: [58160718, 72917582] },
+  ]);
 });
 
 test("caps each one-minute pass before claiming more than five due watches", async () => {

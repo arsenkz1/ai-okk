@@ -6,6 +6,8 @@ const {
   TARGET_PIPELINE_ID,
   TARGET_STATUS_ID,
   INACTIVITY_MS,
+  ALLOWED_INACTIVITY_SOURCE_STAGES,
+  INACTIVITY_STAGE_PRIORITY_GROUPS,
   DIRECT_LEAD_WEBHOOK_ACTIONS,
   isSourcePipeline,
   isDue,
@@ -23,6 +25,28 @@ test("defines the approved source and target pipeline policy", () => {
   assert.equal(isSourcePipeline(9055778), true);
   assert.equal(isSourcePipeline(6909890), true);
   assert.equal(isSourcePipeline(9055770), false);
+});
+
+test("defines the business priority as OZHOP then qualified then taken-in-work in both source pipelines", () => {
+  assert.deepEqual(INACTIVITY_STAGE_PRIORITY_GROUPS, [
+    [
+      { pipelineId: 6909890, statusId: 58160902 },
+      { pipelineId: 9055778, statusId: 72919958 },
+    ],
+    [
+      { pipelineId: 6909890, statusId: 58160726 },
+      { pipelineId: 9055778, statusId: 72917586 },
+    ],
+    [
+      { pipelineId: 6909890, statusId: 58160718 },
+      { pipelineId: 9055778, statusId: 72917582 },
+    ],
+  ]);
+  const stageKey = ({ pipelineId, statusId }) => `${pipelineId}:${statusId}`;
+  assert.deepEqual(
+    INACTIVITY_STAGE_PRIORITY_GROUPS.flat().map(stageKey).sort(),
+    ALLOWED_INACTIVITY_SOURCE_STAGES.map(stageKey).sort(),
+  );
 });
 
 test("treats exactly 72 elapsed calendar hours as due but never earlier", () => {
