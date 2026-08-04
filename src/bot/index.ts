@@ -28,6 +28,7 @@ import { buildSupervisorAiPrompt } from "./supervisorAi";
 import { registerAdminRoleHandlers } from "./handlers/adminRoles";
 import { registerTeamLeadHandlers } from "./handlers/teamlead";
 import { registerRopHandlers } from "./handlers/rop";
+import { registerCallTaskReviewHandlers } from "./handlers/callTaskReview";
 import { installSafeTelegramSender } from "./safeTelegram";
 
 // ---------------------------------------------------------------------------
@@ -1653,6 +1654,7 @@ bot.onText(/\/test_restore (.+)/, async (msg, match) => {
 registerAdminRoleHandlers(bot);
 registerTeamLeadHandlers(bot);
 registerRopHandlers(bot);
+registerCallTaskReviewHandlers(bot);
 
 // ---------------------------------------------------------------------------
 // Polling errors + graceful shutdown

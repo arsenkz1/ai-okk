@@ -12,6 +12,8 @@ import {
   transcribeAudioWithGemini,
 } from "../services/aiAnalysis";
 import { appendCallRowToSheet } from "../services/googleSheets";
+import { runCallTaskAutomation } from "../services/callTaskAutomation";
+import { getCallTaskAutomationRuntime } from "../services/callTaskAutomationRuntime";
 import {
   addNoteToDeal,
   lookupDealByPhone,
@@ -131,6 +133,48 @@ async function ensureCallRecord(
   });
 
   return { id: call.id, dealId, pipelineId, stageId, skipNotify, searchMeta };
+}
+
+/**
+ * Runs independently of the quality-score analysis after a transcript exists.
+ * It is deliberately best-effort: task automation errors must not turn a
+ * completed call transcription into a retry storm.
+ */
+async function maybeRunCallTaskAutomation(callId: number, transcript: string): Promise<void> {
+  try {
+    const runtime = getCallTaskAutomationRuntime();
+    if (!runtime.config.enabled) return;
+    const call = await prisma.call.findUnique({
+      where: { id: callId },
+      select: {
+        id: true,
+        dealId: true,
+        startedAt: true,
+        manager: { select: { amoUserId: true } },
+      },
+    });
+    if (!call?.dealId) return;
+    const result = await runCallTaskAutomation({
+      callId: call.id,
+      dealId: call.dealId,
+      // The call start time, rather than the local record creation time,
+      // prevents a historical re-import from crossing the activation boundary.
+      callCreatedAt: call.startedAt,
+      managerAmoUserId: call.manager?.amoUserId ?? null,
+      transcript,
+    }, runtime.dependencies);
+    console.info("[CallTaskAutomation] Processed call action", {
+      callId: call.id,
+      dealId: call.dealId,
+      result: result.kind,
+      actionId: "actionId" in result ? result.actionId : undefined,
+    });
+  } catch (error) {
+    console.error("[CallTaskAutomation] Call action processing failed", {
+      callId,
+      reason: error instanceof Error ? error.message : "unknown error",
+    });
+  }
 }
 
 async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: number, jobMaxAttempts: number) {
@@ -300,6 +344,9 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
     return;
   }
 
+  // Gemini quality scoring and the isolated operational proposal are independent
+  // consumers of the same finished transcript, so run them in parallel.
+  const taskAutomationPromise = maybeRunCallTaskAutomation(callId, transcriptText);
   const analysis = await analyzeCallWithGemini(transcriptText, {
     durationSeconds: payload.duration,
     direction: payload.direction,
@@ -430,6 +477,10 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
       );
     }
   }
+
+  // The automation path catches and records its own failures. Await it before
+  // acknowledging the queue job so successful mutations are not cut short.
+  await taskAutomationPromise;
 
   await prisma.call.update({
     where: { id: callId },

@@ -138,6 +138,7 @@ model Call {
 
   transcript       CallTranscript?
   analysis         CallAnalysis?
+  taskActions      CallTaskAction[]
 
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -323,4 +324,63 @@ model LeadInactivityDailyMovementSlot {
   @@id([bucketDate, slotNumber])
   @@index([bucketDate, state, slotNumber])
   @@index([bucketDate, leaseExpiresAt])
+}
+
+model CallTaskAutomationSetting {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model CallTaskAction {
+  id                 String   @id @default(cuid())
+  call               Call     @relation(fields: [callId], references: [id])
+  callId             Int
+  actionKind         String   @default("next_step")
+  dealId             Int
+  testMode           Boolean  @default(false)
+  status             String   @default("analyzing") // analyzing|proposed|creating_task|task_confirmed|creating_note|confirmed|rejected|skipped|uncertain
+  decision           String?  // auto|review|none
+  taskText           String?  @db.Text
+  evidence           String?  @db.Text
+  proposedDueAt      DateTime? @db.Timestamptz(3)
+  selectedDueAt      DateTime? @db.Timestamptz(3)
+  responsibleUserId  Int?
+  amoTaskId          Int?     @unique
+  taskRequestId      String?  @unique
+  noteText           String?  @db.Text
+  amoNoteId          Int?     @unique
+  approvalToken      String   @unique
+  reviewedByTelegramUserId String?
+  reviewedAt         DateTime? @db.Timestamptz(3)
+  failureReason      String?  @db.Text
+  analysisLeaseToken String?
+  analysisLeaseExpiresAt DateTime? @db.Timestamptz(3)
+  analysisLeaseGeneration Int @default(0)
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+
+  testSlot           CallTaskAutomationTestSlot? @relation("CallTaskActionSlot")
+
+  @@unique([callId, actionKind])
+  @@index([status, createdAt])
+  @@index([status, analysisLeaseExpiresAt])
+  @@index([dealId, createdAt])
+}
+
+model CallTaskAutomationTestSlot {
+  slotNumber     Int      @id
+  state          String   @default("free") // free|reserved|confirmed|uncertain
+  dealId         Int?     @unique
+  action         CallTaskAction? @relation("CallTaskActionSlot", fields: [actionId], references: [id], onDelete: SetNull)
+  actionId       String?  @unique
+  reservedAt     DateTime? @db.Timestamptz(3)
+  confirmedAt    DateTime? @db.Timestamptz(3)
+  leaseExpiresAt DateTime? @db.Timestamptz(3)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([state, slotNumber])
+  @@index([leaseExpiresAt])
 }
