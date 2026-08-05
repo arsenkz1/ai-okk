@@ -14,7 +14,7 @@ function migrationSqlForCallTaskAutomation() {
   return fs.readFileSync(path.join(migrationsRoot, directory, "migration.sql"), "utf8");
 }
 
-test("call-task automation schema has durable per-call identity and five-slot relations", () => {
+test("call-task automation schema preserves durable per-call identity and historical slot audit relations", () => {
   const schema = fs.readFileSync(schemaPath, "utf8");
 
   assert.match(schema, /model CallTaskAutomationSetting\s*\{/);

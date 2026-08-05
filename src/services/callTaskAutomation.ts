@@ -23,14 +23,7 @@ export interface CallTaskAutomationDependencies {
   testing: boolean;
   executionMode: CallTaskAutomationExecutionMode;
   now?: () => Date;
-  store: Pick<
-    CallTaskAutomationStore,
-    | "getActivationBoundary"
-    | "reserveTestLead"
-    | "confirmTestLead"
-    | "releaseTestLeadBeforeAnalysis"
-    | "markTestLeadUncertain"
-  >;
+  store: Pick<CallTaskAutomationStore, "getActivationBoundary">;
   ledger: CallTaskAutomationLedger;
   amo: Pick<CallTaskAmoClient, "readLead" | "createVerifiedTask" | "addTaskReasonNote">;
   analyze(transcript: string, context: { now: Date }): Promise<CallTaskActionProposal | null>;
@@ -43,8 +36,6 @@ export type CallTaskAutomationResult =
   | { kind: "lead_unavailable" }
   | { kind: "ineligible"; reason: "lead_created_before_activation" | "call_created_before_activation" }
   | { kind: "existing"; actionId: string }
-  | { kind: "test_limit_reached"; actionId: string }
-  | { kind: "test_lead_already_claimed"; actionId: string }
   | { kind: "analysis_unavailable"; actionId: string }
   | { kind: "analysis_claim_lost"; actionId: string }
   | { kind: "no_action"; actionId: string }
@@ -236,29 +227,9 @@ export async function runCallTaskAutomation(
   if (analysisClaim.kind === "existing") return { kind: "existing", actionId: analysisClaim.action.id };
 
   const action = analysisClaim.action;
-  let testSlotReserved = false;
-  if (dependencies.testing) {
-    const reservation = await dependencies.store.reserveTestLead({ leadId: input.dealId, actionId: action.id, now });
-    if (reservation.kind === "limit_reached") {
-      await dependencies.ledger.markAnalysisUnavailable({
-        actionId: action.id,
-        leaseToken: analysisClaim.leaseToken,
-        reason: "five-lead test limit reached",
-        now,
-      });
-      return { kind: "test_limit_reached", actionId: action.id };
-    }
-    if (reservation.kind === "already_claimed") {
-      await dependencies.ledger.markAnalysisUnavailable({
-        actionId: action.id,
-        leaseToken: analysisClaim.leaseToken,
-        reason: "lead was already included in test mode",
-        now,
-      });
-      return { kind: "test_lead_already_claimed", actionId: action.id };
-    }
-    testSlotReserved = reservation.kind === "reserved" || reservation.kind === "reclaimed";
-  }
+  // `testing` controls observation notifications only. The legacy five-slot
+  // rollout is intentionally not consulted, so every eligible future call is
+  // analysed and reported while the durable per-call ledger remains the fence.
 
   let proposal: CallTaskActionProposal | null;
   try {
@@ -271,14 +242,16 @@ export async function runCallTaskAutomation(
     proposal = null;
   }
   if (!proposal) {
-    await dependencies.ledger.markAnalysisUnavailable({
+    const unavailable = await dependencies.ledger.markAnalysisUnavailable({
       actionId: action.id,
       leaseToken: analysisClaim.leaseToken,
       reason: "Gemini task-action response was unavailable or invalid",
       now,
     });
-    if (testSlotReserved) await dependencies.store.releaseTestLeadBeforeAnalysis(action.id);
-    return { kind: "analysis_unavailable", actionId: action.id };
+    if (!unavailable) return { kind: "analysis_claim_lost", actionId: action.id };
+    const result: CallTaskAutomationResult = { kind: "analysis_unavailable", actionId: action.id };
+    if (dependencies.testing) await bestEffortTestNotification(dependencies.notifier, unavailable, result);
+    return result;
   }
 
   const finalized = await dependencies.ledger.finalizeAnalysis({
@@ -288,10 +261,8 @@ export async function runCallTaskAutomation(
     now,
   });
   if (!finalized) {
-    if (testSlotReserved) await dependencies.store.markTestLeadUncertain(action.id, now);
     return { kind: "analysis_claim_lost", actionId: action.id };
   }
-  if (testSlotReserved) await dependencies.store.confirmTestLead(action.id, now);
 
   if (finalized.decision === "none") {
     const result: CallTaskAutomationResult = { kind: "no_action", actionId: action.id };

@@ -1,10 +1,20 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
+
+const activationScriptPath = path.join(__dirname, "../src/scripts/initializeCallTaskAutomationActivation.ts");
 
 const {
   CALL_TASK_AUTOMATION_ACTIVATION_CONFIRMATION,
   initializeCallTaskAutomationActivation,
 } = require("../dist/services/callTaskAutomationActivation");
+
+test("call-task activation initializes only the durable boundary and never seeds obsolete five-slot capacity", () => {
+  const source = fs.readFileSync(activationScriptPath, "utf8");
+  assert.doesNotMatch(source, /ensureTestSlots\s*\(/);
+  assert.doesNotMatch(source, /CALL_TASK_AUTOMATION_TEST_LIMIT/);
+});
 
 test("refuses to initialize a call-task activation boundary without exact explicit confirmation", async () => {
   let called = false;

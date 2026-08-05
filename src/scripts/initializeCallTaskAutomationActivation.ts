@@ -5,7 +5,7 @@ import {
   initializeCallTaskAutomationActivation,
 } from "../services/callTaskAutomationActivation";
 import { createPrismaCallTaskAutomationPersistence } from "../services/callTaskAutomationPrismaPersistence";
-import { CALL_TASK_AUTOMATION_TEST_LIMIT, createCallTaskAutomationStore } from "../services/callTaskAutomationStore";
+import { createCallTaskAutomationStore } from "../services/callTaskAutomationStore";
 
 async function main(): Promise<void> {
   const store = createCallTaskAutomationStore(createPrismaCallTaskAutomationPersistence(prisma));
@@ -13,10 +13,7 @@ async function main(): Promise<void> {
     store,
     confirmation: process.env.AMOCRM_CALL_TASK_AUTOMATION_ACTIVATION_CONFIRM,
   });
-  await store.ensureTestSlots(CALL_TASK_AUTOMATION_TEST_LIMIT);
-  console.info(
-    `[CallTaskAutomation] activation boundary=${boundary.toISOString()} testSlots=${CALL_TASK_AUTOMATION_TEST_LIMIT}`,
-  );
+  console.info(`[CallTaskAutomation] activation boundary=${boundary.toISOString()} observation=unbounded`);
 }
 
 void main()

@@ -19,7 +19,7 @@ test("call-task automation is fail-closed by default and requires amoCRM credent
   );
 });
 
-test("test mode defaults to the durable five-lead rollout and live writes require explicit configuration", () => {
+test("test mode is unbounded observation while live writes still require explicit configuration", () => {
   const config = parseCallTaskAutomationRuntimeConfig({
     AMOCRM_CALL_TASK_AUTOMATION_ENABLED: "true",
     AMOCRM_CALL_TASK_AUTOMATION_TESTING: "true",

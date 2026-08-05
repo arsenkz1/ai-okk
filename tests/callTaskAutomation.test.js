@@ -33,7 +33,7 @@ function action(overrides = {}) {
 }
 
 function makeDependencies(overrides = {}) {
-  const calls = { analysis: 0, task: 0, note: 0, confirmedSlots: 0, releasedSlots: 0, proposals: 0 };
+  const calls = { analysis: 0, task: 0, note: 0, proposals: 0, testResults: 0 };
   const current = action();
   const deps = {
     enabled: true,
@@ -42,10 +42,6 @@ function makeDependencies(overrides = {}) {
     now: () => now,
     store: {
       getActivationBoundary: async () => boundary,
-      reserveTestLead: async () => ({ kind: "reserved", slot: { slotNumber: 1 } }),
-      confirmTestLead: async () => { calls.confirmedSlots += 1; },
-      releaseTestLeadBeforeAnalysis: async () => { calls.releasedSlots += 1; },
-      markTestLeadUncertain: async () => {},
     },
     ledger: {
       claimAnalysis: async () => ({ kind: "claimed", action: current, leaseToken: "lease-1" }),
@@ -91,7 +87,10 @@ function makeDependencies(overrides = {}) {
         evidence: "Menejer ertaga soat 15:00 da yuborishga kelishdi",
       };
     },
-    notifier: { notifyProposal: async () => { calls.proposals += 1; }, notifyTestResult: async () => {} },
+    notifier: {
+      notifyProposal: async () => { calls.proposals += 1; },
+      notifyTestResult: async () => { calls.testResults += 1; },
+    },
     ...overrides,
   };
   return { deps, calls, current };
@@ -107,8 +106,9 @@ test("does nothing for a feature-disabled pipeline or a lead created before the 
   assert.equal(old.calls.analysis, 0);
 });
 
-test("in the five-lead test mode it analyzes exactly an eligible new lead, creates a verified task and one explanatory note", async () => {
+test("in unbounded observation mode an eligible call is analysed and reported even when the legacy five-slot rollout is exhausted", async () => {
   const { deps, calls, current } = makeDependencies();
+  deps.store.reserveTestLead = async () => { throw new Error("legacy task slot must not be used"); };
   const result = await runCallTaskAutomation({
     callId: 10, dealId: 100, callCreatedAt: now, managerAmoUserId: 55, transcript: "Mijozga ertaga soat 15:00 da dastur yuboraman",
   }, deps);
@@ -117,26 +117,28 @@ test("in the five-lead test mode it analyzes exactly an eligible new lead, creat
   assert.equal(calls.analysis, 1);
   assert.equal(calls.task, 1);
   assert.equal(calls.note, 1);
-  assert.equal(calls.confirmedSlots, 1);
+  assert.equal(calls.testResults, 1);
   assert.equal(current.status, "confirmed");
 });
 
-test("a reclaimed analysis lease resumes its own reserved test slot instead of skipping the action", async () => {
-  const { deps, calls, current } = makeDependencies();
-  deps.store.reserveTestLead = async () => ({
-    kind: "reclaimed",
-    slot: { slotNumber: 1, state: "reserved", actionId: "action-1" },
+test("in unbounded observation mode a no-action result still reaches Telegram without an amoCRM task", async () => {
+  const { deps, calls } = makeDependencies({
+    analyze: async () => {
+      calls.analysis += 1;
+      return { decision: "none", taskText: null, deadlineAt: null, evidence: null };
+    },
   });
+  deps.store.reserveTestLead = async () => { throw new Error("legacy task slot must not be used"); };
 
   const result = await runCallTaskAutomation({
-    callId: 10, dealId: 100, callCreatedAt: now, managerAmoUserId: 55, transcript: "text",
+    callId: 11, dealId: 101, callCreatedAt: now, managerAmoUserId: 55, transcript: "text",
   }, deps);
 
-  assert.equal(result.kind, "confirmed");
+  assert.deepEqual(result, { kind: "no_action", actionId: "action-1" });
   assert.equal(calls.analysis, 1);
-  assert.equal(calls.task, 1);
-  assert.equal(calls.confirmedSlots, 1);
-  assert.equal(current.status, "confirmed");
+  assert.equal(calls.task, 0);
+  assert.equal(calls.note, 0);
+  assert.equal(calls.testResults, 1);
 });
 
 test("a clear next step without an exact deadline becomes a reviewer proposal rather than an invented amoCRM task", async () => {
@@ -153,14 +155,31 @@ test("a clear next step without an exact deadline becomes a reviewer proposal ra
   assert.equal(calls.task, 0);
   assert.equal(calls.note, 0);
   assert.equal(calls.proposals, 1);
-  assert.equal(calls.confirmedSlots, 1);
+  assert.equal(calls.testResults, 1);
 });
 
-test("an invalid/unavailable Gemini action response safely releases an unconsumed test slot and does not touch amoCRM", async () => {
+test("an invalid/unavailable Gemini action response does not touch amoCRM", async () => {
   const { deps, calls } = makeDependencies({ analyze: async () => null });
   assert.deepEqual(await runCallTaskAutomation({ callId: 10, dealId: 100, callCreatedAt: now, managerAmoUserId: 55, transcript: "text" }, deps), { kind: "analysis_unavailable", actionId: "action-1" });
   assert.equal(calls.task, 0);
-  assert.equal(calls.releasedSlots, 1);
+  assert.equal(calls.testResults, 1);
+});
+
+test("does not announce analysis-unavailable when its lease was lost to a newer worker", async () => {
+  const { deps, calls } = makeDependencies({
+    analyze: async () => null,
+    ledger: {
+      ...makeDependencies().deps.ledger,
+      markAnalysisUnavailable: async () => null,
+    },
+  });
+
+  assert.deepEqual(
+    await runCallTaskAutomation({ callId: 10, dealId: 100, callCreatedAt: now, managerAmoUserId: 55, transcript: "text" }, deps),
+    { kind: "analysis_claim_lost", actionId: "action-1" },
+  );
+  assert.equal(calls.task, 0);
+  assert.equal(calls.testResults, 0);
 });
 
 test("an ambiguous amoCRM task POST is never followed by a note or a second task attempt", async () => {
