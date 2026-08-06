@@ -15,6 +15,18 @@ export type CallStageAdminAlert =
     targetName: string;
     evidence: string;
     missingFields: UZUMRequiredField[];
+  }
+  | {
+    kind: "recent_stage_movement";
+    actionId: string;
+    dealId: number;
+    targetName: string;
+  }
+  | {
+    kind: "moved";
+    actionId: string;
+    dealId: number;
+    targetName: string;
   };
 
 function amoDealUrl(baseUrl: string | undefined, dealId: number): string | null {
@@ -47,6 +59,21 @@ export function buildCallStageAdminAlert(
       ...base,
       "Итог звонка неоднозначен — сделка не передвинута.",
       `Основание: ${conciseEvidence(alert.evidence)}`,
+      `ID обработки: ${alert.actionId}`,
+    ].join("\n\n");
+  }
+  if (alert.kind === "recent_stage_movement") {
+    return [
+      ...base,
+      `Предполагаемый этап: ${alert.targetName}`,
+      "Сделка не передвинута: за последние 30 минут уже было перемещение стадии.",
+      `ID обработки: ${alert.actionId}`,
+    ].join("\n\n");
+  }
+  if (alert.kind === "moved") {
+    return [
+      ...base,
+      `Сделка автоматически передвинута на этап: ${alert.targetName}.`,
       `ID обработки: ${alert.actionId}`,
     ].join("\n\n");
   }

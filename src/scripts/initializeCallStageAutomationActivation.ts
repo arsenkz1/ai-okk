@@ -1,21 +1,20 @@
 import "dotenv/config";
 import { prisma } from "../config/database";
 import {
-  CALL_STAGE_AUTOMATION_ACTIVATION_CONFIRMATION,
-  initializeCallStageAutomationActivation,
+  CALL_STAGE_AUTOMATION_HISTORY_FENCE_ACTIVATION_CONFIRMATION,
+  initializeCallStageHistoryFenceActivation,
 } from "../services/callStageAutomationActivation";
 import { createPrismaCallStageAutomationStorePersistence } from "../services/callStageAutomationPrismaPersistence";
-import { CALL_STAGE_AUTOMATION_TEST_LIMIT, createCallStageAutomationStore } from "../services/callStageAutomationStore";
+import { CALL_STAGE_AUTOMATION_HISTORY_FENCE_TEST_LIMIT, createCallStageAutomationStore } from "../services/callStageAutomationStore";
 
 async function main(): Promise<void> {
   const store = createCallStageAutomationStore(createPrismaCallStageAutomationStorePersistence(prisma));
-  const boundary = await initializeCallStageAutomationActivation({
+  const boundary = await initializeCallStageHistoryFenceActivation({
     store,
-    confirmation: process.env.AMOCRM_CALL_STAGE_AUTOMATION_ACTIVATION_CONFIRM,
+    confirmation: process.env.AMOCRM_CALL_STAGE_AUTOMATION_HISTORY_FENCE_ACTIVATION_CONFIRM,
   });
-  await store.ensureTestSlots(CALL_STAGE_AUTOMATION_TEST_LIMIT);
   console.info(
-    `[CallStageAutomation] activation boundary=${boundary.toISOString()} testSlots=${CALL_STAGE_AUTOMATION_TEST_LIMIT}`,
+    `[CallStageAutomation] historyFenceBoundary=${boundary.toISOString()} newTestSlots=${CALL_STAGE_AUTOMATION_HISTORY_FENCE_TEST_LIMIT}`,
   );
 }
 
@@ -26,4 +25,4 @@ void main()
   })
   .finally(async () => prisma.$disconnect());
 
-export { CALL_STAGE_AUTOMATION_ACTIVATION_CONFIRMATION };
+export { CALL_STAGE_AUTOMATION_HISTORY_FENCE_ACTIVATION_CONFIRMATION };

@@ -36,3 +36,22 @@ test("lists only missing field names when a clear stage is blocked", () => {
   assert.doesNotMatch(text, /967019/);
   assert.doesNotMatch(text, /транскрипт/i);
 });
+
+test("states whether the stage was moved or safely skipped due to recent movement", () => {
+  const moved = buildCallStageAdminAlert({
+    kind: "moved",
+    actionId: "stage-action-3",
+    dealId: 44,
+    targetName: "квалифицирован",
+  });
+  const skipped = buildCallStageAdminAlert({
+    kind: "recent_stage_movement",
+    actionId: "stage-action-4",
+    dealId: 45,
+    targetName: "взято в работу",
+  });
+
+  assert.match(moved, /автоматически передвинута на этап: квалифицирован/i);
+  assert.match(skipped, /за последние 30 минут уже было перемещение стадии/i);
+  assert.doesNotMatch(`${moved}\n${skipped}`, /транскрипт/i);
+});

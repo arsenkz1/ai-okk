@@ -6,7 +6,7 @@ import type {
   MoveCallStageLeadOutcome,
 } from "./callStageAmoClient";
 import type { CallStageAutomationLedger } from "./callStageAutomationLedger";
-import { isCallStageAutomationEligible, type CallStageAutomationStore } from "./callStageAutomationStore";
+import { isCallStageAutomationEligible, isCallStageHistoryFenceEligible, type CallStageAutomationStore } from "./callStageAutomationStore";
 import {
   evaluateUzumStageRoute,
   UZUM_PIPELINE_ID,
@@ -30,6 +30,8 @@ export interface CallStageAutomationNotifier {
   notify(alert: CallStageAdminAlert): Promise<void>;
 }
 
+export const CALL_STAGE_HISTORY_LOOKBACK_MS = 30 * 60 * 1_000;
+
 export interface CallStageAutomationDependencies {
   enabled: boolean;
   testing: boolean;
@@ -39,13 +41,14 @@ export interface CallStageAutomationDependencies {
   store: Pick<
     CallStageAutomationStore,
     | "getActivationBoundary"
-    | "reserveTestMove"
+    | "getHistoryFenceActivationBoundary"
+    | "reserveHistoryFenceTestMove"
     | "confirmTestMove"
     | "releaseTestMoveBeforePatch"
     | "markTestMoveUncertain"
   >;
   ledger: CallStageAutomationLedger;
-  amo: Pick<CallStageAmoClient, "readLead" | "getLeadCustomFields" | "moveLeadToTarget" | "addStageReasonNote">;
+  amo: Pick<CallStageAmoClient, "readLead" | "getLeadCustomFields" | "hasRecentStageMovement" | "moveLeadToTarget" | "addStageReasonNote">;
   analyze(transcript: string): Promise<CallStageRoutingProposal | null>;
   notifier?: CallStageAutomationNotifier;
 }
@@ -56,7 +59,7 @@ export type CallStageAutomationResult =
   | { kind: "not_latest_call" }
   | { kind: "lead_unavailable" }
   | { kind: "out_of_scope" }
-  | { kind: "ineligible"; reason: "lead_created_before_activation" | "call_created_before_activation" }
+  | { kind: "ineligible"; reason: "lead_created_before_activation" | "call_created_before_activation" | "call_created_before_history_fence_activation" }
   | { kind: "existing"; actionId: string }
   | { kind: "no_action"; actionId: string }
   | { kind: "review"; actionId: string }
@@ -64,6 +67,7 @@ export type CallStageAutomationResult =
   | { kind: "test_limit_reached"; actionId: string }
   | { kind: "test_deal_already_claimed"; actionId: string }
   | { kind: "dry_run"; actionId: string }
+  | { kind: "recent_stage_movement"; actionId: string }
   | { kind: "skipped"; actionId: string }
   | { kind: "confirmed"; actionId: string; noteId: number | null }
   | { kind: "uncertain"; actionId: string; phase: "lead" | "move" | "note" | "persistence" };
@@ -139,6 +143,24 @@ function missingFieldAlert(action: { id: string; dealId: number; evidence: strin
   };
 }
 
+function recentStageMovementAlert(action: { id: string; dealId: number }, targetName: string): CallStageAdminAlert {
+  return {
+    kind: "recent_stage_movement",
+    actionId: action.id,
+    dealId: action.dealId,
+    targetName,
+  };
+}
+
+function movedAlert(action: { id: string; dealId: number }, targetName: string): CallStageAdminAlert {
+  return {
+    kind: "moved",
+    actionId: action.id,
+    dealId: action.dealId,
+    targetName,
+  };
+}
+
 export function buildCallStageReasonNote(input: {
   id: string;
   targetName: string;
@@ -203,15 +225,17 @@ export async function runCallStageAutomation(
   }
 
   let activationBoundary: Date | null;
+  let historyFenceActivationBoundary: Date | null;
   try {
     activationBoundary = await dependencies.store.getActivationBoundary();
+    historyFenceActivationBoundary = await dependencies.store.getHistoryFenceActivationBoundary();
   } catch (error) {
     console.error("[CallStageAutomation] activation boundary is unavailable", {
       reason: error instanceof Error ? error.message : "unknown error",
     });
     return { kind: "not_configured" };
   }
-  if (!activationBoundary) return { kind: "not_configured" };
+  if (!activationBoundary || !historyFenceActivationBoundary) return { kind: "not_configured" };
 
   let initialLead: AmoCallStageLead;
   try {
@@ -236,6 +260,12 @@ export async function runCallStageAutomation(
     callCreatedAt: input.callCreatedAt,
   })) {
     return { kind: "ineligible", reason: "lead_created_before_activation" };
+  }
+  if (!isCallStageHistoryFenceEligible({
+    historyFenceActivationBoundary,
+    callCreatedAt: input.callCreatedAt,
+  })) {
+    return { kind: "ineligible", reason: "call_created_before_history_fence_activation" };
   }
 
   const analysisClaim = await dependencies.ledger.claimAnalysis({
@@ -341,14 +371,44 @@ export async function runCallStageAutomation(
     return { kind: "skipped", actionId: moving.id };
   }
 
+  const historySince = new Date(now.getTime() - CALL_STAGE_HISTORY_LOOKBACK_MS);
+  let hasRecentStageMovement: boolean;
+  try {
+    hasRecentStageMovement = await dependencies.amo.hasRecentStageMovement({ leadId: moving.dealId, since: historySince });
+  } catch (error) {
+    const skipped = await dependencies.ledger.markMoveSkipped({
+      actionId: moving.id,
+      mutationLeaseToken: moving.mutationLeaseToken,
+      reason: "amoCRM stage history could not be read safely",
+      now,
+    });
+    if (!skipped) return { kind: "existing", actionId: moving.id };
+    console.error("[CallStageAutomation] amoCRM stage-history check failed", {
+      actionId: moving.id,
+      reason: error instanceof Error ? error.message : "unknown error",
+    });
+    return { kind: "skipped", actionId: moving.id };
+  }
+  if (hasRecentStageMovement) {
+    const skipped = await dependencies.ledger.markMoveSkipped({
+      actionId: moving.id,
+      mutationLeaseToken: moving.mutationLeaseToken,
+      reason: "amoCRM stage changed during the prior thirty minutes",
+      now,
+    });
+    if (!skipped) return { kind: "existing", actionId: moving.id };
+    await bestEffortAlert(dependencies.notifier, recentStageMovementAlert(moving, route.target.name));
+    return { kind: "recent_stage_movement", actionId: moving.id };
+  }
+
   let testSlotReserved = false;
   if (dependencies.testing) {
-    const reservation = await dependencies.store.reserveTestMove({ dealId: moving.dealId, actionId: moving.id, now });
+    const reservation = await dependencies.store.reserveHistoryFenceTestMove({ dealId: moving.dealId, actionId: moving.id, now });
     if (reservation.kind === "limit_reached") {
       await dependencies.ledger.markMoveSkipped({
         actionId: moving.id,
         mutationLeaseToken: moving.mutationLeaseToken,
-        reason: "three-deal call-stage test limit reached",
+        reason: "five-deal call-stage history-fence test limit reached",
         now,
       });
       return { kind: "test_limit_reached", actionId: moving.id };
@@ -367,6 +427,8 @@ export async function runCallStageAutomation(
 
   const source = { pipelineId: freshLead.pipelineId, statusId: freshLead.statusId };
   const target = { pipelineId: UZUM_PIPELINE_ID, statusId: route.target.statusId };
+  let historyFenceCancelledMove = false;
+  let historyFenceCheckFailed = false;
   let outcome: MoveCallStageLeadOutcome;
   try {
     outcome = await dependencies.amo.moveLeadToTarget({
@@ -380,12 +442,29 @@ export async function runCallStageAutomation(
         });
         if (!leaseIsCurrent) return false;
         // Run inside the amo client's pre-dispatch fence too, including after
-        // its PATCH rate-slot wait: a newly completed call always wins.
-        return dependencies.isLatestCompletedCall({
+        // its PATCH rate-slot wait: a newly completed call or a recent stage
+        // movement always wins over the automatic route.
+        const latestCallIsCurrent = await dependencies.isLatestCompletedCall({
           callId: input.callId,
           dealId: input.dealId,
           callEndedAt: input.callEndedAt,
         });
+        if (!latestCallIsCurrent) return false;
+        try {
+          const hasMovement = await dependencies.amo.hasRecentStageMovement({ leadId: moving.dealId, since: historySince });
+          if (hasMovement) historyFenceCancelledMove = true;
+          return !hasMovement;
+        } catch (error) {
+          // This callback runs before the amoCRM PATCH dispatch. A failed
+          // history read must block the move, but it is a proven no-PATCH
+          // cancellation and must not burn one of the five new slots.
+          historyFenceCheckFailed = true;
+          console.error("[CallStageAutomation] final amoCRM stage-history check failed", {
+            actionId: moving.id,
+            reason: error instanceof Error ? error.message : "unknown error",
+          });
+          return false;
+        }
       },
       isLeadEligibleForTarget: async (lead) => evaluateUzumStageRoute({
         pipelineId: lead.pipelineId,
@@ -410,6 +489,26 @@ export async function runCallStageAutomation(
   }
 
   if (outcome.kind !== "confirmed") {
+    if ((historyFenceCancelledMove || historyFenceCheckFailed) && outcome.kind === "not_moved" && outcome.reason === "fence_cancelled") {
+      const skipped = await dependencies.ledger.markMoveSkipped({
+        actionId: moving.id,
+        mutationLeaseToken: moving.mutationLeaseToken,
+        reason: historyFenceCancelledMove
+          ? "amoCRM stage changed during the prior thirty minutes"
+          : "amoCRM stage history could not be read safely before PATCH",
+        now,
+      });
+      if (!skipped) {
+        if (testSlotReserved) await markTestMoveUncertain(dependencies, moving.id, now);
+        return { kind: "uncertain", actionId: moving.id, phase: "persistence" };
+      }
+      if (testSlotReserved) await releaseTestMoveBeforePatch(dependencies, moving.id);
+      if (historyFenceCancelledMove) {
+        await bestEffortAlert(dependencies.notifier, recentStageMovementAlert(moving, route.target.name));
+        return { kind: "recent_stage_movement", actionId: moving.id };
+      }
+      return { kind: "skipped", actionId: moving.id };
+    }
     if (outcome.kind === "not_moved" && outcome.reason === "preconditions_changed") {
       let refreshedRequiredFields: UZUMRequiredField[];
       try {
@@ -507,5 +606,6 @@ export async function runCallStageAutomation(
       return { kind: "uncertain", actionId: moving.id, phase: "persistence" };
     }
   }
+  await bestEffortAlert(dependencies.notifier, movedAlert(moving, route.target.name));
   return { kind: "confirmed", actionId: moving.id, noteId: note.noteId };
 }

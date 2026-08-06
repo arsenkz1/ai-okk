@@ -7,6 +7,8 @@ import {
 
 export const AMO_CALL_STAGE_REQUEST_TIMEOUT_MS = 10_000;
 export const AMO_CALL_STAGE_MAX_SAFE_READ_ATTEMPTS = 3;
+export const AMO_CALL_STAGE_HISTORY_MAX_PAGES = 3;
+export const AMO_CALL_STAGE_HISTORY_PAGE_SIZE = 100;
 
 export interface AmoCallStageHttpRequest {
   method: "GET" | "POST" | "PATCH";
@@ -72,6 +74,7 @@ export interface CreateCallStageAmoClientOptions {
 export interface CallStageAmoClient {
   readLead(leadId: number): Promise<AmoCallStageLead>;
   getLeadCustomFields(): Promise<readonly AmoCallStageCustomField[]>;
+  hasRecentStageMovement(input: { leadId: number; since: Date }): Promise<boolean>;
   moveLeadToTarget(input: {
     leadId: number;
     source: { pipelineId: number; statusId: number };
@@ -113,6 +116,13 @@ interface RawAmoLead {
   custom_fields_values?: unknown;
 }
 
+interface RawAmoStageHistoryEvent {
+  entity_type?: unknown;
+  entity_id?: unknown;
+  type?: unknown;
+  created_at?: unknown;
+}
+
 class AmoCallStageHttpStatusError extends Error {
   readonly response: { status: number; headers: Record<string, string | undefined> | undefined };
 
@@ -142,6 +152,12 @@ function unixSecondsToDate(value: unknown, field: string): Date {
   const date = new Date(seconds * 1_000);
   if (Number.isNaN(date.getTime())) throw new Error(`amoCRM lead has invalid ${field}`);
   return date;
+}
+
+function requireValidDate(value: Date, field: string): void {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    throw new Error(`${field} must be a valid Date`);
+  }
 }
 
 function toFieldValues(raw: unknown): ReadonlyMap<number, string[]> {
@@ -319,6 +335,41 @@ export function createCallStageAmoClient(options: CreateCallStageAmoClientOption
   return {
     readLead,
     getLeadCustomFields,
+
+    async hasRecentStageMovement(input): Promise<boolean> {
+      requiredPositiveInteger(input.leadId, "lead id");
+      requireValidDate(input.since, "stage history since");
+      const fromSeconds = Math.floor(input.since.getTime() / 1_000);
+
+      for (let page = 1; page <= AMO_CALL_STAGE_HISTORY_MAX_PAGES; page += 1) {
+        const params = new URLSearchParams({
+          "filter[entity]": "lead",
+          "filter[entity_id][]": String(input.leadId),
+          "filter[created_at][from]": String(fromSeconds),
+          limit: String(AMO_CALL_STAGE_HISTORY_PAGE_SIZE),
+          page: String(page),
+        });
+        const response = await request("GET", `/api/v4/events?${params.toString()}`, undefined, true);
+        // amoCRM returns 204 rather than an empty embedded list when no events match.
+        if (response.status === 204) return false;
+        const events = (response.data as { _embedded?: { events?: unknown } } | null)?._embedded?.events;
+        if (!Array.isArray(events)) throw new Error("amoCRM lead stage history response is malformed");
+
+        for (const rawEvent of events) {
+          const event = rawEvent as RawAmoStageHistoryEvent | null;
+          if (!event || typeof event !== "object") throw new Error("amoCRM lead stage history event is malformed");
+          if (event.entity_type !== "lead" || requiredPositiveInteger(event.entity_id, "stage history event entity_id") !== input.leadId) {
+            throw new Error("amoCRM lead stage history response is outside the requested lead");
+          }
+          const createdAt = unixSecondsToDate(event.created_at, "stage history event created_at");
+          if (typeof event.type !== "string") throw new Error("amoCRM lead stage history event type is malformed");
+          if (event.type === "lead_status_changed" && createdAt.getTime() >= input.since.getTime()) return true;
+        }
+
+        if (events.length < AMO_CALL_STAGE_HISTORY_PAGE_SIZE) return false;
+      }
+      throw new Error("amoCRM lead stage history exceeded safe page limit");
+    },
 
     async moveLeadToTarget(input): Promise<MoveCallStageLeadOutcome> {
       requiredPositiveInteger(input.leadId, "id");

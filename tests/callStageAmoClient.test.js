@@ -179,3 +179,42 @@ test("adds a compact stage note only through amoCRM's notes endpoint", async () 
   assert.equal(requests[0].method, "POST");
   assert.deepEqual(requests[0].data, [{ entity_id: 42, note_type: "common", params: { text: "Автоперевод UZUM: квалифицирован." } }]);
 });
+
+test("finds a recent lead-status event through a bounded read-only amoCRM history query", async () => {
+  const requests = [];
+  const client = makeClient([{
+    status: 200,
+    data: {
+      _embedded: {
+        events: [{
+          entity_type: "lead",
+          entity_id: 42,
+          type: "lead_status_changed",
+          created_at: 1_754_000_000,
+        }],
+      },
+    },
+  }], requests);
+
+  const changedRecently = await client.hasRecentStageMovement({
+    leadId: 42,
+    since: new Date("2025-07-31T22:00:00.000Z"),
+  });
+
+  assert.equal(changedRecently, true);
+  assert.equal(requests[0].method, "GET");
+  assert.match(requests[0].url, /\/api\/v4\/events\?/);
+  assert.match(requests[0].url, /filter%5Bentity%5D=lead/);
+  assert.match(requests[0].url, /filter%5Bentity_id%5D%5B%5D=42/);
+});
+
+test("treats amoCRM's empty 204 history response as no recent stage movement", async () => {
+  const client = makeClient([{ status: 204, data: null }]);
+
+  const changedRecently = await client.hasRecentStageMovement({
+    leadId: 42,
+    since: new Date("2025-07-31T22:00:00.000Z"),
+  });
+
+  assert.equal(changedRecently, false);
+});

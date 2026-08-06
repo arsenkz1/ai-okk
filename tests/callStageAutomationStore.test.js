@@ -18,8 +18,9 @@ function makePersistence() {
       if (!settings.has(key)) settings.set(key, value);
       return settings.get(key);
     },
-    async ensureTestSlots(limit) {
-      for (let slotNumber = 1; slotNumber <= limit; slotNumber += 1) {
+    async ensureTestSlots(firstSlot, lastSlot = firstSlot) {
+      const start = lastSlot === firstSlot ? 1 : firstSlot;
+      for (let slotNumber = start; slotNumber <= lastSlot; slotNumber += 1) {
         if (!slots.some((slot) => slot.slotNumber === slotNumber)) {
           slots.push({ slotNumber, state: "free", dealId: null, actionId: null, reservedAt: null, confirmedAt: null, leaseExpiresAt: null });
         }
@@ -29,8 +30,8 @@ function makePersistence() {
       const slot = slots.find((candidate) => candidate.dealId === dealId);
       return slot ? clone(slot) : null;
     },
-    async reserveFreeTestSlot(dealId, actionId, now, leaseExpiresAt) {
-      const slot = slots.find((candidate) => candidate.state === "free");
+    async reserveFreeTestSlot(dealId, actionId, now, leaseExpiresAt, firstSlot = 1, lastSlot = Number.MAX_SAFE_INTEGER) {
+      const slot = slots.find((candidate) => candidate.state === "free" && candidate.slotNumber >= firstSlot && candidate.slotNumber <= lastSlot);
       if (!slot) return null;
       Object.assign(slot, { state: "reserved", dealId, actionId, reservedAt: now, leaseExpiresAt, confirmedAt: null });
       return clone(slot);
@@ -108,6 +109,28 @@ test("testing mode has exactly three durable slots and rejects a fourth deal", a
   assert.deepEqual(reservations.map(({ kind }) => kind), ["reserved", "reserved", "reserved"]);
   assert.deepEqual(reservations.map(({ slot }) => slot.slotNumber), [1, 2, 3]);
   assert.deepEqual(await store.reserveTestMove({ dealId: 4, actionId: "action-4", now }), { kind: "limit_reached" });
+});
+
+test("history-fence rollout creates a separate durable boundary and five new slots without reusing legacy capacity", async () => {
+  const { persistence, slots } = makePersistence();
+  const store = createCallStageAutomationStore(persistence, { leaseMs: 60_000 });
+  await store.ensureTestSlots(CALL_STAGE_AUTOMATION_TEST_LIMIT);
+  slots[0].state = "confirmed";
+  slots[0].dealId = 1;
+  slots[0].actionId = "legacy-confirmed";
+
+  const boundary = await store.getOrCreateHistoryFenceActivationBoundary(now);
+  assert.equal(boundary.toISOString(), now.toISOString());
+  await store.ensureHistoryFenceTestSlots();
+  assert.deepEqual(slots.map(({ slotNumber }) => slotNumber), [1, 2, 3, 4, 5, 6, 7, 8]);
+
+  const reservations = [];
+  for (const dealId of [101, 102, 103, 104, 105]) {
+    reservations.push(await store.reserveHistoryFenceTestMove({ dealId, actionId: `history-${dealId}`, now }));
+  }
+  assert.deepEqual(reservations.map(({ kind }) => kind), ["reserved", "reserved", "reserved", "reserved", "reserved"]);
+  assert.deepEqual(reservations.map(({ slot }) => slot.slotNumber), [4, 5, 6, 7, 8]);
+  assert.deepEqual(await store.reserveHistoryFenceTestMove({ dealId: 106, actionId: "history-106", now }), { kind: "limit_reached" });
 });
 
 test("only a proven pre-PATCH cancellation frees a slot; confirmed and uncertain moves consume it", async () => {
