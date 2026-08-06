@@ -23,7 +23,7 @@ export async function initializeCallStageAutomationActivation(
 }
 
 export interface InitializeCallStageHistoryFenceActivationOptions {
-  store: Pick<CallStageAutomationStore, "getOrCreateHistoryFenceActivationBoundary" | "ensureHistoryFenceTestSlots">;
+  store: Pick<CallStageAutomationStore, "initializeHistoryFenceRollout">;
   confirmation?: string;
   now?: () => Date;
 }
@@ -38,7 +38,5 @@ export async function initializeCallStageHistoryFenceActivation(
       + "set AMOCRM_CALL_STAGE_AUTOMATION_HISTORY_FENCE_ACTIVATION_CONFIRM=initialize-history-fence",
     );
   }
-  const boundary = await options.store.getOrCreateHistoryFenceActivationBoundary(options.now?.());
-  await options.store.ensureHistoryFenceTestSlots();
-  return boundary;
+  return options.store.initializeHistoryFenceRollout(options.now?.());
 }

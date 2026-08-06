@@ -43,7 +43,6 @@ export interface CallStageAutomationDependencies {
     | "getActivationBoundary"
     | "getHistoryFenceActivationBoundary"
     | "reserveHistoryFenceTestMove"
-    | "confirmTestMove"
     | "releaseTestMoveBeforePatch"
     | "markTestMoveUncertain"
   >;
@@ -587,24 +586,32 @@ export async function runCallStageAutomation(
     return { kind: "uncertain", actionId: moving.id, phase: "note" };
   }
 
-  const confirmed = await dependencies.ledger.markMoveConfirmed({
-    actionId: moving.id,
-    mutationLeaseToken: moving.mutationLeaseToken,
-    checkedFields: route.checkedFields,
-    noteId: note.noteId,
-    now,
-  });
-  if (!confirmed) {
+  let confirmed;
+  try {
+    confirmed = await dependencies.ledger.markMoveConfirmed({
+      actionId: moving.id,
+      mutationLeaseToken: moving.mutationLeaseToken,
+      checkedFields: route.checkedFields,
+      noteId: note.noteId,
+      now,
+      confirmTestSlot: testSlotReserved,
+    });
+  } catch (error) {
+    // The confirmed amoCRM PATCH is already read back. The atomic DB
+    // transaction rolled back, so persist only an uncertain terminal state;
+    // never emit a successful-move alert or silently retry the PATCH.
+    await dependencies.ledger.markMoveUncertain({
+      actionId: moving.id,
+      mutationLeaseToken: moving.mutationLeaseToken,
+      reason: error instanceof Error ? error.message : "atomic move confirmation failed",
+      now,
+    });
     if (testSlotReserved) await markTestMoveUncertain(dependencies, moving.id, now);
     return { kind: "uncertain", actionId: moving.id, phase: "persistence" };
   }
-  if (testSlotReserved) {
-    try {
-      const slot = await dependencies.store.confirmTestMove(moving.id, now);
-      if (!slot) return { kind: "uncertain", actionId: moving.id, phase: "persistence" };
-    } catch {
-      return { kind: "uncertain", actionId: moving.id, phase: "persistence" };
-    }
+  if (!confirmed) {
+    if (testSlotReserved) await markTestMoveUncertain(dependencies, moving.id, now);
+    return { kind: "uncertain", actionId: moving.id, phase: "persistence" };
   }
   await bestEffortAlert(dependencies.notifier, movedAlert(moving, route.target.name));
   return { kind: "confirmed", actionId: moving.id, noteId: note.noteId };

@@ -144,8 +144,8 @@ test("a clear target with missing amoCRM-required fields alerts admins and consu
   assert.equal(alerts[0].targetName, "квалифицирован");
 });
 
-test("a clear eligible UZUM outcome reserves one test slot, moves once, verifies, notes, confirms capacity, and reports its result", async () => {
-  const calls = { reserve: 0, confirm: 0, move: 0, note: 0 };
+test("a clear eligible UZUM outcome reserves one test slot, moves once, verifies, notes, atomically confirms capacity, and reports its result", async () => {
+  const calls = { reserve: 0, atomicConfirm: 0, move: 0, note: 0 };
   const alerts = [];
   const allQualificationFields = new Map([
     [936095, ["Maqsad"]], [936097, ["Erkak"]], [936101, ["29"]], [936103, ["Kurs"]], [936105, ["Birinchi"]],
@@ -155,10 +155,18 @@ test("a clear eligible UZUM outcome reserves one test slot, moves once, verifies
     store: {
       async getActivationBoundary() { return boundary; },
       async getHistoryFenceActivationBoundary() { return boundary; },
-      async reserveHistoryFenceTestMove() { calls.reserve += 1; return { kind: "reserved", slot: { slotNumber: 1 } }; },
-      async confirmTestMove() { calls.confirm += 1; return { state: "confirmed" }; },
+      async reserveHistoryFenceTestMove() { calls.reserve += 1; return { kind: "reserved", slot: { slotNumber: 4 } }; },
+      async confirmTestMove() { throw new Error("separate slot confirmation is forbidden"); },
       async releaseTestMoveBeforePatch() { throw new Error("not expected"); },
       async markTestMoveUncertain() { throw new Error("not expected"); },
+    },
+    ledger: {
+      ...baseDependencies().ledger,
+      async markMoveConfirmed(confirmInput) {
+        calls.atomicConfirm += 1;
+        assert.equal(confirmInput.confirmTestSlot, true);
+        return action({ status: "confirmed", checkedFields: confirmInput.checkedFields, amoNoteId: confirmInput.noteId });
+      },
     },
     amo: {
       async readLead() { return lead({ fields: allQualificationFields }); },
@@ -183,8 +191,44 @@ test("a clear eligible UZUM outcome reserves one test slot, moves once, verifies
 
   const result = await runCallStageAutomation(input, dependencies);
   assert.deepEqual(result, { kind: "confirmed", actionId: "stage-action-1", noteId: 700 });
-  assert.deepEqual(calls, { reserve: 1, confirm: 1, move: 1, note: 1 });
+  assert.deepEqual(calls, { reserve: 1, atomicConfirm: 1, move: 1, note: 1 });
   assert.deepEqual(alerts.map(({ kind, targetName }) => ({ kind, targetName })), [{ kind: "moved", targetName: "квалифицирован" }]);
+});
+
+test("an atomic terminal persistence failure marks the action and slot uncertain without announcing a move", async () => {
+  const allQualificationFields = new Map(qualificationFields.map(([id]) => [id, ["filled"]]));
+  let actionUncertain = 0;
+  let slotUncertain = 0;
+  const alerts = [];
+  const dependencies = baseDependencies({
+    store: {
+      async getActivationBoundary() { return boundary; },
+      async getHistoryFenceActivationBoundary() { return boundary; },
+      async reserveHistoryFenceTestMove() { return { kind: "reserved", slot: { slotNumber: 4 } }; },
+      async confirmTestMove() { throw new Error("separate slot confirmation is forbidden"); },
+      async releaseTestMoveBeforePatch() { throw new Error("not expected"); },
+      async markTestMoveUncertain() { slotUncertain += 1; return { state: "uncertain" }; },
+    },
+    ledger: {
+      ...baseDependencies().ledger,
+      async markMoveConfirmed() { throw new Error("atomic transaction failed"); },
+      async markMoveUncertain() { actionUncertain += 1; return action({ status: "uncertain" }); },
+    },
+    amo: {
+      async readLead() { return lead({ fields: allQualificationFields }); },
+      async getLeadCustomFields() { return configuredCustomFields(); },
+      async hasRecentStageMovement() { return false; },
+      async moveLeadToTarget() { return { kind: "confirmed", lead: lead({ statusId: 58160726, fields: allQualificationFields }) }; },
+      async addStageReasonNote() { return { kind: "confirmed", noteId: 700 }; },
+    },
+    notifier: { async notify(alert) { alerts.push(alert); } },
+  });
+
+  const result = await runCallStageAutomation(input, dependencies);
+  assert.deepEqual(result, { kind: "uncertain", actionId: "stage-action-1", phase: "persistence" });
+  assert.equal(actionUncertain, 1);
+  assert.equal(slotUncertain, 1);
+  assert.deepEqual(alerts, []);
 });
 
 test("a stage change during the prior thirty minutes is durably skipped before capacity or PATCH", async () => {

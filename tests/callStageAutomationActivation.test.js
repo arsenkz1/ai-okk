@@ -36,15 +36,15 @@ test("stage routing activation must be explicit and preserves its first durable 
   assert.equal(second.toISOString(), first.toISOString());
 });
 
-test("history-fence rollout has its own explicit durable boundary and initializes five new slots", async () => {
+test("history-fence rollout atomically seeds five slots before publishing its separate durable boundary", async () => {
   let boundary = null;
-  let seeded = 0;
+  let initializations = 0;
   const store = {
-    async getOrCreateHistoryFenceActivationBoundary(now) {
+    async initializeHistoryFenceRollout(now) {
+      initializations += 1;
       if (!boundary) boundary = now;
       return boundary;
     },
-    async ensureHistoryFenceTestSlots() { seeded += 1; },
   };
 
   await assert.rejects(
@@ -63,5 +63,5 @@ test("history-fence rollout has its own explicit durable boundary and initialize
   });
   assert.equal(first.toISOString(), "2026-08-05T10:00:00.000Z");
   assert.equal(second.toISOString(), first.toISOString());
-  assert.equal(seeded, 2);
+  assert.equal(initializations, 2);
 });
