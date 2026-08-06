@@ -34,10 +34,10 @@ test("live stage routing requires explicit credentials and an explicit live mode
   assert.equal(config.executionMode, "live");
 });
 
-test("stage-routing cannot silently leave its approved three-move test mode", () => {
+test("stage-routing cannot silently leave its approved five-move history-fence test mode", () => {
   assert.throws(
     () => parseCallStageAutomationRuntimeConfig({ AMOCRM_CALL_STAGE_AUTOMATION_TESTING: "false" }),
-    /must remain true during the approved three-move rollout/,
+    /must remain true during the approved five-move history-fence rollout/,
   );
 });
 

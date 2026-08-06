@@ -5,7 +5,6 @@ import type {
   CallStageActionStatus,
 } from "./callStageAutomationLedger";
 import {
-  CALL_STAGE_AUTOMATION_TEST_LIMIT,
   type CallStageAutomationPersistence,
   type CallStageAutomationTestSlot,
   type CallStageAutomationTestSlotState,
@@ -136,8 +135,8 @@ function createStoreAdapter(
       });
       return setting.value;
     },
-    async ensureTestSlots(limit) {
-      for (let slotNumber = 1; slotNumber <= limit; slotNumber += 1) {
+    async ensureTestSlots(firstSlot, lastSlot) {
+      for (let slotNumber = firstSlot; slotNumber <= lastSlot; slotNumber += 1) {
         await database.callStageAutomationTestSlot.upsert({
           where: { slotNumber }, create: { slotNumber, state: "free" }, update: {}, select: { slotNumber: true },
         });
@@ -147,12 +146,12 @@ function createStoreAdapter(
       const slot = await database.callStageAutomationTestSlot.findUnique({ where: { dealId } });
       return slot ? toSlot(slot) : null;
     },
-    async reserveFreeTestSlot(dealId, actionId, now, leaseExpiresAt) {
+    async reserveFreeTestSlot(dealId, actionId, now, leaseExpiresAt, firstSlot, lastSlot) {
       for (let attempt = 0; attempt < 10; attempt += 1) {
         const candidate = await database.callStageAutomationTestSlot.findFirst({
           where: {
             state: "free",
-            slotNumber: { gte: 1, lte: CALL_STAGE_AUTOMATION_TEST_LIMIT },
+            slotNumber: { gte: firstSlot, lte: lastSlot },
           },
           orderBy: { slotNumber: "asc" },
           select: { slotNumber: true },
@@ -183,9 +182,9 @@ function createStoreAdapter(
       const slot = await database.callStageAutomationTestSlot.findFirst({ where: { state: "reserved", actionId } });
       return slot ? toSlot(slot) : null;
     },
-    async markExpiredTestSlotsUncertain(now) {
+    async markExpiredTestSlotsUncertain(now, firstSlot, lastSlot) {
       return (await database.callStageAutomationTestSlot.updateMany({
-        where: { state: "reserved", leaseExpiresAt: { lte: now } },
+        where: { state: "reserved", leaseExpiresAt: { lte: now }, slotNumber: { gte: firstSlot, lte: lastSlot } },
         data: { state: "uncertain", confirmedAt: now, leaseExpiresAt: null },
       })).count;
     },

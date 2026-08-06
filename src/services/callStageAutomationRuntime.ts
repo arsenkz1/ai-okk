@@ -38,7 +38,7 @@ export function parseCallStageAutomationRuntimeConfig(
   const enabled = parseBoolean(environment.AMOCRM_CALL_STAGE_AUTOMATION_ENABLED, "AMOCRM_CALL_STAGE_AUTOMATION_ENABLED", false);
   const testing = parseBoolean(environment.AMOCRM_CALL_STAGE_AUTOMATION_TESTING, "AMOCRM_CALL_STAGE_AUTOMATION_TESTING", true);
   if (!testing) {
-    throw new Error("AMOCRM_CALL_STAGE_AUTOMATION_TESTING must remain true during the approved three-move rollout");
+    throw new Error("AMOCRM_CALL_STAGE_AUTOMATION_TESTING must remain true during the approved five-move history-fence rollout");
   }
   const rawExecutionMode = environment.AMOCRM_CALL_STAGE_AUTOMATION_EXECUTION_MODE?.trim().toLowerCase() || "dry_run";
   if (rawExecutionMode !== "live" && rawExecutionMode !== "dry_run") {
@@ -91,6 +91,7 @@ export function createCallStageAutomationRuntime(
       amo: amo ?? {
         async readLead() { throw new Error("call-stage automation is disabled"); },
         async getLeadCustomFields() { throw new Error("call-stage automation is disabled"); },
+        async hasRecentStageMovement() { throw new Error("call-stage automation is disabled"); },
         async moveLeadToTarget() { throw new Error("call-stage automation is disabled"); },
         async addStageReasonNote() { throw new Error("call-stage automation is disabled"); },
       },

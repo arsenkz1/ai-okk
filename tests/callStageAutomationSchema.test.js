@@ -13,6 +13,12 @@ function migrationSql() {
   return fs.readFileSync(path.join(migrationsRoot, directory, "migration.sql"), "utf8");
 }
 
+function historyFenceMigrationSql() {
+  const directory = fs.readdirSync(migrationsRoot).find((entry) => entry.endsWith("_expand_call_stage_history_fence_rollout"));
+  assert.ok(directory, "expected a history-fence rollout migration");
+  return fs.readFileSync(path.join(migrationsRoot, directory, "migration.sql"), "utf8");
+}
+
 test("call-stage automation schema has isolated per-call identity, mutation fence, and three-slot state", () => {
   const schema = fs.readFileSync(schemaPath, "utf8");
   assert.match(schema, /model CallStageAutomationSetting\s*\{/);
@@ -40,5 +46,13 @@ test("call-stage migration is additive, status constrained, and does not touch t
   assert.match(sql, /"CallStageAutomationTestSlot_slotNumber_check" CHECK \("slotNumber" BETWEEN 1 AND 3\)/);
   assert.match(sql, /CREATE UNIQUE INDEX "CallStageAction_callId_key"/);
   assert.match(sql, /CREATE UNIQUE INDEX "CallStageAutomationTestSlot_dealId_key"/);
+  assert.doesNotMatch(sql, /CallTaskAction/);
+});
+
+test("history-fence rollout expands only the call-stage slot constraint to cover legacy plus five new slots", () => {
+  const sql = historyFenceMigrationSql();
+  assert.match(sql, /ALTER TABLE "CallStageAutomationTestSlot"\s+DROP CONSTRAINT "CallStageAutomationTestSlot_slotNumber_check"/);
+  assert.match(sql, /"CallStageAutomationTestSlot_slotNumber_check"\s+CHECK \("slotNumber" BETWEEN 1 AND 8\)/);
+  assert.doesNotMatch(sql, /DELETE FROM "CallStageAutomationTestSlot"/);
   assert.doesNotMatch(sql, /CallTaskAction/);
 });
