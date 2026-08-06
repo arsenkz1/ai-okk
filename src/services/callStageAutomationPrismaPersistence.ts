@@ -35,6 +35,24 @@ function isUniqueConstraintError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
+function createSerializableTransactionRunner(database: PrismaClient): TransactionRunner {
+  return async <T>(operation): Promise<T> => {
+    let lastConflict: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await database.$transaction(
+          (transaction) => operation(transaction as PrismaCallStageAutomationDb),
+          { isolationLevel: "Serializable" },
+        );
+      } catch (error) {
+        if (!isTransactionConflictError(error)) throw error;
+        lastConflict = error;
+      }
+    }
+    throw lastConflict;
+  };
+}
+
 function toSlot(record: {
   slotNumber: number;
   state: string;
@@ -188,14 +206,6 @@ function createStoreAdapter(
         data: { state: "uncertain", confirmedAt: now, leaseExpiresAt: null },
       })).count;
     },
-    async confirmTestSlot(actionId, now) {
-      const updated = await database.callStageAutomationTestSlot.updateMany({
-        where: { state: "reserved", actionId }, data: { state: "confirmed", confirmedAt: now, leaseExpiresAt: null },
-      });
-      if (updated.count !== 1) return null;
-      const slot = await database.callStageAutomationTestSlot.findFirst({ where: { state: "confirmed", actionId } });
-      return slot ? toSlot(slot) : null;
-    },
     async releaseTestSlotBeforePatch(actionId) {
       const updated = await database.callStageAutomationTestSlot.updateMany({
         where: { state: "reserved", actionId },
@@ -214,7 +224,10 @@ function createStoreAdapter(
   };
 }
 
-function createLedgerAdapter(database: PrismaCallStageAutomationDb): CallStageAutomationLedgerPersistence {
+function createLedgerAdapter(
+  database: PrismaCallStageAutomationDb,
+  transactionRunner?: TransactionRunner,
+): CallStageAutomationLedgerPersistence {
   const read = async (actionId: string): Promise<CallStageAutomationAction | null> => {
     const action = await database.callStageAction.findUnique({ where: { id: actionId } });
     return action ? toAction(action) : null;
@@ -287,12 +300,26 @@ function createLedgerAdapter(database: PrismaCallStageAutomationDb): CallStageAu
       });
       return updated.count === 1 ? read(actionId) : null;
     },
-    async markMoveConfirmed(actionId, mutationLeaseToken, fields, noteId) {
-      const updated = await database.callStageAction.updateMany({
-        where: { id: actionId, status: "moving", mutationLeaseToken },
-        data: { status: "confirmed", checkedFields: fields, amoNoteId: noteId, mutationLeaseToken: null, failureReason: null },
-      });
-      return updated.count === 1 ? read(actionId) : null;
+    async markMoveConfirmed(actionId, mutationLeaseToken, fields, noteId, now, confirmTestSlot) {
+      const finalize = async (transaction: PrismaCallStageAutomationDb): Promise<CallStageAutomationAction | null> => {
+        const updated = await transaction.callStageAction.updateMany({
+          where: { id: actionId, status: "moving", mutationLeaseToken },
+          data: { status: "confirmed", checkedFields: fields, amoNoteId: noteId, mutationLeaseToken: null, failureReason: null },
+        });
+        if (updated.count !== 1) return null;
+        if (confirmTestSlot) {
+          const slot = await transaction.callStageAutomationTestSlot.updateMany({
+            where: { state: "reserved", actionId },
+            data: { state: "confirmed", confirmedAt: now, leaseExpiresAt: null },
+          });
+          // Throwing rolls the action update back too; a CRM-confirmed move can
+          // never appear confirmed in the ledger without its matching slot.
+          if (slot.count !== 1) throw new Error("could not atomically confirm call-stage test slot");
+        }
+        const action = await transaction.callStageAction.findUnique({ where: { id: actionId } });
+        return action ? toAction(action) : null;
+      };
+      return transactionRunner ? transactionRunner(finalize) : finalize(database);
     },
     async markMoveSkipped(actionId, mutationLeaseToken, reason) {
       const updated = await database.callStageAction.updateMany({
@@ -312,24 +339,9 @@ function createLedgerAdapter(database: PrismaCallStageAutomationDb): CallStageAu
 }
 
 export function createPrismaCallStageAutomationStorePersistence(database: PrismaClient): CallStageAutomationPersistence {
-  const transactionRunner: TransactionRunner = async <T>(operation): Promise<T> => {
-    let lastConflict: unknown;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        return await database.$transaction(
-          (transaction) => operation(transaction as PrismaCallStageAutomationDb),
-          { isolationLevel: "Serializable" },
-        );
-      } catch (error) {
-        if (!isTransactionConflictError(error)) throw error;
-        lastConflict = error;
-      }
-    }
-    throw lastConflict;
-  };
-  return createStoreAdapter(database, transactionRunner);
+  return createStoreAdapter(database, createSerializableTransactionRunner(database));
 }
 
 export function createPrismaCallStageAutomationLedgerPersistence(database: PrismaClient): CallStageAutomationLedgerPersistence {
-  return createLedgerAdapter(database);
+  return createLedgerAdapter(database, createSerializableTransactionRunner(database));
 }

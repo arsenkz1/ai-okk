@@ -5,6 +5,7 @@ const {
   CALL_STAGE_AUTOMATION_TEST_LIMIT,
   createCallStageAutomationStore,
   isCallStageAutomationEligible,
+  isCallStageHistoryFenceEligible,
 } = require("../dist/services/callStageAutomationStore");
 
 function makePersistence() {
@@ -99,6 +100,21 @@ test("stage routing has a durable no-backfill boundary for both lead and call", 
   }), false);
 });
 
+test("history-fence eligibility accepts only calls strictly after its durable boundary", () => {
+  assert.equal(isCallStageHistoryFenceEligible({
+    historyFenceActivationBoundary: now,
+    callCreatedAt: new Date("2026-08-04T10:00:00.001Z"),
+  }), true);
+  assert.equal(isCallStageHistoryFenceEligible({
+    historyFenceActivationBoundary: now,
+    callCreatedAt: now,
+  }), false);
+  assert.equal(isCallStageHistoryFenceEligible({
+    historyFenceActivationBoundary: now,
+    callCreatedAt: new Date("2026-08-04T09:59:59.999Z"),
+  }), false);
+});
+
 test("testing mode has exactly three durable slots and rejects a fourth deal", async () => {
   const { persistence } = makePersistence();
   const store = createCallStageAutomationStore(persistence, { leaseMs: 60_000 });
@@ -119,9 +135,8 @@ test("history-fence rollout creates a separate durable boundary and five new slo
   slots[0].dealId = 1;
   slots[0].actionId = "legacy-confirmed";
 
-  const boundary = await store.getOrCreateHistoryFenceActivationBoundary(now);
+  const boundary = await store.initializeHistoryFenceRollout(now);
   assert.equal(boundary.toISOString(), now.toISOString());
-  await store.ensureHistoryFenceTestSlots();
   assert.deepEqual(slots.map(({ slotNumber }) => slotNumber), [1, 2, 3, 4, 5, 6, 7, 8]);
 
   const reservations = [];
@@ -133,18 +148,14 @@ test("history-fence rollout creates a separate durable boundary and five new slo
   assert.deepEqual(await store.reserveHistoryFenceTestMove({ dealId: 106, actionId: "history-106", now }), { kind: "limit_reached" });
 });
 
-test("only a proven pre-PATCH cancellation frees a slot; confirmed and uncertain moves consume it", async () => {
+test("only a proven pre-PATCH cancellation frees a slot; an uncertain move keeps capacity consumed", async () => {
   const { persistence } = makePersistence();
   const store = createCallStageAutomationStore(persistence, { leaseMs: 60_000 });
   await store.ensureTestSlots(CALL_STAGE_AUTOMATION_TEST_LIMIT);
 
   await store.reserveTestMove({ dealId: 1, actionId: "released", now });
   assert.equal(await store.releaseTestMoveBeforePatch("released"), true);
-  assert.equal((await store.reserveTestMove({ dealId: 4, actionId: "replacement", now })).kind, "reserved");
-  assert.equal((await store.confirmTestMove("replacement", now)).state, "confirmed");
-  assert.equal(await store.releaseTestMoveBeforePatch("replacement"), false);
-
-  await store.reserveTestMove({ dealId: 2, actionId: "uncertain", now });
+  assert.equal((await store.reserveTestMove({ dealId: 4, actionId: "uncertain", now })).kind, "reserved");
   assert.equal((await store.markTestMoveUncertain("uncertain", now)).state, "uncertain");
   assert.equal(await store.releaseTestMoveBeforePatch("uncertain"), false);
 });

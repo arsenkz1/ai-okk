@@ -64,6 +64,7 @@ export interface CallStageAutomationLedgerPersistence {
     checkedFields: string[],
     noteId: number | null,
     now: Date,
+    confirmTestSlot: boolean,
   ): Promise<CallStageAutomationAction | null>;
   markMoveSkipped(
     actionId: string,
@@ -110,6 +111,7 @@ export interface CallStageAutomationLedger {
     checkedFields: string[];
     noteId: number | null;
     now: Date;
+    confirmTestSlot: boolean;
   }): Promise<CallStageAutomationAction | null>;
   markMoveSkipped(input: { actionId: string; mutationLeaseToken: string; reason: string; now: Date }): Promise<CallStageAutomationAction | null>;
   markMoveUncertain(input: { actionId: string; mutationLeaseToken: string; reason: string; now: Date }): Promise<CallStageAutomationAction | null>;
@@ -239,7 +241,14 @@ export function createCallStageAutomationLedger(
       assertIdentifier(input.actionId, "actionId");
       assertIdentifier(input.mutationLeaseToken, "mutation lease token");
       assertValidDate(input.now, "move confirmation now");
-      return persistence.markMoveConfirmed(input.actionId, input.mutationLeaseToken, input.checkedFields, input.noteId, input.now);
+      return persistence.markMoveConfirmed(
+        input.actionId,
+        input.mutationLeaseToken,
+        input.checkedFields,
+        input.noteId,
+        input.now,
+        input.confirmTestSlot,
+      );
     },
 
     async markMoveSkipped(input) {

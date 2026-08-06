@@ -43,7 +43,6 @@ export interface CallStageAutomationPersistence {
   ): Promise<CallStageAutomationTestSlot | null>;
   reclaimTestSlotLease(actionId: string, now: Date, leaseExpiresAt: Date): Promise<CallStageAutomationTestSlot | null>;
   markExpiredTestSlotsUncertain(now: Date, firstSlot: number, lastSlot: number): Promise<number>;
-  confirmTestSlot(actionId: string, now: Date): Promise<CallStageAutomationTestSlot | null>;
   releaseTestSlotBeforePatch(actionId: string): Promise<boolean>;
   markTestSlotUncertain(actionId: string, now: Date): Promise<CallStageAutomationTestSlot | null>;
 }
@@ -62,12 +61,10 @@ export interface CallStageAutomationStore {
   getActivationBoundary(): Promise<Date | null>;
   getOrCreateActivationBoundary(now?: Date): Promise<Date>;
   getHistoryFenceActivationBoundary(): Promise<Date | null>;
-  getOrCreateHistoryFenceActivationBoundary(now?: Date): Promise<Date>;
+  initializeHistoryFenceRollout(now?: Date): Promise<Date>;
   ensureTestSlots(limit: number): Promise<void>;
-  ensureHistoryFenceTestSlots(): Promise<void>;
   reserveTestMove(input: { dealId: number; actionId: string; now: Date }): Promise<ReserveTestMoveResult>;
   reserveHistoryFenceTestMove(input: { dealId: number; actionId: string; now: Date }): Promise<ReserveTestMoveResult>;
-  confirmTestMove(actionId: string, now: Date): Promise<CallStageAutomationTestSlot | null>;
   releaseTestMoveBeforePatch(actionId: string): Promise<boolean>;
   markTestMoveUncertain(actionId: string, now: Date): Promise<CallStageAutomationTestSlot | null>;
 }
@@ -178,10 +175,21 @@ export function createCallStageAutomationStore(
       return value === null ? null : parseActivationBoundary(value);
     },
 
-    async getOrCreateHistoryFenceActivationBoundary(now = new Date()): Promise<Date> {
+    async initializeHistoryFenceRollout(now = new Date()): Promise<Date> {
       assertValidDate(now, "history-fence activation boundary now");
-      const value = await persistence.createSettingIfAbsent(CALL_STAGE_AUTOMATION_HISTORY_FENCE_ACTIVATION_SETTING_KEY, now.toISOString());
-      return parseActivationBoundary(value);
+      // Publish the boundary only in the same serializable transaction that
+      // makes all five fresh slots durable. A failed initializer is inert.
+      return persistence.transaction(async (transaction) => {
+        await transaction.ensureTestSlots(
+          HISTORY_FENCE_TEST_SLOT_RANGE.first,
+          HISTORY_FENCE_TEST_SLOT_RANGE.last,
+        );
+        const value = await transaction.createSettingIfAbsent(
+          CALL_STAGE_AUTOMATION_HISTORY_FENCE_ACTIVATION_SETTING_KEY,
+          now.toISOString(),
+        );
+        return parseActivationBoundary(value);
+      });
     },
 
     async ensureTestSlots(limit: number): Promise<void> {
@@ -191,22 +199,12 @@ export function createCallStageAutomationStore(
       await ensureSlots(LEGACY_TEST_SLOT_RANGE);
     },
 
-    async ensureHistoryFenceTestSlots(): Promise<void> {
-      await ensureSlots(HISTORY_FENCE_TEST_SLOT_RANGE);
-    },
-
     reserveTestMove(input): Promise<ReserveTestMoveResult> {
       return reserveMoveInRange(input, LEGACY_TEST_SLOT_RANGE);
     },
 
     reserveHistoryFenceTestMove(input): Promise<ReserveTestMoveResult> {
       return reserveMoveInRange(input, HISTORY_FENCE_TEST_SLOT_RANGE);
-    },
-
-    async confirmTestMove(actionId, now) {
-      if (!actionId.trim()) throw new Error("test actionId is required");
-      assertValidDate(now, "test confirmation now");
-      return persistence.confirmTestSlot(actionId, now);
     },
 
     async releaseTestMoveBeforePatch(actionId) {
