@@ -21,10 +21,7 @@ export interface InactivitySourcePipeline {
 export const INACTIVITY_SOURCE_PIPELINES: readonly InactivitySourcePipeline[] = Object.freeze([
   { pipelineId: 6909890, name: "UZUM", takenInWork: 58160718, qualified: 58160726, ozhop: 58160902 },
   { pipelineId: 9055778, name: "EXODE", takenInWork: 72917582, qualified: 72917586, ozhop: 72919958 },
-  { pipelineId: 8425422, name: "WB", takenInWork: 68567422, qualified: 68567458, ozhop: 68567462 },
   { pipelineId: 9888398, name: "Дата", takenInWork: 78602098, qualified: 78631750, ozhop: 78631754 },
-  { pipelineId: 10630306, name: "Бухгалтерия", takenInWork: 83801774, qualified: 83801898, ozhop: 83801778 },
-  { pipelineId: 10734414, name: "AI", takenInWork: 84554886, qualified: 84554934, ozhop: 84554938 },
   { pipelineId: 11071910, name: "Видеочат", takenInWork: 86963442, qualified: 86963446, ozhop: 86963494 },
 ].map((pipeline) => Object.freeze(pipeline)));
 
