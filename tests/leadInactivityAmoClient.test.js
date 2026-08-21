@@ -5,6 +5,7 @@ const {
   createLeadInactivityAmoClient,
   AMO_INACTIVITY_REQUEST_TIMEOUT_MS,
 } = require("../dist/services/leadInactivityAmoClient");
+const { ALLOWED_INACTIVITY_SOURCE_STAGES } = require("../dist/services/leadInactivityPolicy");
 
 function lead(overrides = {}) {
   return {
@@ -72,50 +73,41 @@ test("reads and normalizes a fresh amoCRM lead with guarded request settings", a
 });
 
 test("lists every allowed source stage through paginated amoCRM filters and deduplicates IDs", async () => {
-  const stageLeads = [
-    lead({ id: 100, pipeline_id: 6909890, status_id: 58160718 }),
-    lead({ id: 100, pipeline_id: 6909890, status_id: 58160718 }),
-    lead({ id: 101, pipeline_id: 6909890, status_id: 58160726 }),
-    lead({ id: 102, pipeline_id: 6909890, status_id: 58160902 }),
-    lead({ id: 103, pipeline_id: 9055778, status_id: 72917582 }),
-    lead({ id: 104, pipeline_id: 9055778, status_id: 72917586 }),
-    lead({ id: 105, pipeline_id: 9055778, status_id: 72919958 }),
-  ];
+  // One lead per allowed stage, with the first stage's lead duplicated across its page.
+  const stageLeads = ALLOWED_INACTIVITY_SOURCE_STAGES.map(({ pipelineId, statusId }, index) => (
+    lead({ id: 100 + index, pipeline_id: pipelineId, status_id: statusId })
+  ));
   const { client, requests } = createClient({
     responses: [
-      { status: 200, data: { _embedded: { leads: stageLeads.slice(0, 2) } }, headers: {} },
-      ...stageLeads.slice(2).map((item) => ({ status: 200, data: { _embedded: { leads: [item] } }, headers: {} })),
+      { status: 200, data: { _embedded: { leads: [stageLeads[0], stageLeads[0]] } }, headers: {} },
+      ...stageLeads.slice(1).map((item) => ({ status: 200, data: { _embedded: { leads: [item] } }, headers: {} })),
     ],
   });
 
   const listed = await client.listAllowedSourceStageLeads({ maxPages: 2, pageSize: 3 });
 
-  assert.deepEqual(listed.map(({ id }) => id), [100, 101, 102, 103, 104, 105]);
-  assert.equal(requests.length, 6);
+  assert.deepEqual(listed.map(({ id }) => id), stageLeads.map(({ id }) => id));
+  assert.equal(requests.length, ALLOWED_INACTIVITY_SOURCE_STAGES.length);
   const requestedPairs = requests.map(({ url }) => {
     const parsed = new URL(url);
     return `${parsed.searchParams.get("filter[statuses][0][pipeline_id]")}:${parsed.searchParams.get("filter[statuses][0][status_id]")}`;
   });
-  assert.deepEqual(requestedPairs, [
-    "6909890:58160718",
-    "6909890:58160726",
-    "6909890:58160902",
-    "9055778:72917582",
-    "9055778:72917586",
-    "9055778:72919958",
-  ]);
+  assert.deepEqual(
+    requestedPairs,
+    ALLOWED_INACTIVITY_SOURCE_STAGES.map(({ pipelineId, statusId }) => `${pipelineId}:${statusId}`),
+  );
   assert.match(requests[0].url, /limit=3&page=1/);
 });
 
 test("treats a 204 response for an allowed stage as an empty page", async () => {
   const { client, requests } = createClient({
-    responses: Array.from({ length: 6 }, () => ({ status: 204, data: null, headers: {} })),
+    responses: ALLOWED_INACTIVITY_SOURCE_STAGES.map(() => ({ status: 204, data: null, headers: {} })),
   });
 
   const listed = await client.listAllowedSourceStageLeads({ maxPages: 1, pageSize: 3 });
 
   assert.deepEqual(listed, []);
-  assert.equal(requests.length, 6);
+  assert.equal(requests.length, ALLOWED_INACTIVITY_SOURCE_STAGES.length);
 });
 
 test("fails closed when amoCRM returns a lead outside the requested allowlist stage", async () => {

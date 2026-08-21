@@ -1,32 +1,58 @@
-export const SOURCE_PIPELINE_IDS = Object.freeze([9055778, 6909890] as const);
-export const ALLOWED_INACTIVITY_SOURCE_STAGES = Object.freeze([
-  { pipelineId: 6909890, statusId: 58160718 }, // UZUM: взято в работу
-  { pipelineId: 6909890, statusId: 58160726 }, // UZUM: квалифицирован
-  { pipelineId: 6909890, statusId: 58160902 }, // UZUM: ОЖОП
-  { pipelineId: 9055778, statusId: 72917582 }, // EXODE: взято в работу
-  { pipelineId: 9055778, statusId: 72917586 }, // EXODE: квалифицирован
-  { pipelineId: 9055778, statusId: 72919958 }, // EXODE: ОЖОП
-] as const);
+export interface InactivityStagePair {
+  pipelineId: number;
+  statusId: number;
+}
+
+export interface InactivitySourcePipeline {
+  pipelineId: number;
+  /** Human-readable amoCRM pipeline name; used only for review and logging. */
+  name: string;
+  takenInWork: number;
+  qualified: number;
+  ozhop: number;
+}
 
 /**
- * Business ordering for due inactivity movements. The order inside one group is
- * deliberately not a pipeline priority; persisted dueAt/leadId ordering breaks
- * ties after the worker has selected the business stage group.
+ * Every amoCRM pipeline whose "взято в работу", "квалифицирован", and "ОЖОП"
+ * stages take part in the inactivity rollout. This table is the single source
+ * for the webhook filter, the worker's priority scan, the move guard, and the
+ * production baseline enumeration; adding a pipeline here extends all four.
  */
-export const INACTIVITY_STAGE_PRIORITY_GROUPS = Object.freeze([
-  Object.freeze([
-    { pipelineId: 6909890, statusId: 58160902 }, // UZUM: ОЖОП
-    { pipelineId: 9055778, statusId: 72919958 }, // EXODE: ОЖОП
-  ]),
-  Object.freeze([
-    { pipelineId: 6909890, statusId: 58160726 }, // UZUM: квалифицирован
-    { pipelineId: 9055778, statusId: 72917586 }, // EXODE: квалифицирован
-  ]),
-  Object.freeze([
-    { pipelineId: 6909890, statusId: 58160718 }, // UZUM: взято в работу
-    { pipelineId: 9055778, statusId: 72917582 }, // EXODE: взято в работу
-  ]),
-] as const);
+export const INACTIVITY_SOURCE_PIPELINES: readonly InactivitySourcePipeline[] = Object.freeze([
+  { pipelineId: 6909890, name: "UZUM", takenInWork: 58160718, qualified: 58160726, ozhop: 58160902 },
+  { pipelineId: 9055778, name: "EXODE", takenInWork: 72917582, qualified: 72917586, ozhop: 72919958 },
+  { pipelineId: 8425422, name: "WB", takenInWork: 68567422, qualified: 68567458, ozhop: 68567462 },
+  { pipelineId: 9888398, name: "Дата", takenInWork: 78602098, qualified: 78631750, ozhop: 78631754 },
+  { pipelineId: 10630306, name: "Бухгалтерия", takenInWork: 83801774, qualified: 83801898, ozhop: 83801778 },
+  { pipelineId: 10734414, name: "AI", takenInWork: 84554886, qualified: 84554934, ozhop: 84554938 },
+  { pipelineId: 11071910, name: "Видеочат", takenInWork: 86963442, qualified: 86963446, ozhop: 86963494 },
+].map((pipeline) => Object.freeze(pipeline)));
+
+/**
+ * Business ordering for due inactivity movements: OZHOP, then qualified, then
+ * taken-in-work. The order inside one group is deliberately not a pipeline
+ * priority; persisted dueAt/leadId ordering breaks ties after the worker has
+ * selected the business stage group.
+ */
+const INACTIVITY_STAGE_PRIORITY_ORDER = Object.freeze(["ozhop", "qualified", "takenInWork"] as const);
+
+export const SOURCE_PIPELINE_IDS: readonly number[] = Object.freeze(
+  INACTIVITY_SOURCE_PIPELINES.map(({ pipelineId }) => pipelineId),
+);
+
+export const INACTIVITY_STAGE_PRIORITY_GROUPS: readonly (readonly InactivityStagePair[])[] = Object.freeze(
+  INACTIVITY_STAGE_PRIORITY_ORDER.map((stageKey) => Object.freeze(
+    INACTIVITY_SOURCE_PIPELINES.map((pipeline) => Object.freeze({
+      pipelineId: pipeline.pipelineId,
+      statusId: pipeline[stageKey],
+    })),
+  )),
+);
+
+export const ALLOWED_INACTIVITY_SOURCE_STAGES: readonly InactivityStagePair[] = Object.freeze(
+  INACTIVITY_STAGE_PRIORITY_GROUPS.flat(),
+);
+
 export const TARGET_PIPELINE_ID = 9055770;
 export const TARGET_STATUS_ID = 72917546;
 export const INACTIVITY_MS = 72 * 60 * 60 * 1000;

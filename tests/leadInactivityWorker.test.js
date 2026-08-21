@@ -2,8 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { createLeadInactivityWorker } = require("../dist/workers/leadInactivityWorker");
+const { INACTIVITY_STAGE_PRIORITY_GROUPS } = require("../dist/services/leadInactivityPolicy");
 
-const SOURCE = { sourcePipelineIds: [9055778, 6909890], targetPipelineId: 9055770, targetStatusId: 72917546 };
+const [OZHOP_STAGES, QUALIFIED_STAGES, TAKEN_IN_WORK_STAGES] = INACTIVITY_STAGE_PRIORITY_GROUPS;
 const NOW = new Date("2026-07-19T12:00:00.000Z");
 
 function watch(leadId = 100, overrides = {}) {
@@ -346,19 +347,13 @@ test("prioritizes OZHOP, then qualified, then taken-in-work even when lower stag
   assert.deepEqual(result, { scanned: 6, claimed: 6, moved: 6, deferred: 0, uncertain: 0, failed: 0 });
   assert.deepEqual(calls.claim, [302, 301, 202, 201, 102, 101]);
   assert.deepEqual(priorityQueries, [
-    { limit: 50, stagePairs: [
-      { pipelineId: 6909890, statusId: 58160902 },
-      { pipelineId: 9055778, statusId: 72919958 },
-    ] },
-    { limit: 48, stagePairs: [
-      { pipelineId: 6909890, statusId: 58160726 },
-      { pipelineId: 9055778, statusId: 72917586 },
-    ] },
-    { limit: 46, stagePairs: [
-      { pipelineId: 6909890, statusId: 58160718 },
-      { pipelineId: 9055778, statusId: 72917582 },
-    ] },
+    { limit: 50, stagePairs: OZHOP_STAGES },
+    { limit: 48, stagePairs: QUALIFIED_STAGES },
+    { limit: 46, stagePairs: TAKEN_IN_WORK_STAGES },
   ]);
+  assert.deepEqual(OZHOP_STAGES[0], { pipelineId: 6909890, statusId: 58160902 });
+  assert.deepEqual(QUALIFIED_STAGES[0], { pipelineId: 6909890, statusId: 58160726 });
+  assert.deepEqual(TAKEN_IN_WORK_STAGES[0], { pipelineId: 6909890, statusId: 58160718 });
 });
 
 test("falls through to qualified and taken-in-work only when higher priority groups have no due watches", async () => {
@@ -393,10 +388,11 @@ test("falls through to qualified and taken-in-work only when higher priority gro
 
   assert.deepEqual(result, { scanned: 3, claimed: 3, moved: 3, deferred: 0, uncertain: 0, failed: 0 });
   assert.deepEqual(calls.claim, [201, 101, 102]);
-  assert.deepEqual(priorityQueries.map(({ limit, stagePairs }) => ({ limit, statusIds: stagePairs.map((stage) => stage.statusId) })), [
-    { limit: 50, statusIds: [58160902, 72919958] },
-    { limit: 50, statusIds: [58160726, 72917586] },
-    { limit: 49, statusIds: [58160718, 72917582] },
+  const statusIdsOf = (stages) => stages.map((stage) => stage.statusId);
+  assert.deepEqual(priorityQueries.map(({ limit, stagePairs }) => ({ limit, statusIds: statusIdsOf(stagePairs) })), [
+    { limit: 50, statusIds: statusIdsOf(OZHOP_STAGES) },
+    { limit: 50, statusIds: statusIdsOf(QUALIFIED_STAGES) },
+    { limit: 49, statusIds: statusIdsOf(TAKEN_IN_WORK_STAGES) },
   ]);
 });
 
