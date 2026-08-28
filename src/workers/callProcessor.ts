@@ -15,6 +15,7 @@ import { appendCallRowToSheet } from "../services/googleSheets";
 import { runCallTaskAutomation } from "../services/callTaskAutomation";
 import { getCallTaskAutomationRuntime } from "../services/callTaskAutomationRuntime";
 import { runCallStageAutomation } from "../services/callStageAutomation";
+import { buildCallRecommendationsNote } from "../services/callRecommendationsNote";
 import { getCallStageAutomationRuntime } from "../services/callStageAutomationRuntime";
 import {
   addNoteToDeal,
@@ -135,6 +136,33 @@ async function ensureCallRecord(
   });
 
   return { id: call.id, dealId, pipelineId, stageId, skipNotify, searchMeta };
+}
+
+/**
+ * Writes one amoCRM note with the existing two-attempt policy. Each note is
+ * reported separately so a failed write names the note the reviewer is missing.
+ */
+async function writeDealNote(
+  dealId: number,
+  text: string,
+  label: string,
+  callUuid: string,
+): Promise<void> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      if (attempt > 1) await new Promise((r) => setTimeout(r, 4000));
+      await addNoteToDeal(dealId, text);
+      return;
+    } catch (err) {
+      console.error(`[CallWorker] Failed to add amo note (${label}, attempt ${attempt}):`, err);
+    }
+  }
+  await notifyAdmins(
+    `⚠️ Примечание не записано в сделку #${dealId}\n` +
+    `Тип: ${label}\n` +
+    `UUID: ${callUuid}\n` +
+    `Две попытки провалились. Проверь amoCRM или логи.`
+  );
 }
 
 /**
@@ -415,6 +443,11 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
     await notifyAdminsWithFile(msg, content, filename).catch(() => {});
   }
 
+  const recommendationsJson = {
+    client: analysis.clientRecommendations,
+    manager: analysis.managerRecommendations,
+  };
+
   const scoresJson = {
     contextScore: analysis.contextScore,
     needsScore: analysis.needsScore,
@@ -436,6 +469,7 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
       summary: analysis.comment,
       strengths: analysis.strengths,
       weaknesses: analysis.weaknesses,
+      recommendations: recommendationsJson,
     },
     create: {
       callId,
@@ -444,6 +478,7 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
       summary: analysis.comment,
       strengths: analysis.strengths,
       weaknesses: analysis.weaknesses,
+      recommendations: recommendationsJson,
     },
   });
 
@@ -495,27 +530,17 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
     console.error("[CallWorker] Failed to append to Google Sheets:", err);
   }
 
-  // amoCRM bitimiga mijoz portreti izohini qo'shish
-  if (dealId && analysis.clientPortrait) {
-    const portrait = analysis.clientPortrait.replace(/\.\s+/g, ".\n");
-    let noteWritten = false;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        if (attempt > 1) await new Promise((r) => setTimeout(r, 4000));
-        await addNoteToDeal(dealId, portrait);
-        noteWritten = true;
-        break;
-      } catch (err) {
-        console.error(`[CallWorker] Failed to add amo note (attempt ${attempt}):`, err);
-      }
-    }
-    if (!noteWritten) {
-      await notifyAdmins(
-        `⚠️ Примечание не записано в сделку #${dealId}\n` +
-        `UUID: ${payload.uuid}\n` +
-        `Две попытки провалились. Проверь amoCRM или логи.`
-      );
-    }
+  // amoCRM bitimiga mijoz portreti va AI tavsiyalari izohlarini qo'shish
+  if (dealId) {
+    const portrait = analysis.clientPortrait
+      ? analysis.clientPortrait.replace(/\.\s+/g, ".\n")
+      : null;
+    if (portrait) await writeDealNote(dealId, portrait, "портрет клиента", payload.uuid);
+
+    // Written as its own note so a portrait failure never hides the
+    // recommendations, and so reviewers can tell the two apart in the feed.
+    const recommendations = buildCallRecommendationsNote(analysis);
+    if (recommendations) await writeDealNote(dealId, recommendations, "рекомендации AI", payload.uuid);
   }
 
   // Each path catches and records its own failures. They were started in parallel

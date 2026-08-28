@@ -436,6 +436,8 @@ function manualExtract(text: string): Record<string, unknown> | null {
       comment:           strBetween("comment", "strengths"),
       strengths:         arrField("strengths"),
       weaknesses:        arrField("weaknesses"),
+      clientRecommendations:  arrField("clientRecommendations"),
+      managerRecommendations: arrField("managerRecommendations"),
       clientPortrait:    strLast("clientPortrait"),
     };
 
@@ -473,6 +475,10 @@ const CallAnalysisSchema = z.object({
   strengths:         z.array(z.string()).default([]),
   // Зоны роста (2-3 пункта на узбекском)
   weaknesses:        z.array(z.string()).default([]),
+  // Как вести этого клиента дальше (на узбекском, для примечания в amoCRM)
+  clientRecommendations:  z.array(z.string()).default([]),
+  // Что менеджеру улучшить (на узбекском, для примечания в amoCRM)
+  managerRecommendations: z.array(z.string()).default([]),
   // Портрет клиента (на узбекском, для примечания в amoCRM)
   clientPortrait:    z.string().default(""),
 });
@@ -499,6 +505,8 @@ export async function analyzeCallWithGemini(
     comment: "Анализ не выполнен: GEMINI_API_KEY не настроен.",
     strengths: [],
     weaknesses: [],
+    clientRecommendations: [],
+    managerRecommendations: [],
     clientPortrait: "",
   };
 
@@ -534,6 +542,11 @@ export async function analyzeCallWithGemini(
 10. agreementScore — Договорённость по следующему шагу: есть ли конкретная договорённость ведущая к оплате?
     10: договорились и по шагу, и по сроку оплаты. 7–9: чёткий следующий шаг но без срока. 4–6: шаг есть но не ведёт к оплате. 1–3: не договорились что будет дальше.
 
+РЕКОМЕНДАЦИИ (два отдельных списка, оба на узбекском латиницей, каждый пункт — одно короткое предложение):
+- clientRecommendations — как вести ИМЕННО ЭТОГО клиента дальше: что сказать на следующем контакте, какие возражения ожидать и чем их закрыть, на какую боль или цель опираться, когда и с чем перезвонить. 2–4 пункта, только то, что подтверждается разговором. Это читает менеджер, открывший карточку сделки.
+- managerRecommendations — что менеджеру улучшить в технике продаж по итогам этого звонка. 2–4 пункта, каждый привязан к конкретному моменту разговора, а не общий совет.
+- Если разговор слишком короткий или пустой и опереться не на что — верни пустой массив [], не выдумывай.
+
 MUHIM QOIDALAR JSON uchun:
 - JSON kalit nomlari va qiymatlar uchun FAQAT qo'sh tirnoq (") ishlating — bu JSON standarti.
 - Matn ICHIDA hech qanday tirnoq belgisi ishlatmang (na qo'sh ", na oddiy '). Iboralarni tirnoqsiz yozing.
@@ -554,6 +567,8 @@ MUHIM QOIDALAR JSON uchun:
   "comment": "<o'zbek tilida (lotin): har bir mezon uchun raqam, nomi, ball va tushuntirish. Gaplar orasida \\n belgisini ishlat (haqiqiy yangi qator EMAS). Oxirida: Tavsiyalar — 3-4 ta aniq tavsiya, har biri \\n bilan ajratilgan>",
   "strengths": ["<menejer yaxshi qilgan narsa 1>", "<menejer yaxshi qilgan narsa 2>"],
   "weaknesses": ["<o'sish sohasi 1>", "<o'sish sohasi 2>"],
+  "clientRecommendations": ["<shu mijoz bilan keyingi qadam 1>", "<keyingi qadam 2>", "<keyingi qadam 3>"],
+  "managerRecommendations": ["<menejerga tavsiya 1>", "<tavsiya 2>", "<tavsiya 3>"],
   "clientPortrait": "<portret o'zbek tilida (lotin). Gaplar orasida \\n belgisini ishlat (haqiqiy yangi qator EMAS). Tarkib: ismi (agar aytilgan bo'lsa), taxminiy yoshi, sohasi, asosiy ehtiyoji, xulq-atvori — 2–4 gap>"
 }
 
@@ -623,6 +638,8 @@ ${transcript}`;
         comment: typeof raw.comment === "string" ? raw.comment : "",
         strengths: Array.isArray(raw.strengths) ? raw.strengths as string[] : [],
         weaknesses: Array.isArray(raw.weaknesses) ? raw.weaknesses as string[] : [],
+        clientRecommendations: Array.isArray(raw.clientRecommendations) ? raw.clientRecommendations as string[] : [],
+        managerRecommendations: Array.isArray(raw.managerRecommendations) ? raw.managerRecommendations as string[] : [],
         clientPortrait: typeof raw.clientPortrait === "string" ? raw.clientPortrait : "",
       };
     }
