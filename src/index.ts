@@ -9,7 +9,8 @@ import { sendDailyReports } from "./workers/dailyReport";
 import "./workers/callProcessor";
 import { bot } from "./bot/index"; // запускает бот в режиме polling
 import { runDisciplineCheck } from "./services/disciplineCheck";
-import { notifyAdmins } from "./bot/notify";
+import { notifyAdmins, notifyAdminsWithFile } from "./bot/notify";
+import { sendFieldOptionBackup } from "./services/fieldOptionBackup";
 import { runStartupChecks } from "./startup";
 import { createConfiguredLeadInactivityWebhookRouter } from "./services/leadInactivityWebhookRuntime";
 import { initializeConfiguredLeadInactivityActivation } from "./services/leadInactivityActivationRuntime";
@@ -136,6 +137,24 @@ cron.schedule(
   },
   { timezone: tz }
 );
+
+// Бэкап списков вариантов полей amoCRM — утром и вечером.
+// Отправляется файлом, чтобы длинный список не обрезался лимитом Telegram.
+for (const backupHour of [9, 21]) {
+  cron.schedule(
+    `0 ${backupHour} * * *`,
+    async () => {
+      console.log(`[Cron] Sending amoCRM field option backup (${backupHour}:00)...`);
+      try {
+        const result = await sendFieldOptionBackup({ sendFile: notifyAdminsWithFile });
+        console.log("[Cron] Field option backup sent:", result);
+      } catch (err: any) {
+        console.error("[Cron] Field option backup failed:", err.message);
+      }
+    },
+    { timezone: tz }
+  );
+}
 
 // Проверка amoCRM webhook каждые 3 часа
 cron.schedule(

@@ -12,6 +12,7 @@ test("stage routing is disabled and dry-run by default", () => {
     enabled: false,
     testing: true,
     executionMode: "dry_run",
+    autofillMissingFields: false,
     baseUrl: null,
     accessToken: null,
   });
@@ -62,4 +63,33 @@ test("a competing equal-or-newer completed call fences the older call from routi
   assert.equal(calls[0].where.status, "completed");
   assert.equal(calls[0].where.id.not, 10);
   assert.deepEqual(calls[0].where.endedAt.gte, new Date("2026-08-04T10:00:00.000Z"));
+});
+
+test("keeps required-field autofill off unless it is turned on deliberately", () => {
+  assert.equal(parseCallStageAutomationRuntimeConfig({}).autofillMissingFields, false);
+  assert.equal(
+    parseCallStageAutomationRuntimeConfig({ AMOCRM_CALL_STAGE_AUTOMATION_ENABLED: "true", AMOCRM_BASE_URL: "https://t.amocrm.ru", AMOCRM_ACCESS_TOKEN: "t" }).autofillMissingFields,
+    false,
+  );
+});
+
+test("refuses to autofill fields while the router is only doing a dry run", () => {
+  assert.throws(
+    () => parseCallStageAutomationRuntimeConfig({ AMOCRM_CALL_STAGE_AUTOFILL_ENABLED: "true" }),
+    /EXECUTION_MODE=live/,
+  );
+  assert.equal(
+    parseCallStageAutomationRuntimeConfig({
+      AMOCRM_CALL_STAGE_AUTOFILL_ENABLED: "true",
+      AMOCRM_CALL_STAGE_AUTOMATION_EXECUTION_MODE: "live",
+    }).autofillMissingFields,
+    true,
+  );
+});
+
+test("rejects a non-boolean autofill flag instead of guessing", () => {
+  assert.throws(
+    () => parseCallStageAutomationRuntimeConfig({ AMOCRM_CALL_STAGE_AUTOFILL_ENABLED: "yes" }),
+    /must be true or false/,
+  );
 });

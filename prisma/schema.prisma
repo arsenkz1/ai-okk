@@ -49,6 +49,8 @@ model Manager {
   calls          Call[]
   dailySummaries DailySummary[]
   aiSessions     AiTrainerSession[]
+  salesPlans     SalesPlan[]
+  paymentEvents  DealPaymentEvent[]
 
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -92,10 +94,16 @@ model Deal {
   statusId        Int
   name            String?
 
+  /// amoCRM lead budget (price); used as the revenue amount for won deals.
+  price               Int?
+  /// amoCRM responsible_user_id at the last sync; attributes revenue to a manager.
+  responsibleUserId   Int?
+
   updatedAt       DateTime  @updatedAt
 
   calls           Call[]
   phoneMappings   PhoneMapping[]
+  paymentEvents   DealPaymentEvent[]
 }
 
 model PhoneMapping {
@@ -435,4 +443,84 @@ model CallStageAutomationTestSlot {
 
   @@index([state, slotNumber])
   @@index([leaseExpiresAt])
+}
+
+/// One recorded entry of a deal into a revenue-bearing stage. Uniqueness on
+/// (dealId, statusId) makes a replayed amoCRM webhook idempotent and stops a
+/// deal from being counted twice for the same stage.
+model DealPaymentEvent {
+  id           String   @id @default(cuid())
+  deal         Deal     @relation(fields: [dealId], references: [id])
+  dealId       Int
+  pipelineId   Int
+  statusId     Int
+  /// 'won' for the system success status, 'partial' for a part-paid stage.
+  kind         String
+  /// Null when the source amount is not configured yet; such rows count toward
+  /// the deal count but contribute nothing to any sum.
+  amount       Int?
+  currency     String   @default("UZS")
+  manager      Manager? @relation(fields: [managerId], references: [id])
+  managerId    Int?
+  amoUserId    Int?
+  occurredAt   DateTime @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([dealId, statusId])
+  @@index([occurredAt])
+  @@index([managerId, occurredAt])
+  @@index([kind, occurredAt])
+}
+
+/// Monthly revenue target per manager. A team target is the sum of its
+/// members' targets, so no separate team row exists.
+model SalesPlan {
+  id           Int      @id @default(autoincrement())
+  manager      Manager  @relation(fields: [managerId], references: [id])
+  managerId    Int
+  /// Local Almaty calendar month the target applies to.
+  year         Int
+  month        Int
+  amountTarget BigInt
+  currency     String   @default("UZS")
+  setByTelegramUserId String?
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([managerId, year, month])
+  @@index([year, month])
+}
+
+/// The option list a select field had before this system ever modified it.
+/// Written once per field and never overwritten, so the original spelling and
+/// ordering stay recoverable no matter how many options are added later.
+model AmoFieldOptionSnapshot {
+  fieldId     Int      @id
+  fieldName   String
+  fieldType   String
+  /// Full enums array as amoCRM returned it: [{ id, value, sort }].
+  originalEnums Json
+  capturedAt  DateTime @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+}
+
+/// One option this system added to an amoCRM field. Kept so additions can be
+/// rolled back individually, without disturbing options people added by hand.
+model AmoFieldOptionAddition {
+  id         String   @id @default(cuid())
+  fieldId    Int
+  fieldName  String
+  enumId     Int
+  value      String
+  /// Call-stage action that caused the addition, for tracing back to a call.
+  actionId   String?
+  dealId     Int?
+  /// Set when the option has been removed again by a rollback.
+  revertedAt DateTime? @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([fieldId, enumId])
+  @@index([fieldId, revertedAt])
+  @@index([createdAt])
 }

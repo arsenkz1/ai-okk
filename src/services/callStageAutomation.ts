@@ -1,4 +1,4 @@
-import type { CallStageRoutingProposal } from "./aiAnalysis";
+import type { CallStageFieldFillValue, CallStageRoutingProposal } from "./aiAnalysis";
 import type {
   AmoCallStageCustomField,
   AmoCallStageLead,
@@ -14,7 +14,13 @@ import {
   type UZUMRequiredField,
   type UZUMStageTargetKey,
 } from "./callStagePolicy";
-import type { CallStageAdminAlert } from "../bot/callStageNotifications";
+import type { CallStageAdminAlert, CallStageAutofilledField } from "../bot/callStageNotifications";
+import {
+  buildFieldFillRequests,
+  planFieldAutofill,
+  type AutofillPlanEntry,
+} from "./callStageFieldAutofill";
+import type { AmoFieldOptionRegistry } from "./amoFieldOptionRegistry";
 
 export type CallStageAutomationExecutionMode = "live" | "dry_run";
 
@@ -47,8 +53,33 @@ export interface CallStageAutomationDependencies {
     | "markTestMoveUncertain"
   >;
   ledger: CallStageAutomationLedger;
-  amo: Pick<CallStageAmoClient, "readLead" | "getLeadCustomFields" | "hasRecentStageMovement" | "moveLeadToTarget" | "addStageReasonNote">;
+  amo: Pick<
+    CallStageAmoClient,
+    | "readLead"
+    | "getLeadCustomFields"
+    | "hasRecentStageMovement"
+    | "moveLeadToTarget"
+    | "addStageReasonNote"
+    | "writeLeadFields"
+    | "addFieldOption"
+  >;
   analyze(transcript: string): Promise<CallStageRoutingProposal | null>;
+  /**
+   * Fills the required fields that block a move. Only consulted when
+   * `autofillMissingFields` is on; a null result blocks the move as before.
+   */
+  analyzeFieldValues?(
+    transcript: string,
+    fields: readonly import("./aiAnalysis").CallStageFieldFillRequest[],
+  ): Promise<CallStageFieldFillValue[] | null>;
+  /** Writes AI-derived values into blocking amoCRM fields, then moves the deal. */
+  autofillMissingFields: boolean;
+  /**
+   * Stores each field's original option list before it is modified and logs
+   * every option added. Required whenever autofill is on: an option list must
+   * never be changed without a recoverable record of what it was.
+   */
+  optionRegistry?: Pick<AmoFieldOptionRegistry, "captureSnapshot" | "recordAddition">;
   notifier?: CallStageAutomationNotifier;
 }
 
@@ -63,6 +94,7 @@ export type CallStageAutomationResult =
   | { kind: "no_action"; actionId: string }
   | { kind: "review"; actionId: string }
   | { kind: "missing_fields"; actionId: string }
+  | { kind: "autofill_failed"; actionId: string }
   | { kind: "test_limit_reached"; actionId: string }
   | { kind: "test_deal_already_claimed"; actionId: string }
   | { kind: "dry_run"; actionId: string }
@@ -209,6 +241,136 @@ async function releaseTestMoveBeforePatch(
   }
 }
 
+
+/**
+ * Fills the fields blocking the move and reports exactly what was written.
+ * Returns null when nothing could safely be filled, which leaves the existing
+ * "blocked, notify an admin" behaviour in place.
+ */
+async function autofillBlockingFields(
+  input: { transcript: string },
+  dependencies: CallStageAutomationDependencies,
+  context: {
+    actionId: string;
+    dealId: number;
+    missingFields: UZUMRequiredField[];
+    requiredFields: readonly AmoCallStageCustomField[];
+  },
+): Promise<{ kind: "filled"; filled: CallStageAutofilledField[] } | { kind: "failed"; reason: string }> {
+  const fieldsById = new Map(context.requiredFields.map((field) => [field.id, field]));
+  const requests = buildFieldFillRequests(context.missingFields, fieldsById);
+
+  let modelValues: CallStageFieldFillValue[] = [];
+  if (requests.length > 0) {
+    if (!dependencies.analyzeFieldValues) return { kind: "failed", reason: "модель заполнения полей не настроена" };
+    try {
+      modelValues = await dependencies.analyzeFieldValues(input.transcript, requests) ?? [];
+    } catch (error) {
+      console.error("[CallStageAutomation] field-fill analysis failed", {
+        dealId: context.dealId,
+        reason: error instanceof Error ? error.message : "unknown error",
+      });
+      return { kind: "failed", reason: "ИИ не вернул значения для полей" };
+    }
+  }
+
+  const plan = planFieldAutofill({ missingFields: context.missingFields, fieldsById, modelValues });
+  if (plan.kind === "incomplete") {
+    // Writing a partial set would leave invented values behind and still not
+    // unblock the move, so nothing is written at all.
+    const names = plan.unfillable.map((field) => (
+      field.candidates?.length
+        ? `${field.fieldName} (${field.reason}: ${field.candidates.join(" / ")})`
+        : `${field.fieldName} (${field.reason})`
+    )).join("; ");
+    return { kind: "failed", reason: `не удалось подобрать значение: ${names}` };
+  }
+
+  const resolved: Array<AutofillPlanEntry & { enumId: number | null; createdOption: boolean }> = [];
+  for (const entry of plan.entries) {
+    if (!entry.needsNewOption) {
+      resolved.push({ ...entry, createdOption: false });
+      continue;
+    }
+    if (!dependencies.optionRegistry) {
+      return { kind: "failed", reason: "нет журнала вариантов списка — изменение поля запрещено" };
+    }
+
+    const meta = fieldsById.get(entry.fieldId);
+    if (!meta) return { kind: "failed", reason: `метаданные поля ${entry.fieldName} недоступны` };
+
+    // The original list is stored before the field is touched. Without a
+    // durable record there is nothing to restore from, so the option is not
+    // created at all.
+    try {
+      await dependencies.optionRegistry.captureSnapshot({
+        fieldId: meta.id,
+        fieldName: meta.name,
+        fieldType: meta.type,
+        enums: meta.enums.map((option) => ({ id: option.id, value: option.value, sort: option.sort })),
+      });
+    } catch (error) {
+      console.error("[CallStageAutomation] option snapshot failed", {
+        fieldId: entry.fieldId,
+        reason: error instanceof Error ? error.message : "unknown error",
+      });
+      return { kind: "failed", reason: `не удалось сохранить исходный список вариантов поля ${entry.fieldName}` };
+    }
+
+    const created = await dependencies.amo.addFieldOption({ fieldId: entry.fieldId, value: entry.value });
+    if (created.kind !== "confirmed") {
+      return {
+        kind: "failed",
+        reason: `не удалось создать вариант списка для поля ${entry.fieldName}`,
+      };
+    }
+
+    try {
+      await dependencies.optionRegistry.recordAddition({
+        fieldId: entry.fieldId,
+        fieldName: entry.fieldName,
+        enumId: created.enumId,
+        value: created.value,
+        actionId: context.actionId,
+        dealId: context.dealId,
+      });
+    } catch (error) {
+      // The option now exists in amoCRM. Losing its log entry only costs the
+      // one-command rollback, so the move continues and admins are told.
+      console.error("[CallStageAutomation] option addition log failed", {
+        fieldId: entry.fieldId,
+        enumId: created.enumId,
+        reason: error instanceof Error ? error.message : "unknown error",
+      });
+    }
+    resolved.push({ ...entry, value: created.value, enumId: created.enumId, createdOption: true });
+  }
+
+  const write = await dependencies.amo.writeLeadFields({
+    leadId: context.dealId,
+    values: resolved.map((entry) => ({ fieldId: entry.fieldId, enumId: entry.enumId, value: entry.value })),
+  });
+  if (write.kind !== "confirmed") {
+    return {
+      kind: "failed",
+      reason: write.kind === "uncertain"
+        ? `запись полей в amoCRM завершилась неопределённо (${write.error.message})`
+        : `amoCRM не сохранил значения полей (${write.reason})`,
+    };
+  }
+
+  return {
+    kind: "filled",
+    filled: resolved.map((entry) => ({
+      fieldName: entry.fieldName,
+      value: entry.value,
+      createdOption: entry.createdOption,
+      grounded: entry.grounded,
+      ...(entry.matchedBy ? { matchedBy: entry.matchedBy, modelValue: entry.modelValue } : {}),
+    })),
+  };
+}
+
 export async function runCallStageAutomation(
   input: CallStageAutomationInput,
   dependencies: CallStageAutomationDependencies,
@@ -328,10 +490,12 @@ export async function runCallStageAutomation(
   }
 
   let requiredFields: UZUMRequiredField[];
+  let allCustomFields: readonly AmoCallStageCustomField[] = [];
   try {
+    allCustomFields = await dependencies.amo.getLeadCustomFields();
     requiredFields = requiredFieldsForUzumTarget({
       target: finalized.target,
-      fields: await dependencies.amo.getLeadCustomFields(),
+      fields: allCustomFields,
     });
   } catch (error) {
     await dependencies.ledger.markMoveUncertain({
@@ -343,13 +507,81 @@ export async function runCallStageAutomation(
     return { kind: "uncertain", actionId: moving.id, phase: "lead" };
   }
 
-  const route = evaluateUzumStageRoute({
+  let route = evaluateUzumStageRoute({
     pipelineId: freshLead.pipelineId,
     currentStatusId: freshLead.statusId,
     target: finalized.target,
     fieldValues: freshLead.fieldValues,
     requiredFields,
   });
+
+  // Fields written by autofill, reported to admins once the move is decided.
+  let autofilled: CallStageAutofilledField[] | null = null;
+  if (route.kind === "missing_fields" && dependencies.autofillMissingFields) {
+    const targetName = route.target.name;
+    const outcome = await autofillBlockingFields(
+      { transcript: input.transcript },
+      dependencies,
+      {
+        actionId: moving.id,
+        dealId: moving.dealId,
+        missingFields: route.missingFields,
+        requiredFields: allCustomFields,
+      },
+    );
+
+    if (outcome.kind === "failed") {
+      await dependencies.ledger.markBlockedMissingFields({
+        actionId: moving.id,
+        mutationLeaseToken: moving.mutationLeaseToken,
+        missingFields: route.missingFields,
+        now,
+      });
+      await bestEffortAlert(dependencies.notifier, {
+        kind: "autofill_failed",
+        actionId: moving.id,
+        dealId: moving.dealId,
+        targetName,
+        evidence: finalized.evidence,
+        missingFields: route.missingFields,
+        reason: outcome.reason,
+      });
+      return { kind: "autofill_failed", actionId: moving.id };
+    }
+
+    autofilled = outcome.filled;
+    // The lead must be re-read: the route is only allowed to proceed on values
+    // amoCRM actually stored, never on what was sent.
+    try {
+      freshLead = await dependencies.amo.readLead(input.dealId);
+    } catch {
+      await dependencies.ledger.markMoveUncertain({
+        actionId: moving.id,
+        mutationLeaseToken: moving.mutationLeaseToken,
+        reason: "amoCRM lead could not be re-read after field autofill",
+        now,
+      });
+      await bestEffortAlert(dependencies.notifier, {
+        kind: "autofilled",
+        actionId: moving.id,
+        dealId: moving.dealId,
+        targetName,
+        evidence: finalized.evidence,
+        filled: autofilled,
+        moveFailedReason: "сделку не удалось перечитать после записи полей",
+      });
+      return { kind: "uncertain", actionId: moving.id, phase: "lead" };
+    }
+
+    route = evaluateUzumStageRoute({
+      pipelineId: freshLead.pipelineId,
+      currentStatusId: freshLead.statusId,
+      target: finalized.target,
+      fieldValues: freshLead.fieldValues,
+      requiredFields,
+    });
+  }
+
   if (route.kind === "missing_fields") {
     await dependencies.ledger.markBlockedMissingFields({
       actionId: moving.id,
@@ -357,7 +589,19 @@ export async function runCallStageAutomation(
       missingFields: route.missingFields,
       now,
     });
-    await bestEffortAlert(dependencies.notifier, missingFieldAlert(moving, route.target.name, route.missingFields));
+    if (autofilled) {
+      await bestEffortAlert(dependencies.notifier, {
+        kind: "autofilled",
+        actionId: moving.id,
+        dealId: moving.dealId,
+        targetName: route.target.name,
+        evidence: finalized.evidence,
+        filled: autofilled,
+        moveFailedReason: "после автозаполнения amoCRM всё ещё считает поля незаполненными",
+      });
+    } else {
+      await bestEffortAlert(dependencies.notifier, missingFieldAlert(moving, route.target.name, route.missingFields));
+    }
     return { kind: "missing_fields", actionId: moving.id };
   }
   if (route.kind !== "allowed") {
@@ -613,6 +857,17 @@ export async function runCallStageAutomation(
     if (testSlotReserved) await markTestMoveUncertain(dependencies, moving.id, now);
     return { kind: "uncertain", actionId: moving.id, phase: "persistence" };
   }
-  await bestEffortAlert(dependencies.notifier, movedAlert(moving, route.target.name));
+  // An autofilled move always reports the values that were written, so a move
+  // built on AI-supplied CRM data is never logged as a plain move.
+  await bestEffortAlert(dependencies.notifier, autofilled
+    ? {
+      kind: "autofilled",
+      actionId: moving.id,
+      dealId: moving.dealId,
+      targetName: route.target.name,
+      evidence: finalized.evidence,
+      filled: autofilled,
+    }
+    : movedAlert(moving, route.target.name));
   return { kind: "confirmed", actionId: moving.id, noteId: note.noteId };
 }

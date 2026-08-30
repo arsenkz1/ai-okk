@@ -1,6 +1,7 @@
 import "dotenv/config";
 import axios from "axios";
 import { normalizeAmoCrmTenantBaseUrl } from "./amoCrmRateLimiter";
+import { recordDealRevenue } from "./dealRevenueRecorder";
 import { prisma } from "../config/database";
 import { markDealAsWon, markDealAsLost } from "./googleSheets";
 import { callProcessingQueue } from "../queues/callProcessing";
@@ -510,6 +511,26 @@ export async function handleAmoCrmWebhook(body: any): Promise<void> {
     const dealId = Number(lead?.id);
     const statusId = Number(lead?.status_id);
     const pipelineId = Number(lead?.pipeline_id);
+
+    // Поступления фиксируем в любой воронке, а не только в квалифицирующих:
+    // оплата остаётся оплатой независимо от того, где живёт сделка.
+    if (Number.isInteger(dealId) && dealId > 0) {
+      recordDealRevenue(dealId, pipelineId, statusId, {
+        readLead: async (id) => await amoGet(`/api/v4/leads/${id}`),
+      })
+        .then((result) => {
+          if (result.kind === "recorded") {
+            console.log(
+              `[AmoWebhook] Recorded ${result.revenueKind} revenue for deal ${dealId}:`,
+              { amount: result.amount, managerId: result.managerId }
+            );
+          }
+        })
+        .catch((err) =>
+          console.error(`[AmoWebhook] recordDealRevenue error for deal ${dealId}:`, err.message)
+        );
+    }
+
     if (QUALIFYING_PIPELINE_IDS.includes(pipelineId)) {
       if (statusId === 142) {
         console.log(`[AmoWebhook] Deal ${dealId} moved to won, marking ✅ in Sheets`);

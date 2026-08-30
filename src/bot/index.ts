@@ -24,11 +24,18 @@ import {
 } from "../services/amoRights";
 import { countValidAiMessagesToday, maybeRestorePilotManagerAccess } from "../services/disciplineCheck";
 import { supervisorAiSessions, roleFlowState } from "./state";
+import {
+  canViewDealDossier,
+  formatDealDossier,
+  loadDealDossier,
+  type DealDossierViewer,
+} from "../services/dealDossier";
 import { buildSupervisorAiPrompt } from "./supervisorAi";
 import { registerAdminRoleHandlers } from "./handlers/adminRoles";
 import { registerTeamLeadHandlers } from "./handlers/teamlead";
 import { registerRopHandlers } from "./handlers/rop";
 import { registerCallTaskReviewHandlers } from "./handlers/callTaskReview";
+import { registerPerformanceHandlers } from "./handlers/performance";
 import { installSafeTelegramSender } from "./safeTelegram";
 
 // ---------------------------------------------------------------------------
@@ -566,7 +573,12 @@ bot.onText(/\/help$/, async (msg) => {
         "`/week` - so'nggi 7 kun\n" +
         "`/month` - joriy oy\n" +
         "`/period` - ixtiyoriy sana oralig'i\n" +
-        "`/errors` - 30 kunlik zaif kriteriyalar\n\n" +
+        "`/errors` - 30 kunlik zaif kriteriyalar\n" +
+        "`/team_stats` - qo'ng'iroq/tushum/reja hisoboti\n" +
+        "`/deal <id>` - bitim bo'yicha ma'lumotnoma\n\n" +
+        `*Rejalar:*\n` +
+        "`/set_plan <amo_id> <summa> [YYYY-MM]` - oylik reja belgilash\n" +
+        "`/plans [YYYY-MM]` - barcha rejalar\n\n" +
         `*ROP - reyting va analitika:*\n` +
         "`/teams` - barcha jamoalar\n" +
         "`/all_rating` - menejerlarning umumiy reytingi (7 kun)\n" +
@@ -601,6 +613,9 @@ bot.onText(/\/help$/, async (msg) => {
         "`/month` - joriy oy\n" +
         "`/period` - ixtiyoriy sana oralig'i\n" +
         "`/errors` - so'nggi 30 kunlik eng ko'p xatolar\n" +
+        "`/my_stats` - qo'ng'iroq/tushum/reja hisobotim\n" +
+        "`/team_stats` - jamoa hisoboti\n" +
+        "`/deal <id>` - bitim bo'yicha ma'lumotnoma\n" +
         "`/ask` - dialog rejimiga kirish (30 kun ma'lumotlari)\n" +
         "`/ask_kun` - faqat bugungi ma'lumotlar\n" +
         "`/ask_hafta` - 7 kunlik ma'lumotlar\n" +
@@ -629,7 +644,9 @@ bot.onText(/\/help$/, async (msg) => {
         "`/month` - joriy oy\n" +
         "`/period` - ixtiyoriy sana oralig'i\n\n" +
         `*Xatolar tahlili:*\n` +
-        "`/errors` - so'nggi 30 kunlik eng ko'p xatolar\n\n" +
+        "`/errors` - so'nggi 30 kunlik eng ko'p xatolar\n" +
+        "`/my_stats` - qo'ng'iroq/tushum/reja hisobotim\n" +
+        "`/deal <id>` - bitim bo'yicha ma'lumotnoma\n\n" +
         `*AI-murabbiy:*\n` +
         "`/ask` - dialog rejimiga kirish (30 kun ma'lumotlari)\n" +
         "`/ask_kun` - faqat bugungi ma'lumotlar\n" +
@@ -875,6 +892,15 @@ bot.on("message", async (msg) => {
 
     return;
   }
+
+  // ── State 5: bare amoCRM deal ID ──────────────────────────────────────────
+  // Last in the chain on purpose: every stateful flow above, the AI coach
+  // included, keeps its own numeric input.
+  const bareDealId = msg.text.trim();
+  if (/^\d{4,12}$/.test(bareDealId)) {
+    await sendDealDossier(msg, parseInt(bareDealId, 10));
+    return;
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1034,6 +1060,67 @@ bot.onText(/\/ask(.*)/, async (msg, match) => {
     aiSessions.set(userId, { active: true, history, systemContext, managerId: manager.id, period });
     await bot.sendMessage(msg.chat.id, activationText, { parse_mode: "Markdown" });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Deal dossier (/deal <id> or a bare deal ID)
+// ---------------------------------------------------------------------------
+
+async function resolveDealDossierViewer(telegramUserId: string): Promise<DealDossierViewer | null> {
+  if (await isAdmin(telegramUserId)) return { role: "ADMIN", managerId: null };
+
+  const manager = await getManager(telegramUserId);
+  if (!manager || !manager.isActive) return null;
+  if (manager.role === "ROP") return { role: "ROP", managerId: manager.id };
+  if (manager.role !== "TEAMLEAD") return { role: "MANAGER", managerId: manager.id };
+
+  // A team lead may lead a team without being a member of it, so the team is
+  // resolved from the Team row rather than from their own teamId.
+  const teams = await prisma.team.findMany({
+    where: { OR: [{ teamLeadId: manager.id }, ...(manager.teamId ? [{ id: manager.teamId }] : [])] },
+    select: { members: { select: { id: true } } },
+  });
+  return {
+    role: "TEAMLEAD",
+    managerId: manager.id,
+    teamManagerIds: teams.flatMap((team) => team.members.map((member) => member.id)),
+  };
+}
+
+async function sendDealDossier(msg: TelegramBot.Message, dealId: number): Promise<void> {
+  const viewer = await resolveDealDossierViewer(String(msg.from!.id));
+  if (!viewer) {
+    await bot.sendMessage(
+      msg.chat.id,
+      "❌ Siz avtorizatsiya qilinmagansiz.\n/start kiriting va 6 xonali kodingizni yuboring."
+    );
+    return;
+  }
+
+  const dossier = await loadDealDossier(dealId);
+  if (!dossier) {
+    await bot.sendMessage(msg.chat.id, `❌ Bitim #${dealId} bazada topilmadi.`);
+    return;
+  }
+
+  // A manager with no calls on the deal is told the same thing as for a missing
+  // deal: the reply must not confirm that someone else's deal exists.
+  if (!canViewDealDossier(viewer, dossier.calls)) {
+    await bot.sendMessage(msg.chat.id, `❌ Bitim #${dealId} bazada topilmadi.`);
+    return;
+  }
+
+  await bot.sendMessage(msg.chat.id, formatDealDossier(dossier), { disable_web_page_preview: true });
+}
+
+bot.onText(/^\/deal(?:@\w+)?\s+(\d{4,12})$/, async (msg, match) => {
+  if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  await sendDealDossier(msg, parseInt(match![1], 10));
+});
+
+bot.onText(/^\/deal(?:@\w+)?$/, async (msg) => {
+  if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  await bot.sendMessage(msg.chat.id, "ℹ️ Foydalanish: /deal <bitim ID>\nYoki shunchaki bitim ID raqamini yuboring.");
 });
 
 // ---------------------------------------------------------------------------
@@ -1655,6 +1742,7 @@ registerAdminRoleHandlers(bot);
 registerTeamLeadHandlers(bot);
 registerRopHandlers(bot);
 registerCallTaskReviewHandlers(bot);
+registerPerformanceHandlers(bot);
 
 // ---------------------------------------------------------------------------
 // Polling errors + graceful shutdown

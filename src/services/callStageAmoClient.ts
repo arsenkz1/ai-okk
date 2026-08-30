@@ -40,10 +40,20 @@ export interface AmoCallStageLead {
   fieldValues: ReadonlyMap<number, string[]>;
 }
 
+export interface AmoCallStageFieldEnum {
+  id: number;
+  value: string;
+  sort: number | null;
+}
+
 /** Metadata from amoCRM's current custom_fields.required_statuses configuration. */
 export interface AmoCallStageCustomField {
   id: number;
   name: string;
+  /** amoCRM field type, e.g. text, textarea, numeric, select, multiselect. */
+  type: string;
+  /** Existing options for select-like fields; empty for every other type. */
+  enums: readonly AmoCallStageFieldEnum[];
   requiredStatuses: readonly { pipelineId: number; statusId: number }[];
 }
 
@@ -58,6 +68,29 @@ export type MoveCallStageLeadOutcome =
   | { kind: "confirmed"; lead: AmoCallStageLead }
   | { kind: "not_moved"; reason: "source_changed" | "preconditions_changed" | "fence_cancelled" | "patch_rejected" | "readback_not_target"; lead: AmoCallStageLead }
   | { kind: "uncertain"; error: AmoCallStageSafeError; readback: AmoCallStageLead | null };
+
+/** One custom-field value to write onto a lead. */
+export interface CallStageFieldWriteValue {
+  fieldId: number;
+  /** enum_id for select-like fields, plain text for everything else. */
+  enumId: number | null;
+  value: string;
+}
+
+export type WriteCallStageFieldsOutcome =
+  | { kind: "confirmed"; lead: AmoCallStageLead }
+  | { kind: "not_written"; reason: "patch_rejected" | "readback_missing_values"; lead: AmoCallStageLead | null }
+  | { kind: "uncertain"; error: AmoCallStageSafeError };
+
+export type ReplaceCallStageFieldOptionsOutcome =
+  | { kind: "confirmed"; enums: readonly AmoCallStageFieldEnum[] }
+  | { kind: "not_replaced"; reason: "patch_rejected" | "readback_mismatch" }
+  | { kind: "uncertain"; error: AmoCallStageSafeError };
+
+export type AddCallStageFieldOptionOutcome =
+  | { kind: "confirmed"; enumId: number; value: string }
+  | { kind: "not_created"; reason: "patch_rejected" | "readback_missing_option" }
+  | { kind: "uncertain"; error: AmoCallStageSafeError };
 
 export type AddCallStageReasonNoteOutcome =
   | { kind: "confirmed"; noteId: number }
@@ -83,6 +116,16 @@ export interface CallStageAmoClient {
     isLeadEligibleForTarget?: (lead: AmoCallStageLead) => Promise<boolean>;
   }): Promise<MoveCallStageLeadOutcome>;
   addStageReasonNote(input: { leadId: number; text: string }): Promise<AddCallStageReasonNoteOutcome>;
+  writeLeadFields(input: {
+    leadId: number;
+    values: readonly CallStageFieldWriteValue[];
+  }): Promise<WriteCallStageFieldsOutcome>;
+  addFieldOption(input: { fieldId: number; value: string }): Promise<AddCallStageFieldOptionOutcome>;
+  getFieldOptions(fieldId: number): Promise<readonly AmoCallStageFieldEnum[]>;
+  replaceFieldOptions(input: {
+    fieldId: number;
+    enums: readonly AmoCallStageFieldEnum[];
+  }): Promise<ReplaceCallStageFieldOptionsOutcome>;
 }
 
 interface RawAmoFieldValue {
@@ -102,7 +145,15 @@ interface RawAmoRequiredStatus {
 interface RawAmoLeadCustomField {
   id?: unknown;
   name?: unknown;
+  type?: unknown;
+  enums?: unknown;
   required_statuses?: unknown;
+}
+
+interface RawAmoFieldEnum {
+  id?: unknown;
+  value?: unknown;
+  sort?: unknown;
 }
 
 interface RawAmoLead {
@@ -195,6 +246,29 @@ function normalizeLead(raw: unknown): AmoCallStageLead {
   };
 }
 
+/**
+ * Reads the option list of a select-like field. Used in two places with
+ * different strictness: the account-wide field listing tolerates a bad entry
+ * (see normalizeLeadCustomFields), while the single-field read before an option
+ * PATCH must throw, because a partial list would destroy the options it omits.
+ */
+function normalizeFieldEnums(raw: unknown): AmoCallStageFieldEnum[] {
+  if (raw === null || raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new Error("amoCRM lead custom field enums are malformed");
+  return raw.map((rawEnum) => {
+    const item = rawEnum as RawAmoFieldEnum | null;
+    if (!item || typeof item !== "object") throw new Error("amoCRM lead custom field enum is malformed");
+    const value = typeof item.value === "string" ? item.value.trim() : "";
+    if (!value) throw new Error("amoCRM lead custom field enum has invalid value");
+    const sort = Number(item.sort);
+    return {
+      id: requiredPositiveInteger(item.id, "lead custom field enum id"),
+      value,
+      sort: Number.isInteger(sort) ? sort : null,
+    };
+  });
+}
+
 function normalizeLeadCustomFields(raw: unknown): AmoCallStageCustomField[] {
   const fields = (raw as { _embedded?: { custom_fields?: unknown } } | null)?._embedded?.custom_fields;
   if (!Array.isArray(fields)) throw new Error("amoCRM lead custom fields response is malformed");
@@ -204,8 +278,19 @@ function normalizeLeadCustomFields(raw: unknown): AmoCallStageCustomField[] {
     const id = requiredPositiveInteger(field.id, "lead custom field id");
     const name = typeof field.name === "string" ? field.name.trim() : "";
     if (!name) throw new Error("amoCRM lead custom field has invalid name");
+    // Type and options are only used to decide whether a field can be
+    // autofilled. They must never make the required-field read fail: that read
+    // gates every stage move, autofill or not. An unreadable type or option
+    // list simply makes the field ineligible for autofill.
+    const type = typeof field.type === "string" ? field.type.trim() : "";
+    let enums: AmoCallStageFieldEnum[];
+    try {
+      enums = normalizeFieldEnums(field.enums);
+    } catch {
+      enums = [];
+    }
     if (field.required_statuses === null || field.required_statuses === undefined) {
-      return { id, name, requiredStatuses: [] };
+      return { id, name, type, enums, requiredStatuses: [] };
     }
     if (!Array.isArray(field.required_statuses)) throw new Error("amoCRM lead required_statuses is malformed");
     const requiredStatuses = field.required_statuses.map((rawStatus) => {
@@ -216,7 +301,7 @@ function normalizeLeadCustomFields(raw: unknown): AmoCallStageCustomField[] {
         statusId: requiredPositiveInteger(status.status_id, "required status status_id"),
       };
     });
-    return { id, name, requiredStatuses };
+    return { id, name, type, enums, requiredStatuses };
   });
 }
 
@@ -257,7 +342,7 @@ function responseNoteId(data: unknown): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-/** amoCRM client for the router: only stage PATCHes and explanatory notes, never field writes. */
+/** amoCRM client for the router: stage PATCHes, notes, and required-field autofill writes. */
 export function createCallStageAmoClient(options: CreateCallStageAmoClientOptions): CallStageAmoClient {
   const baseUrl = normalizeAmoCrmTenantBaseUrl(options.baseUrl);
   const accessToken = options.accessToken.trim();
@@ -418,6 +503,140 @@ export function createCallStageAmoClient(options: CreateCallStageAmoClientOption
         return { kind: "not_moved", reason: "readback_not_target", lead: readback };
       } catch (error) {
         return { kind: "uncertain", error: toSafeError(error), readback: null };
+      }
+    },
+
+    /**
+     * Writes required-field values, then re-reads the lead and verifies every
+     * value landed. An ambiguous PATCH is never blindly retried.
+     */
+    async writeLeadFields(input): Promise<WriteCallStageFieldsOutcome> {
+      requiredPositiveInteger(input.leadId, "id");
+      if (input.values.length === 0) throw new Error("field write requires at least one value");
+
+      const payload = input.values.map((item) => ({
+        field_id: requiredPositiveInteger(item.fieldId, "field write field_id"),
+        values: [item.enumId === null ? { value: item.value } : { enum_id: item.enumId }],
+      }));
+
+      try {
+        await request("PATCH", "/api/v4/leads", [{
+          id: input.leadId,
+          custom_fields_values: payload,
+        }], false);
+      } catch (error) {
+        if (!isAmbiguousMutationError(error)) {
+          let lead: AmoCallStageLead | null = null;
+          try {
+            lead = await readLead(input.leadId);
+          } catch {
+            lead = null;
+          }
+          return { kind: "not_written", reason: "patch_rejected", lead };
+        }
+        return { kind: "uncertain", error: toSafeError(error) };
+      }
+
+      let readback: AmoCallStageLead;
+      try {
+        readback = await readLead(input.leadId);
+      } catch (error) {
+        return { kind: "uncertain", error: toSafeError(error) };
+      }
+
+      const allLanded = input.values.every((item) => {
+        const stored = readback.fieldValues.get(item.fieldId);
+        return Array.isArray(stored) && stored.some((value) => value.trim() === item.value.trim());
+      });
+      return allLanded
+        ? { kind: "confirmed", lead: readback }
+        : { kind: "not_written", reason: "readback_missing_values", lead: readback };
+    },
+
+    /**
+     * Appends one option to a select-like field. amoCRM replaces the whole enum
+     * list on PATCH, so the existing options are re-sent verbatim; a field whose
+     * current options cannot be read is left untouched.
+     */
+    async addFieldOption(input): Promise<AddCallStageFieldOptionOutcome> {
+      requiredPositiveInteger(input.fieldId, "field id");
+      const value = input.value.trim();
+      if (!value) throw new Error("field option value is required");
+
+      let existing: readonly AmoCallStageFieldEnum[];
+      try {
+        const response = await request("GET", `/api/v4/leads/custom_fields/${input.fieldId}`, undefined, true);
+        existing = normalizeFieldEnums((response.data as { enums?: unknown } | null)?.enums);
+      } catch (error) {
+        return { kind: "uncertain", error: toSafeError(error) };
+      }
+
+      const already = existing.find((item) => item.value.trim() === value);
+      if (already) return { kind: "confirmed", enumId: already.id, value: already.value };
+
+      const maxSort = existing.reduce((max, item) => Math.max(max, item.sort ?? 0), 0);
+      try {
+        await request("PATCH", "/api/v4/leads/custom_fields", [{
+          id: input.fieldId,
+          enums: [
+            ...existing.map((item) => ({ id: item.id, value: item.value, sort: item.sort ?? 0 })),
+            { value, sort: maxSort + 1 },
+          ],
+        }], false);
+      } catch (error) {
+        return isAmbiguousMutationError(error)
+          ? { kind: "uncertain", error: toSafeError(error) }
+          : { kind: "not_created", reason: "patch_rejected" };
+      }
+
+      try {
+        const response = await request("GET", `/api/v4/leads/custom_fields/${input.fieldId}`, undefined, true);
+        const created = normalizeFieldEnums((response.data as { enums?: unknown } | null)?.enums)
+          .find((item) => item.value.trim() === value);
+        return created
+          ? { kind: "confirmed", enumId: created.id, value: created.value }
+          : { kind: "not_created", reason: "readback_missing_option" };
+      } catch (error) {
+        return { kind: "uncertain", error: toSafeError(error) };
+      }
+    },
+
+    async getFieldOptions(fieldId): Promise<readonly AmoCallStageFieldEnum[]> {
+      requiredPositiveInteger(fieldId, "field id");
+      const response = await request("GET", `/api/v4/leads/custom_fields/${fieldId}`, undefined, true);
+      return normalizeFieldEnums((response.data as { enums?: unknown } | null)?.enums);
+    },
+
+    /**
+     * Overwrites a field's option list wholesale. Used only by the rollback
+     * path, which computes the list to keep from a durable record of what this
+     * system added — never from a guess.
+     */
+    async replaceFieldOptions(input): Promise<ReplaceCallStageFieldOptionsOutcome> {
+      requiredPositiveInteger(input.fieldId, "field id");
+      try {
+        await request("PATCH", "/api/v4/leads/custom_fields", [{
+          id: input.fieldId,
+          enums: input.enums.map((item, index) => ({
+            id: item.id,
+            value: item.value,
+            sort: item.sort ?? index + 1,
+          })),
+        }], false);
+      } catch (error) {
+        return isAmbiguousMutationError(error)
+          ? { kind: "uncertain", error: toSafeError(error) }
+          : { kind: "not_replaced", reason: "patch_rejected" };
+      }
+
+      try {
+        const response = await request("GET", `/api/v4/leads/custom_fields/${input.fieldId}`, undefined, true);
+        const readback = normalizeFieldEnums((response.data as { enums?: unknown } | null)?.enums);
+        const expected = new Set(input.enums.map((item) => item.id));
+        const applied = readback.length === input.enums.length && readback.every((item) => expected.has(item.id));
+        return applied ? { kind: "confirmed", enums: readback } : { kind: "not_replaced", reason: "readback_mismatch" };
+      } catch (error) {
+        return { kind: "uncertain", error: toSafeError(error) };
       }
     },
 

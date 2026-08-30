@@ -417,3 +417,328 @@ test("reason note contains only the selected stage, concise evidence, checked fi
   assert.match(text, /Проверены поля: Region; Kurs/);
   assert.doesNotMatch(text, /<TRANSKRIPT>/);
 });
+
+// ---------------------------------------------------------------------------
+// Автозаполнение обязательных полей перед переводом этапа
+// ---------------------------------------------------------------------------
+
+const AUTOFILL_TARGET_FIELDS = [
+  { id: 936103, name: "Kurs", type: "text", enums: [] },
+  { id: 936097, name: "Jinsi", type: "select", enums: [{ id: 71, value: "Ayol", sort: 1 }] },
+  { id: 967019, name: "Region", type: "select", enums: [{ id: 81, value: "Toshkent", sort: 1 }] },
+];
+
+function autofillCustomFields(overrides = []) {
+  const byId = new Map(AUTOFILL_TARGET_FIELDS.map((field) => [field.id, field]));
+  for (const override of overrides) byId.set(override.id, override);
+  return [...byId.values()].map((field) => ({
+    ...field,
+    requiredStatuses: [{ pipelineId: 6909890, statusId: 58160726 }],
+  }));
+}
+
+const FILLED_FIELD_VALUES = new Map([
+  [936103, ["Uzum market"]], [936097, ["Ayol"]], [967019, ["Samarqand"]],
+]);
+
+/** Records what the snapshot/addition log was asked to store. */
+function fakeOptionRegistry(overrides = {}) {
+  const calls = { snapshots: [], additions: [] };
+  return {
+    calls,
+    registry: {
+      async captureSnapshot(snapshotInput) {
+        calls.snapshots.push(snapshotInput);
+        if (overrides.captureSnapshot) return overrides.captureSnapshot(snapshotInput);
+        return { ...snapshotInput, originalEnums: [...snapshotInput.enums], capturedAt: now };
+      },
+      async recordAddition(additionInput) {
+        calls.additions.push(additionInput);
+        if (overrides.recordAddition) return overrides.recordAddition(additionInput);
+      },
+    },
+  };
+}
+
+/** Empty lead until the fields are written, filled on every later read. */
+function autofillAmo(options = {}) {
+  const state = { written: false, reads: 0 };
+  return {
+    state,
+    amo: {
+      async readLead() {
+        state.reads += 1;
+        return lead({ fields: state.written ? FILLED_FIELD_VALUES : new Map() });
+      },
+      async getLeadCustomFields() { return options.customFields ?? autofillCustomFields(); },
+      async hasRecentStageMovement() { return false; },
+      async addFieldOption(input) {
+        state.createdOption = input;
+        return options.addFieldOption
+          ? options.addFieldOption(input)
+          : { kind: "confirmed", enumId: 91, value: input.value };
+      },
+      async writeLeadFields(input) {
+        state.writeInput = input;
+        if (options.writeLeadFields) return options.writeLeadFields(input);
+        state.written = true;
+        return { kind: "confirmed", lead: lead({ fields: FILLED_FIELD_VALUES }) };
+      },
+      async moveLeadToTarget() {
+        state.moved = true;
+        return { kind: "confirmed", lead: lead({ statusId: 58160726, fields: FILLED_FIELD_VALUES }) };
+      },
+      async addStageReasonNote() { return { kind: "confirmed", noteId: 700 }; },
+    },
+  };
+}
+
+test("fills the blocking fields, moves the deal, and reports every written value to admins", async () => {
+  const alerts = [];
+  const { state, amo } = autofillAmo();
+  const { calls: registryCalls, registry } = fakeOptionRegistry();
+  const result = await runCallStageAutomation(input, baseDependencies({
+    autofillMissingFields: true,
+    amo,
+    optionRegistry: registry,
+    async analyzeFieldValues(transcript, fields) {
+      assert.equal(transcript, input.transcript);
+      assert.deepEqual(fields.map((field) => field.id).sort(), [936097, 936103, 967019]);
+      return [
+        { id: 936103, value: "Uzum market", grounded: true },
+        { id: 936097, value: "ayol", grounded: true },
+        { id: 967019, value: "Samarqand", grounded: false },
+      ];
+    },
+    notifier: { async notify(alert) { alerts.push(alert); } },
+  }));
+
+  assert.deepEqual(result, { kind: "confirmed", actionId: "stage-action-1", noteId: 700 });
+  assert.equal(state.moved, true);
+  // The already-present option is reused; only the unknown one is created.
+  assert.deepEqual(state.createdOption, { fieldId: 967019, value: "Samarqand" });
+  // The field's original option list is stored before it is modified, and the
+  // new option is logged so it can be rolled back later.
+  assert.deepEqual(registryCalls.snapshots, [{
+    fieldId: 967019,
+    fieldName: "Region",
+    fieldType: "select",
+    enums: [{ id: 81, value: "Toshkent", sort: 1 }],
+  }]);
+  assert.deepEqual(registryCalls.additions, [{
+    fieldId: 967019,
+    fieldName: "Region",
+    enumId: 91,
+    value: "Samarqand",
+    actionId: "stage-action-1",
+    dealId: 42,
+  }]);
+  assert.deepEqual(state.writeInput.values.find((value) => value.fieldId === 936097), {
+    fieldId: 936097, enumId: 71, value: "Ayol",
+  });
+  assert.deepEqual(state.writeInput.values.find((value) => value.fieldId === 936103), {
+    fieldId: 936103, enumId: null, value: "Uzum market",
+  });
+
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].kind, "autofilled");
+  assert.equal(alerts[0].moveFailedReason, undefined);
+  assert.deepEqual(
+    [...alerts[0].filled].sort((left, right) => left.fieldName.localeCompare(right.fieldName)),
+    [
+      { fieldName: "Jinsi", value: "Ayol", createdOption: false, grounded: true },
+      { fieldName: "Kurs", value: "Uzum market", createdOption: false, grounded: true },
+      { fieldName: "Region", value: "Samarqand", createdOption: true, grounded: false },
+    ],
+  );
+});
+
+test("keeps the previous blocked behaviour when autofill is switched off", async () => {
+  const alerts = [];
+  const { state, amo } = autofillAmo();
+  const result = await runCallStageAutomation(input, baseDependencies({
+    amo,
+    async analyzeFieldValues() { throw new Error("must not consult the model"); },
+    notifier: { async notify(alert) { alerts.push(alert); } },
+  }));
+
+  assert.deepEqual(result, { kind: "missing_fields", actionId: "stage-action-1" });
+  assert.equal(state.writeInput, undefined);
+  assert.equal(state.moved, undefined);
+  assert.equal(alerts[0].kind, "missing_fields");
+});
+
+test("writes nothing when even one blocking field cannot be filled", async () => {
+  const alerts = [];
+  const { state, amo } = autofillAmo({
+    customFields: autofillCustomFields([{ id: 967019, name: "Region", type: "date", enums: [] }]),
+  });
+  const result = await runCallStageAutomation(input, baseDependencies({
+    autofillMissingFields: true,
+    amo,
+    async analyzeFieldValues() {
+      return [
+        { id: 936103, value: "Uzum market", grounded: true },
+        { id: 936097, value: "Ayol", grounded: true },
+      ];
+    },
+    notifier: { async notify(alert) { alerts.push(alert); } },
+  }));
+
+  assert.deepEqual(result, { kind: "autofill_failed", actionId: "stage-action-1" });
+  assert.equal(state.writeInput, undefined);
+  assert.equal(state.createdOption, undefined);
+  assert.equal(state.moved, undefined);
+  assert.equal(alerts[0].kind, "autofill_failed");
+  assert.equal(alerts[0].reason.includes("unsupported_type"), true);
+});
+
+test("does not move the deal when creating a new option fails", async () => {
+  const alerts = [];
+  const { state, amo } = autofillAmo({
+    addFieldOption: () => ({ kind: "not_created", reason: "patch_rejected" }),
+  });
+  const result = await runCallStageAutomation(input, baseDependencies({
+    autofillMissingFields: true,
+    amo,
+    optionRegistry: fakeOptionRegistry().registry,
+    async analyzeFieldValues() {
+      return [
+        { id: 936103, value: "Uzum market", grounded: true },
+        { id: 936097, value: "Ayol", grounded: true },
+        { id: 967019, value: "Samarqand", grounded: true },
+      ];
+    },
+    notifier: { async notify(alert) { alerts.push(alert); } },
+  }));
+
+  assert.deepEqual(result, { kind: "autofill_failed", actionId: "stage-action-1" });
+  assert.equal(state.writeInput, undefined);
+  assert.equal(state.moved, undefined);
+  assert.equal(alerts[0].reason.includes("вариант списка"), true);
+});
+
+test("blocks the move but still reports the values it wrote when amoCRM keeps refusing", async () => {
+  const alerts = [];
+  const { state, amo } = autofillAmo({
+    // amoCRM accepts the PATCH but the lead read back is still empty.
+    writeLeadFields: () => ({ kind: "confirmed", lead: lead({ fields: new Map() }) }),
+  });
+  const result = await runCallStageAutomation(input, baseDependencies({
+    autofillMissingFields: true,
+    amo,
+    optionRegistry: fakeOptionRegistry().registry,
+    async analyzeFieldValues() {
+      return [
+        { id: 936103, value: "Uzum market", grounded: true },
+        { id: 936097, value: "Ayol", grounded: true },
+        { id: 967019, value: "Samarqand", grounded: false },
+      ];
+    },
+    notifier: { async notify(alert) { alerts.push(alert); } },
+  }));
+
+  assert.deepEqual(result, { kind: "missing_fields", actionId: "stage-action-1" });
+  assert.equal(state.moved, undefined);
+  assert.equal(alerts[0].kind, "autofilled");
+  assert.equal(alerts[0].moveFailedReason.includes("всё ещё считает поля незаполненными"), true);
+  assert.equal(alerts[0].filled.length, 3);
+});
+
+test("blocks the move when amoCRM cannot confirm the field write", async () => {
+  const alerts = [];
+  const { state, amo } = autofillAmo({
+    writeLeadFields: () => ({ kind: "uncertain", error: { kind: "network", status: null, code: null, message: "timeout" } }),
+  });
+  const result = await runCallStageAutomation(input, baseDependencies({
+    autofillMissingFields: true,
+    amo,
+    optionRegistry: fakeOptionRegistry().registry,
+    async analyzeFieldValues() {
+      return [
+        { id: 936103, value: "Uzum market", grounded: true },
+        { id: 936097, value: "Ayol", grounded: true },
+        { id: 967019, value: "Samarqand", grounded: true },
+      ];
+    },
+    notifier: { async notify(alert) { alerts.push(alert); } },
+  }));
+
+  assert.deepEqual(result, { kind: "autofill_failed", actionId: "stage-action-1" });
+  assert.equal(state.moved, undefined);
+  assert.equal(alerts[0].reason.includes("неопределённо"), true);
+});
+
+test("never creates an option when the original list cannot be stored", async () => {
+  const alerts = [];
+  const { state, amo } = autofillAmo();
+  const { registry } = fakeOptionRegistry({
+    captureSnapshot: () => { throw new Error("database unavailable"); },
+  });
+  const result = await runCallStageAutomation(input, baseDependencies({
+    autofillMissingFields: true,
+    amo,
+    optionRegistry: registry,
+    async analyzeFieldValues() {
+      return [
+        { id: 936103, value: "Uzum market", grounded: true },
+        { id: 936097, value: "Ayol", grounded: true },
+        { id: 967019, value: "Samarqand", grounded: true },
+      ];
+    },
+    notifier: { async notify(alert) { alerts.push(alert); } },
+  }));
+
+  assert.deepEqual(result, { kind: "autofill_failed", actionId: "stage-action-1" });
+  assert.equal(state.createdOption, undefined);
+  assert.equal(state.writeInput, undefined);
+  assert.equal(alerts[0].reason.includes("исходный список"), true);
+});
+
+test("refuses to create an option at all when no rollback log is wired up", async () => {
+  const { state, amo } = autofillAmo();
+  const result = await runCallStageAutomation(input, baseDependencies({
+    autofillMissingFields: true,
+    amo,
+    async analyzeFieldValues() {
+      return [
+        { id: 936103, value: "Uzum market", grounded: true },
+        { id: 936097, value: "Ayol", grounded: true },
+        { id: 967019, value: "Samarqand", grounded: true },
+      ];
+    },
+  }));
+
+  assert.deepEqual(result, { kind: "autofill_failed", actionId: "stage-action-1" });
+  assert.equal(state.createdOption, undefined);
+});
+
+test("reuses an existing option for a synonym instead of creating a duplicate", async () => {
+  const alerts = [];
+  const { state, amo } = autofillAmo();
+  const { calls: registryCalls, registry } = fakeOptionRegistry();
+  await runCallStageAutomation(input, baseDependencies({
+    autofillMissingFields: true,
+    amo,
+    optionRegistry: registry,
+    async analyzeFieldValues() {
+      return [
+        { id: 936103, value: "Uzum market", grounded: true },
+        { id: 936097, value: "Ayol", grounded: true },
+        // "Toshkent shahri" must land on the existing "Toshkent" option.
+        { id: 967019, value: "Toshkent shahri", grounded: true },
+      ];
+    },
+    notifier: { async notify(alert) { alerts.push(alert); } },
+  }));
+
+  assert.equal(state.createdOption, undefined);
+  assert.deepEqual(registryCalls.additions, []);
+  assert.deepEqual(state.writeInput.values.find((value) => value.fieldId === 967019), {
+    fieldId: 967019, enumId: 81, value: "Toshkent",
+  });
+  const region = alerts[0].filled.find((field) => field.fieldName === "Region");
+  assert.equal(region.createdOption, false);
+  assert.equal(region.matchedBy, "qualifier");
+  assert.equal(region.modelValue, "Toshkent shahri");
+});

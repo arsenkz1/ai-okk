@@ -1,5 +1,12 @@
 import { prisma } from "../config/database";
 import { askGeminiRaw } from "../services/aiAnalysis";
+import { loadManagerPerformance } from "../services/performanceData";
+import {
+  formatCallSection,
+  formatPlanSection,
+  formatRevenueSection,
+  type ManagerPerformance,
+} from "../services/performanceReport";
 
 // ---------------------------------------------------------------------------
 // Форматирование
@@ -22,6 +29,7 @@ const UZ_MONTHS = [
 
 interface DailyStats {
   callsTotal: number;
+  connectedTotal: number;
   talkTimeSeconds: number;
   avgScore: number | null;
   topStrengths: string[];
@@ -39,7 +47,8 @@ interface DailyReportResult {
 
 async function buildDailyReport(
   managerId: number,
-  managerName: string
+  managerName: string,
+  performance: ManagerPerformance | null
 ): Promise<DailyReportResult | null> {
   const now = new Date();
   // Отчёт за вчера (крон запускается в 09:00, отчитываемся за предыдущий день)
@@ -59,7 +68,12 @@ async function buildDailyReport(
     orderBy: { startedAt: "desc" },
   });
 
-  if (!calls.length) return null;
+  const hasPerformance = performance !== null && (
+    performance.calls.total > 0
+    || performance.revenue.wonCount > 0
+    || performance.revenue.partialCount > 0
+  );
+  if (!calls.length && !hasPerformance) return null;
 
   const scores = calls
     .map((c) => c.analysis?.overallScore)
@@ -92,12 +106,25 @@ async function buildDailyReport(
 
   const today = `${from.getDate()} ${UZ_MONTHS[from.getMonth()]}`;
 
+  const performanceText = performance
+    ? [
+      "",
+      ...formatCallSection(performance.calls),
+      "",
+      ...formatRevenueSection(performance.revenue),
+      "",
+      ...formatPlanSection(performance.plan),
+    ].join("\n")
+    : [
+      "",
+      `📞 Tahlil qilingan qo'ng'iroqlar: ${calls.length}`,
+      `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
+      avgScoreStr ? `⭐ O'rtacha ball: ${avgScoreStr}/100` : "",
+    ].filter(Boolean).join("\n");
+
   const statsText = [
     `📊 Kechagi hisoboting — ${today}`,
-    ``,
-    `📞 Tahlil qilingan qo'ng'iroqlar: ${calls.length}`,
-    `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
-    avgScoreStr ? `⭐ O'rtacha ball: ${avgScoreStr}/100` : "",
+    performanceText,
     topStrongText ? `\n💪 Kuchli tomonlar:\n${topStrongText}` : "",
     topWeakText ? `\n⚠️ O'sish sohalari:\n${topWeakText}` : "",
   ]
@@ -139,8 +166,9 @@ QISQA motivatsion sharh yoz (2-3 gap):
   return {
     text: fullText,
     stats: {
-      callsTotal: calls.length,
-      talkTimeSeconds: totalTalk,
+      callsTotal: performance?.calls.total ?? calls.length,
+      connectedTotal: performance?.calls.connected ?? calls.length,
+      talkTimeSeconds: performance?.calls.talkSeconds ?? totalTalk,
       avgScore: avgScoreNum,
       topStrengths: topStrong.map(([s]) => s),
       topMistakes: topWeak.map(([w]) => w),
@@ -175,6 +203,20 @@ export async function sendDailyReports(
     },
   });
 
+  // One PBX history read covers every manager's yesterday, instead of one call
+  // per manager.
+  const yesterdayFrom = new Date(today);
+  yesterdayFrom.setDate(yesterdayFrom.getDate() - 1);
+  let performanceByManager = new Map<number, ManagerPerformance>();
+  try {
+    performanceByManager = await loadManagerPerformance({
+      managerIds: managers.map((manager) => manager.id),
+      range: { from: yesterdayFrom, to: today },
+    });
+  } catch (err: any) {
+    console.error("[DailyReport] Performance data unavailable:", err.message);
+  }
+
   let sent = 0;
   let skipped = 0;
   let errors = 0;
@@ -185,7 +227,7 @@ export async function sendDailyReports(
     // Строим отчёт даже если нет Telegram (чтобы сохранить в DailySummary)
     let report: DailyReportResult | null = null;
     try {
-      report = await buildDailyReport(manager.id, manager.name);
+      report = await buildDailyReport(manager.id, manager.name, performanceByManager.get(manager.id) ?? null);
     } catch (err: any) {
       console.error(`[DailyReport] Build failed for ${manager.name}:`, err.message);
       errors++;
@@ -211,7 +253,7 @@ export async function sendDailyReports(
         },
         update: {
           callsTotal: report.stats.callsTotal,
-          connectedTotal: report.stats.callsTotal,
+          connectedTotal: report.stats.connectedTotal,
           talkTimeSeconds: report.stats.talkTimeSeconds,
           avgScore: report.stats.avgScore,
           topStrengths: report.stats.topStrengths,
@@ -225,7 +267,7 @@ export async function sendDailyReports(
           date: today,
           period: "day",
           callsTotal: report.stats.callsTotal,
-          connectedTotal: report.stats.callsTotal,
+          connectedTotal: report.stats.connectedTotal,
           talkTimeSeconds: report.stats.talkTimeSeconds,
           avgScore: report.stats.avgScore,
           topStrengths: report.stats.topStrengths,
