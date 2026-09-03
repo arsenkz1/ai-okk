@@ -600,13 +600,22 @@ export async function handleAmoCrmWebhook(body: any): Promise<void> {
 
 export interface AmoCrmCallNote {
   id: number;
-  noteType: string; // "call_in" | "call_out"
+  noteType: string; // "call_in" | "call_out" | "common" | ...
   createdAt: Date;
   duration: number; // секунды
   recordUrl: string | null;
   phone: string | null; // внешний номер телефона
   uniq: string | null; // UUID от OnlinePBX (если есть)
   internalNumber: string | null; // внутренний номер менеджера (из URL записи)
+  /** Текст примечания. Для звонков часто пуст, для обычных заметок — содержимое. */
+  text: string;
+  /** Откуда пришло примечание: со сделки или со связанного контакта. */
+  source: "lead" | "contact";
+}
+
+/** Примечание со ссылкой на запись — только такие можно поставить в анализ. */
+export function isCallRecordingNote(note: AmoCrmCallNote): boolean {
+  return note.recordUrl !== null;
 }
 
 /**
@@ -645,6 +654,11 @@ export async function ensureDealInDb(dealId: number): Promise<void> {
   });
 }
 
+/**
+ * Возвращает ВСЕ примечания сущности, а не только звонки с записью.
+ * Раньше здесь отбрасывались примечания без ссылки на запись, из-за чего
+ * диагностика в боте показывала «примечаний нет» там, где они были.
+ */
 async function fetchNotesFromEntity(
   entityType: "leads" | "contacts",
   entityId: number
@@ -673,8 +687,6 @@ async function fetchNotesFromEntity(
         params.link ??
         (params.text ? (params.text.match(/https?:\/\/\S+/) ?? [null])[0]?.replace(/["')\]>.,;]+$/, "") ?? null : null);
 
-      if (!recordUrl) continue;
-
       // Parse duration: prefer params.duration, fallback to text "HH:MM:SS" or "MM:SS"
       let duration = Number(params.duration ?? 0);
       if (!duration) {
@@ -697,7 +709,9 @@ async function fetchNotesFromEntity(
         recordUrl,
         phone: params.phone ?? null,
         uniq: params.uniq ?? null,
-        internalNumber: extractInternalNumberFromRecordUrl(recordUrl),
+        internalNumber: recordUrl ? extractInternalNumberFromRecordUrl(recordUrl) : null,
+        text: String(params.text ?? item.text ?? "").trim(),
+        source: entityType === "leads" ? "lead" : "contact",
       });
     }
 
@@ -740,9 +754,120 @@ export async function fetchDealCallNotes(dealId: number): Promise<AmoCrmCallNote
     }
   }
 
-  console.log(`[fetchDealCallNotes] deal=${dealId} lead_notes=${leadNotes.length} contact_notes=${contactNotes.length} contacts=${contactIds.join(",")} total=${allNotes.length}`);
+  console.log(
+    `[fetchDealCallNotes] deal=${dealId} lead_notes=${leadNotes.length} contact_notes=${contactNotes.length} ` +
+    `contacts=${contactIds.join(",")} total=${allNotes.length} with_recording=${allNotes.filter(isCallRecordingNote).length}`
+  );
 
   return allNotes;
+}
+
+export interface AmoCrmDealSummary {
+  id: number;
+  name: string | null;
+  pipelineId: number | null;
+  pipelineName: string | null;
+  statusId: number | null;
+  statusName: string | null;
+  price: number | null;
+  responsibleUserId: number | null;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+  /** Заполненные пользовательские поля: имя поля → значения. */
+  fields: Array<{ name: string; values: string[] }>;
+  contacts: Array<{ id: number; name: string | null; phones: string[] }>;
+}
+
+function readLeadFieldValues(lead: any): Array<{ name: string; values: string[] }> {
+  const raw = lead?.custom_fields_values;
+  if (!Array.isArray(raw)) return [];
+  const fields: Array<{ name: string; values: string[] }> = [];
+  for (const field of raw) {
+    const name = typeof field?.field_name === "string" ? field.field_name.trim() : "";
+    if (!name || !Array.isArray(field?.values)) continue;
+    const values = field.values
+      .map((entry: any) => {
+        const value = entry?.value;
+        if (value === null || value === undefined) return "";
+        return typeof value === "object" ? String(value.value ?? "") : String(value);
+      })
+      .map((value: string) => value.trim())
+      .filter(Boolean);
+    if (values.length) fields.push({ name, values });
+  }
+  return fields;
+}
+
+/**
+ * Данные сделки из amoCRM: стадия, бюджет, заполненные поля и контакты.
+ * Используется, когда по сделке нечего анализировать, но информация есть.
+ */
+/**
+ * Названия воронки и её этапов. Показывать оператору «Этап: 58160726» бесполезно,
+ * поэтому имена берутся из amoCRM, а не из захардкоженного списка.
+ */
+async function fetchPipelineNames(
+  pipelineId: number,
+): Promise<{ pipelineName: string | null; statusNames: Map<number, string> } | null> {
+  try {
+    const data = await amoGet(`/api/v4/leads/pipelines/${pipelineId}`);
+    const statusNames = new Map<number, string>();
+    for (const status of data?._embedded?.statuses ?? []) {
+      const id = Number(status?.id);
+      if (Number.isInteger(id) && typeof status?.name === "string") statusNames.set(id, status.name);
+    }
+    return { pipelineName: typeof data?.name === "string" ? data.name : null, statusNames };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchDealSummary(dealId: number): Promise<AmoCrmDealSummary | null> {
+  if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) return null;
+
+  let lead: any;
+  try {
+    lead = await amoGet(`/api/v4/leads/${dealId}?with=contacts`);
+  } catch {
+    return null;
+  }
+  if (!lead?.id) return null;
+
+  const contacts: AmoCrmDealSummary["contacts"] = [];
+  for (const embedded of lead?._embedded?.contacts ?? []) {
+    const contactId = Number(embedded?.id);
+    if (!Number.isInteger(contactId)) continue;
+    try {
+      const contact = await amoGet(`/api/v4/contacts/${contactId}`);
+      contacts.push({
+        id: contactId,
+        name: typeof contact?.name === "string" ? contact.name : null,
+        phones: extractPhones(contact),
+      });
+      await sleep(150);
+    } catch {
+      contacts.push({ id: contactId, name: null, phones: [] });
+    }
+  }
+
+  const pipelineId = Number.isInteger(Number(lead.pipeline_id)) ? Number(lead.pipeline_id) : null;
+  const statusId = Number.isInteger(Number(lead.status_id)) ? Number(lead.status_id) : null;
+  const names = pipelineId !== null ? await fetchPipelineNames(pipelineId) : null;
+
+  return {
+    id: Number(lead.id),
+    name: typeof lead.name === "string" ? lead.name : null,
+    pipelineId,
+    pipelineName: names?.pipelineName ?? null,
+    statusId,
+    statusName: statusId !== null ? names?.statusNames.get(statusId) ?? null : null,
+    price: Number.isFinite(Number(lead.price)) ? Number(lead.price) : null,
+    responsibleUserId: Number.isInteger(Number(lead.responsible_user_id)) ? Number(lead.responsible_user_id) : null,
+    createdAt: Number(lead.created_at) ? new Date(Number(lead.created_at) * 1000) : null,
+    updatedAt: Number(lead.updated_at) ? new Date(Number(lead.updated_at) * 1000) : null,
+    fields: readLeadFieldValues(lead),
+    contacts,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ import {
 import { writeManagersToSheet } from "../services/googleSheets";
 import { syncHistoryRange, findPbxRecordByDateAndPhone } from "../services/pbxHistory";
 import { callProcessingQueue } from "../queues/callProcessing";
-import { fetchDealCallNotes, fetchDealContactPhones } from "../services/amocrm";
+import { fetchDealCallNotes, fetchDealContactPhones, fetchDealSummary } from "../services/amocrm";
 import {
   AmoRoleRights,
   getAmoUserRoleId,
@@ -36,6 +36,8 @@ import { registerTeamLeadHandlers } from "./handlers/teamlead";
 import { registerRopHandlers } from "./handlers/rop";
 import { registerCallTaskReviewHandlers } from "./handlers/callTaskReview";
 import { registerPerformanceHandlers } from "./handlers/performance";
+import { formatDealSummaryReport } from "../services/dealSummaryReport";
+import { sendLongMessage } from "./longMessage";
 import { installSafeTelegramSender } from "./safeTelegram";
 
 // ---------------------------------------------------------------------------
@@ -1425,29 +1427,13 @@ bot.onText(/\/analyze_deal (\d+)/, async (msg, match) => {
     const qualifying = notes.filter((n) => n.duration >= MIN_DURATION && n.recordUrl);
 
     if (!qualifying.length) {
-      const noteDetails = notes
-        .map(
-          (n, i) =>
-            `  ${i + 1}. davomiyligi=${n.duration}s, url=${n.recordUrl ? "✅" : "❌"}, tur=${n.noteType}`
-        )
-        .join("\n");
-
-      let hint = "";
-      if (notes.length === 0) {
-        hint = "\n\n💡 Sabab: Bitimda hech qanday izoh yo'q. OnlinePBX qo'ng'iroqni ushbu bitimga bog'lamagan bo'lishi mumkin.";
-      } else if (notes.every((n) => !n.recordUrl)) {
-        hint = "\n\n💡 Sabab: Izohlar topildi, lekin yozuv URL yo'q. OnlinePBX sozlamalarida yozib olish yoqilganligini tekshiring.";
-      } else if (notes.every((n) => n.duration < 6 * 60)) {
-        hint = `\n\n💡 Sabab: Barcha qo'ng'iroqlar 6 daqiqadan qisqa (eng uzuni ${Math.max(...notes.map((n) => n.duration))}s). Tahlil uchun kamida 6 daqiqa kerak.`;
-      }
-
-      await bot.sendMessage(
+      // Анализировать нечего, но данные по сделке обычно есть — показываем их
+      // вместо тупика: стадия, бюджет, заполненные поля и тексты примечаний.
+      const summary = await fetchDealSummary(dealId);
+      await sendLongMessage(
+        bot,
         msg.chat.id,
-        `❌ Bitim #${dealId} uchun yaroqli qo'ng'iroqlar topilmadi.\n\n` +
-          `Jami izohlar: ${notes.length}\n` +
-          `Shartlar: yozuv URL + davomiyligi ≥ 6 daqiqa` +
-          (noteDetails ? `\n\nIzohlar:\n${noteDetails}` : "") +
-          hint
+        formatDealSummaryReport({ summary, notes, dealId, minCallSeconds: MIN_DURATION }),
       );
       return;
     }
