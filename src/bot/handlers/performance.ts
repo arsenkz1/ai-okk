@@ -7,6 +7,7 @@ import {
   formatTeamPerformance,
 } from "../../services/performanceReport";
 import { formatPhoenixMovements, loadPhoenixMovements } from "../../services/phoenixMovementStats";
+import { formatManagerDisplayName } from "../../services/managerDisplayName";
 import {
   formatCallProcessingBreakdown,
   loadCallProcessingBreakdown,
@@ -64,7 +65,7 @@ function yesterdayRange(now = new Date()): { from: Date; to: Date; label: string
 async function teamManagerIdsOf(managerId: number, ownTeamId: number | null): Promise<number[]> {
   const teams = await prisma.team.findMany({
     where: { OR: [{ teamLeadId: managerId }, ...(ownTeamId ? [{ id: ownTeamId }] : [])] },
-    select: { members: { where: { isActive: true }, select: { id: true } } },
+    select: { members: { where: { isActive: true, excludeFromReports: false }, select: { id: true } } },
   });
   const ids = new Set<number>(teams.flatMap((team) => team.members.map((member) => member.id)));
   ids.add(managerId);
@@ -128,7 +129,10 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     const manager = await linkedManager(telegramUserId);
 
     if (await isAdmin(telegramUserId) || manager?.role === "ROP") {
-      const all = await prisma.manager.findMany({ where: { isActive: true }, select: { id: true } });
+      const all = await prisma.manager.findMany({
+        where: { isActive: true, excludeFromReports: false },
+        select: { id: true },
+      });
       await sendPerformance(bot, msg, all.map((item) => item.id), "Kompaniya");
       return;
     }
@@ -139,6 +143,55 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     }
 
     await sendPerformance(bot, msg, await teamManagerIdsOf(manager.id, manager.teamId), "Jamoa");
+  });
+
+  // /rating_off <amo_id> | /rating_on <amo_id> — keep non-selling accounts
+  // (teams, ROP and service logins) out of the rankings.
+  bot.onText(/^\/rating_(off|on)\s+(\d+)$/, async (msg, match) => {
+    if (!(await requirePlanEditor(bot, msg))) return;
+
+    const exclude = match![1] === "off";
+    const amoUserId = Number(match![2]);
+    const manager = await prisma.manager.findUnique({ where: { amoUserId } });
+    if (!manager) {
+      await bot.sendMessage(msg.chat.id, `❌ amoCRM ID ${amoUserId} bo'yicha menejer topilmadi.`);
+      return;
+    }
+
+    await prisma.manager.update({ where: { id: manager.id }, data: { excludeFromReports: exclude } });
+    await bot.sendMessage(
+      msg.chat.id,
+      exclude
+        ? `✅ ${formatManagerDisplayName(manager.name)} hisobotlardan chiqarildi.`
+        : `✅ ${formatManagerDisplayName(manager.name)} hisobotlarga qaytarildi.`,
+    );
+  });
+
+  // /rating_list — who counts as a seller and who is excluded.
+  bot.onText(/^\/rating_list$/, async (msg) => {
+    if (!(await requirePlanEditor(bot, msg))) return;
+
+    const managers = await prisma.manager.findMany({
+      where: { isActive: true },
+      select: { name: true, amoUserId: true, excludeFromReports: true },
+      orderBy: { name: "asc" },
+    });
+    const included = managers.filter((manager) => !manager.excludeFromReports);
+    const excluded = managers.filter((manager) => manager.excludeFromReports);
+
+    const line = (manager: { name: string; amoUserId: number | null }): string => (
+      `• ${formatManagerDisplayName(manager.name)} (${manager.amoUserId ?? "—"})`
+    );
+    const lines = [
+      `👥 Hisobotdagi menejerlar: ${included.length}`,
+      ...included.map(line),
+      "",
+      `🚫 Hisobotdan chiqarilgan: ${excluded.length}`,
+      ...(excluded.length ? excluded.map(line) : ["—"]),
+      "",
+      "ℹ️ Chiqarish: /rating_off <amoCRM ID>, qaytarish: /rating_on <amoCRM ID>",
+    ];
+    await bot.sendMessage(msg.chat.id, lines.join("\n"));
   });
 
   // /call_status [N] — why calls over the last N days were or were not analyzed.

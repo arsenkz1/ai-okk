@@ -1,4 +1,5 @@
 import { prisma } from "../config/database";
+import { formatManagerDisplayName } from "./managerDisplayName";
 import { fetchCallVolumeForRange, emptyCallVolume, type ManagerCallVolume } from "./callVolumeStats";
 import { almatyPlanMonth, getManagerPlans, type PlanMonth } from "./salesPlan";
 import {
@@ -188,7 +189,7 @@ export async function loadManagerPerformance(
     if (volume.possiblyTruncated) calls.possiblyTruncated = true;
 
     result.set(manager.id, {
-      managerName: manager.name,
+      managerName: formatManagerDisplayName(manager.name),
       calls,
       revenue: revenue.get(manager.id) ?? emptyRevenueSection(),
       plan: plans.get(manager.id) ?? null,

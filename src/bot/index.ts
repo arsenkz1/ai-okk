@@ -38,6 +38,7 @@ import { registerCallTaskReviewHandlers } from "./handlers/callTaskReview";
 import { registerPerformanceHandlers } from "./handlers/performance";
 import { formatDealSummaryReport } from "../services/dealSummaryReport";
 import { sendLongMessage } from "./longMessage";
+import { formatManagerDisplayName } from "../services/managerDisplayName";
 import { installSafeTelegramSender } from "./safeTelegram";
 
 // ---------------------------------------------------------------------------
@@ -289,11 +290,16 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
   const fromStart = new Date(from); fromStart.setHours(0, 0, 0, 0);
   const toEnd = new Date(to); toEnd.setHours(23, 59, 59, 999);
 
-  const calls = await prisma.call.findMany({
+  const allCalls = await prisma.call.findMany({
     where: { startedAt: { gte: fromStart, lte: toEnd }, processingStatus: "processed" },
     include: { analysis: true, manager: true },
     orderBy: { startedAt: "desc" },
   });
+
+  // Team, ROP and service accounts keep their calls but stay out of the
+  // ranking: mixing them with sellers made the report unreadable.
+  const calls = allCalls.filter((call) => call.manager?.excludeFromReports !== true);
+  const excludedCalls = allCalls.length - calls.length;
 
   if (!calls.length) {
     return `📊 ${label} uchun umumiy hisobot\n\nBu davr uchun tahlil qilingan qo'ng'iroqlar topilmadi.`;
@@ -306,7 +312,7 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
   // Рейтинг менеджеров
   const mgrMap = new Map<string, { total: number; count: number }>();
   for (const call of calls) {
-    const name = call.manager?.name ?? "Noma'lum";
+    const name = call.manager?.name ? formatManagerDisplayName(call.manager.name) : "Noma'lum";
     const score = call.analysis?.overallScore;
     if (score === null || score === undefined) continue;
     const cur = mgrMap.get(name) ?? { total: 0, count: 0 };
@@ -333,12 +339,16 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
 
   return [
     `📊 ${label} uchun umumiy hisobot`,
+    `Faqat tahlil qilingan qo'ng'iroqlar (6 daqiqadan uzun).`,
     ``,
     `👥 Menejerlar: ${managerCount} (jami ${calls.length} ta qo'ng'iroq)`,
     `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
     `⭐ O'rtacha ball: ${avgScore}/100`,
-    `\n📈 Menejerlar reytingi:\n${mgrRating}`,
+    `\n📈 Menejerlar reytingi (o'rtacha ball / qo'ng'iroqlar soni):\n${mgrRating}`,
     topWeak ? `\n⚠️ Eng zaif kriteriyalar:\n${topWeak}` : "",
+    excludedCalls > 0
+      ? `\nℹ️ Reytingdan chiqarilgan hisoblar: ${excludedCalls} ta qo'ng'iroq hisobga olinmadi.`
+      : "",
   ].filter(Boolean).join("\n");
 }
 
