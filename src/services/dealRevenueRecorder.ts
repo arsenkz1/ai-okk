@@ -5,7 +5,10 @@ import {
   revenueKindForStage,
   type AmoRevenueLead,
   type RevenueKind,
+  type RevenueStageRef,
+  parseAmount,
 } from "./salesRevenuePolicy";
+import { loadRevenueStages } from "./revenueStageSync";
 
 /**
  * Records a deal entering a revenue-bearing stage.
@@ -34,6 +37,8 @@ export interface RecordDealRevenueDependencies {
   readLead(dealId: number): Promise<RevenueLeadRead | null>;
   now?: () => Date;
   paymentAmountFieldId?: number | null;
+  /** Stages discovered by /sync_stages; loaded from the database by default. */
+  knownStages?: readonly RevenueStageRef[];
 }
 
 async function resolveManagerId(amoUserId: number | null): Promise<number | null> {
@@ -48,7 +53,8 @@ export async function recordDealRevenue(
   statusId: number,
   dependencies: RecordDealRevenueDependencies,
 ): Promise<RecordRevenueResult> {
-  const kind = revenueKindForStage(pipelineId, statusId);
+  const knownStages = dependencies.knownStages ?? await loadRevenueStages();
+  const kind = revenueKindForStage(pipelineId, statusId, knownStages);
   if (kind === null) return { kind: "not_revenue" };
 
   const lead = await dependencies.readLead(dealId);
@@ -64,6 +70,7 @@ export async function recordDealRevenue(
     ? dependencies.paymentAmountFieldId
     : resolvePaymentAmountFieldId();
   const amount = resolveRevenueAmount(kind, lead, paymentAmountFieldId);
+  const leadPrice = parseAmount(lead.price);
   const amoUserId = Number.isInteger(Number(lead.responsible_user_id))
     ? Number(lead.responsible_user_id)
     : null;
@@ -76,14 +83,14 @@ export async function recordDealRevenue(
     update: {
       pipelineId,
       statusId,
-      ...(amount !== null && kind === "won" ? { price: amount } : {}),
+      ...(leadPrice !== null ? { price: leadPrice } : {}),
       ...(amoUserId !== null ? { responsibleUserId: amoUserId } : {}),
     },
     create: {
       id: dealId,
       pipelineId,
       statusId,
-      ...(amount !== null && kind === "won" ? { price: amount } : {}),
+      ...(leadPrice !== null ? { price: leadPrice } : {}),
       ...(amoUserId !== null ? { responsibleUserId: amoUserId } : {}),
     },
   });

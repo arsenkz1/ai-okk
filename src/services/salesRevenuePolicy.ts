@@ -1,49 +1,73 @@
 /**
  * Which amoCRM stages count as revenue, and where each one's amount comes from.
  *
- * Agreed rule: a won deal is valued by the amoCRM lead budget (`price`), while a
- * part-paid deal is valued by the custom field holding the amount actually
- * received — its ID comes from AMOCRM_PAYMENT_AMOUNT_FIELD_ID. Until that field
- * is configured, part-paid deals are still recorded, but with no amount, so a
- * count is reported and no invented money reaches a sum.
+ * The stage list is not hardcoded: pipelines get added and renamed in the CRM,
+ * so /sync_stages discovers them and stores them in RevenueStage. Only the
+ * system "won" status is known statically, because amoCRM uses the same ID for
+ * it in every pipeline.
+ *
+ * Amount rule: the amoCRM lead budget (`price`) values both kinds. When
+ * AMOCRM_PAYMENT_AMOUNT_FIELD_ID names a field holding the amount actually
+ * received, a part-paid deal uses that instead, since the budget overstates it.
  */
 
 /** System success status; identical across every amoCRM pipeline. */
 export const WON_STATUS_ID = 142;
-
-export interface PartialPaymentStage {
-  pipelineId: number;
-  statusId: number;
-  /** Pipeline name, for review only. */
-  name: string;
-}
-
-/**
- * "Часть оплачена" stages. Only UZUM's ID is known so far; add one row per
- * pipeline as the remaining IDs arrive.
- */
-export const PARTIAL_PAYMENT_STAGES: readonly PartialPaymentStage[] = Object.freeze([
-  { pipelineId: 6909890, statusId: 58810350, name: "UZUM" },
-].map((stage) => Object.freeze(stage)));
+/** System lost status, never revenue. */
+export const LOST_STATUS_ID = 143;
 
 export type RevenueKind = "won" | "partial";
 
-const partialStageKeys = new Set(
-  PARTIAL_PAYMENT_STAGES.map(({ pipelineId, statusId }) => `${pipelineId}:${statusId}`),
-);
+export interface RevenueStageRef {
+  pipelineId: number;
+  statusId: number;
+  kind: RevenueKind;
+}
+
+/** Names that identify a part-payment stage, compared case- and space-insensitively. */
+export const PARTIAL_PAYMENT_STAGE_NAMES: readonly string[] = Object.freeze([
+  "часть оплачена",
+  "частично оплачено",
+  "частичная оплата",
+  "qisman to'langan",
+  "qisman tolangan",
+]);
+
+function normalizeStageName(name: string): string {
+  return name.replace(/[ʻʼ‘’`']/g, "'").replace(/\s+/g, " ").trim().toLocaleLowerCase("ru-RU");
+}
 
 /**
- * Returns the revenue kind a status transition represents, or null when the
- * stage carries no revenue meaning.
+ * Classifies one amoCRM pipeline status. `type` is amoCRM's own marker — 1 is
+ * the won status — so a renamed or translated success stage is still detected.
+ */
+export function classifyRevenueStage(input: {
+  statusId: number;
+  statusName: string;
+  statusType?: number | null;
+}): RevenueKind | null {
+  if (input.statusId === WON_STATUS_ID || input.statusType === 1) return "won";
+  if (input.statusId === LOST_STATUS_ID || input.statusType === 2) return null;
+  const normalized = normalizeStageName(input.statusName);
+  return PARTIAL_PAYMENT_STAGE_NAMES.includes(normalized) ? "partial" : null;
+}
+
+/**
+ * Returns the revenue kind a status transition represents, using the stages
+ * discovered from amoCRM. The system won status is recognised even before a
+ * sync has ever run.
  */
 export function revenueKindForStage(
   pipelineId: number | null | undefined,
   statusId: number | null | undefined,
+  knownStages: readonly RevenueStageRef[] = [],
 ): RevenueKind | null {
   if (typeof statusId !== "number") return null;
   if (statusId === WON_STATUS_ID) return "won";
-  if (typeof pipelineId !== "number") return null;
-  return partialStageKeys.has(`${pipelineId}:${statusId}`) ? "partial" : null;
+  if (statusId === LOST_STATUS_ID || typeof pipelineId !== "number") return null;
+  return knownStages.find(
+    (stage) => stage.pipelineId === pipelineId && stage.statusId === statusId,
+  )?.kind ?? null;
 }
 
 export interface AmoCustomFieldValue {
@@ -96,15 +120,18 @@ export function resolvePaymentAmountFieldId(
 }
 
 /**
- * Resolves the amount to record. Won deals use the lead budget; part-paid deals
- * use the configured payment field and are recorded amount-less otherwise —
- * never silently falling back to the full budget, which would overstate revenue.
+ * Resolves the amount to record. The lead budget values both kinds; a part-paid
+ * deal prefers the dedicated payment field when one is configured, because the
+ * budget is the full contract rather than the money actually received.
  */
 export function resolveRevenueAmount(
   kind: RevenueKind,
   lead: AmoRevenueLead,
   paymentAmountFieldId: number | null,
 ): number | null {
-  if (kind === "won") return parseAmount(lead.price);
-  return readCustomFieldAmount(lead, paymentAmountFieldId);
+  if (kind === "partial") {
+    const received = readCustomFieldAmount(lead, paymentAmountFieldId);
+    if (received !== null) return received;
+  }
+  return parseAmount(lead.price);
 }

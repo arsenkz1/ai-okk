@@ -848,6 +848,12 @@ async function fetchPipelineNames(
   }
 }
 
+/** Every pipeline with its statuses; used to discover revenue stages. */
+export async function fetchAllPipelines(): Promise<unknown> {
+  if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) throw new Error("amoCRM credentials are not configured");
+  return amoGet("/api/v4/leads/pipelines");
+}
+
 export async function fetchDealSummary(dealId: number): Promise<AmoCrmDealSummary | null> {
   if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) return null;
 

@@ -655,7 +655,8 @@ bot.onText(/\/help$/, async (msg) => {
         "/rating_list - kim reytingda, kim chiqarilgan\n" +
         "/rating_off <amo_id> - reytingdan chiqarish (jamoa, HR, xizmat hisoblari)\n" +
         "/rating_on <amo_id> - reytingga qaytarish\n" +
-        "/call_status [kun] - qo'ng'iroqlar nega tahlil qilinmadi\n\n" +
+        "/call_status [kun] - qo'ng'iroqlar nega tahlil qilinmadi\n" +
+        "/sync_stages - amoCRM voronkalaridan tushum bosqichlarini sinxronlash\n\n" +
         `ROP - reyting va analitika:\n` +
         "/teams - barcha jamoalar\n" +
         "/all_rating - menejerlarning umumiy reytingi (7 kun)\n" +

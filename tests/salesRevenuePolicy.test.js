@@ -3,7 +3,8 @@ const assert = require("node:assert/strict");
 
 const {
   WON_STATUS_ID,
-  PARTIAL_PAYMENT_STAGES,
+  LOST_STATUS_ID,
+  classifyRevenueStage,
   revenueKindForStage,
   parseAmount,
   readCustomFieldAmount,
@@ -18,18 +19,34 @@ test("treats the system success status as won revenue in every pipeline", () => 
   assert.equal(revenueKindForStage(null, 142), "won");
 });
 
-test("recognizes only the configured part-paid stages", () => {
-  for (const { pipelineId, statusId } of PARTIAL_PAYMENT_STAGES) {
-    assert.equal(revenueKindForStage(pipelineId, statusId), "partial");
-  }
-  assert.equal(revenueKindForStage(6909890, 58810350), "partial");
+const SYNCED_STAGES = [
+  { pipelineId: 6909890, statusId: 58810350, kind: "partial" },
+  { pipelineId: 9055778, statusId: 72999111, kind: "partial" },
+];
+
+test("recognizes the part-paid stages discovered by the sync", () => {
+  assert.equal(revenueKindForStage(6909890, 58810350, SYNCED_STAGES), "partial");
+  assert.equal(revenueKindForStage(9055778, 72999111, SYNCED_STAGES), "partial");
   // A part-paid stage ID is pipeline-scoped, never global like status 142.
-  assert.equal(revenueKindForStage(9055778, 58810350), null);
+  assert.equal(revenueKindForStage(9055778, 58810350, SYNCED_STAGES), null);
+  // Before a sync has ever run only the system won status is known.
+  assert.equal(revenueKindForStage(6909890, 58810350), null);
+});
+
+test("classifies a pipeline status by amoCRM's type and by its name", () => {
+  assert.equal(classifyRevenueStage({ statusId: 142, statusName: "Успешно реализовано", statusType: 1 }), "won");
+  assert.equal(classifyRevenueStage({ statusId: 999, statusName: "Sotildi", statusType: 1 }), "won");
+  assert.equal(classifyRevenueStage({ statusId: 58810350, statusName: "Часть оплачена", statusType: 0 }), "partial");
+  assert.equal(classifyRevenueStage({ statusId: 5, statusName: "  ЧАСТЬ  ОПЛАЧЕНА ", statusType: 0 }), "partial");
+  assert.equal(classifyRevenueStage({ statusId: 6, statusName: "Qisman to'langan", statusType: 0 }), "partial");
+  assert.equal(classifyRevenueStage({ statusId: 143, statusName: "Закрыто", statusType: 2 }), null);
+  assert.equal(classifyRevenueStage({ statusId: 7, statusName: "Взято в работу", statusType: 0 }), null);
+  assert.equal(LOST_STATUS_ID, 143);
 });
 
 test("returns no revenue kind for ordinary or lost stages", () => {
-  assert.equal(revenueKindForStage(6909890, 58160726), null);
-  assert.equal(revenueKindForStage(6909890, 143), null);
+  assert.equal(revenueKindForStage(6909890, 58160726, SYNCED_STAGES), null);
+  assert.equal(revenueKindForStage(6909890, 143, SYNCED_STAGES), null);
   assert.equal(revenueKindForStage(6909890, null), null);
   assert.equal(revenueKindForStage(undefined, undefined), null);
 });
@@ -86,11 +103,15 @@ test("values a won deal by its budget and a part-paid deal by the payment field"
   assert.equal(resolveRevenueAmount("partial", lead, 222), 500000);
 });
 
-test("never falls back to the full budget for a part-paid deal", () => {
+test("uses the deal budget for a part-paid deal when no payment field is set", () => {
   const lead = { price: 2000000, custom_fields_values: [] };
 
-  // Without the payment field there is no honest amount, so none is reported.
-  assert.equal(resolveRevenueAmount("partial", lead, null), null);
-  assert.equal(resolveRevenueAmount("partial", lead, 222), null);
+  assert.equal(resolveRevenueAmount("partial", lead, null), 2000000);
+  assert.equal(resolveRevenueAmount("partial", lead, 222), 2000000);
   assert.equal(resolveRevenueAmount("won", lead, null), 2000000);
+});
+
+test("reports no amount when the deal has no budget either", () => {
+  assert.equal(resolveRevenueAmount("won", { price: null }, null), null);
+  assert.equal(resolveRevenueAmount("partial", { price: "" }, 222), null);
 });

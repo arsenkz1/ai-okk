@@ -12,6 +12,8 @@ import {
   formatCallProcessingBreakdown,
   loadCallProcessingBreakdown,
 } from "../../services/callProcessingStats";
+import { fetchAllPipelines } from "../../services/amocrm";
+import { formatRevenueStageSync, syncRevenueStages } from "../../services/revenueStageSync";
 import {
   almatyPlanMonth,
   formatPlanMonth,
@@ -143,6 +145,23 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     }
 
     await sendPerformance(bot, msg, await teamManagerIdsOf(manager.id, manager.teamId), "Jamoa");
+  });
+
+  // /sync_stages — discover the revenue stages of every amoCRM pipeline.
+  bot.onText(/^\/sync_stages$/, async (msg) => {
+    if (!(await requirePlanEditor(bot, msg))) return;
+
+    await bot.sendMessage(msg.chat.id, "⏳ Читаю воронки amoCRM...");
+    try {
+      const result = await syncRevenueStages({ fetchPipelines: fetchAllPipelines });
+      await bot.sendMessage(msg.chat.id, formatRevenueStageSync(result));
+    } catch (error) {
+      console.error("[RevenueStageSync] failed:", error instanceof Error ? error.message : error);
+      await bot.sendMessage(
+        msg.chat.id,
+        `❌ Не удалось синхронизировать этапы: ${error instanceof Error ? error.message : "неизвестная ошибка"}`,
+      );
+    }
   });
 
   // /rating_off <amo_id> | /rating_on <amo_id> — keep non-selling accounts

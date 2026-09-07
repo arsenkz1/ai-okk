@@ -527,3 +527,21 @@ model AmoFieldOptionAddition {
   @@index([fieldId, revertedAt])
   @@index([createdAt])
 }
+
+/// Revenue-bearing stages discovered from amoCRM by /sync_stages.
+/// Pipelines are added and renamed in the CRM, so the list is synced rather
+/// than hardcoded; the webhook consults this table on every status change.
+model RevenueStage {
+  pipelineId   Int
+  statusId     Int
+  /// 'won' for a realized deal, 'partial' for a part-paid one.
+  kind         String
+  pipelineName String
+  statusName   String
+  syncedAt     DateTime @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  @@id([pipelineId, statusId])
+  @@index([kind])
+}
