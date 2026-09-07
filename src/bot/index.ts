@@ -39,6 +39,14 @@ import { registerPerformanceHandlers } from "./handlers/performance";
 import { formatDealSummaryReport } from "../services/dealSummaryReport";
 import { sendLongMessage } from "./longMessage";
 import { formatManagerDisplayName } from "../services/managerDisplayName";
+import { loadManagerPerformance } from "../services/performanceData";
+import {
+  aggregateTeamPerformance,
+  formatCallSection,
+  formatPlanSection,
+  formatRevenueSection,
+} from "../services/performanceReport";
+import { formatPhoenixMovements, loadPhoenixMovements } from "../services/phoenixMovementStats";
 import { installSafeTelegramSender } from "./safeTelegram";
 
 // ---------------------------------------------------------------------------
@@ -273,12 +281,35 @@ async function buildReport(
     .map(([s]) => `  • ${s}`)
     .join("\n");
 
-  return [
-    `📊 ${label} uchun hisobot`,
-    ``,
+  // Calls, revenue and plan come from the shared performance builder so the
+  // report shows the same numbers as the daily one, not a second version.
+  let performanceBlock: string[] = [
     `📞 Tahlil qilingan qo'ng'iroqlar: ${calls.length}`,
     `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
     `⭐ O'rtacha ball: ${avgScore}/100`,
+  ];
+  try {
+    const performance = (await loadManagerPerformance({
+      managerIds: [managerId],
+      range: { from: fromStart, to: toEnd },
+    })).get(managerId);
+    if (performance) {
+      performanceBlock = [
+        ...formatCallSection(performance.calls),
+        "",
+        ...formatRevenueSection(performance.revenue),
+        "",
+        ...formatPlanSection(performance.plan),
+      ];
+    }
+  } catch (error) {
+    console.error("[Report] Performance block unavailable:", error instanceof Error ? error.message : error);
+  }
+
+  return [
+    `📊 ${label} uchun hisobot`,
+    ``,
+    ...performanceBlock,
     topStrong ? `\n💪 Kuchli tomonlar:\n${topStrong}` : "",
     topWeak ? `\n⚠️ O'sish sohalari:\n${topWeak}` : "",
   ]
@@ -337,14 +368,46 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
 
   const managerCount = new Set(calls.map(c => c.managerId).filter(Boolean)).size;
 
-  return [
-    `📊 ${label} uchun umumiy hisobot`,
-    `Faqat tahlil qilingan qo'ng'iroqlar (6 daqiqadan uzun).`,
-    ``,
+  // The company block is the same one the daily report sends: calls with the
+  // connected/missed split, revenue, plan progress and Phoenix moves.
+  let companyBlock: string[] = [
     `👥 Menejerlar: ${managerCount} (jami ${calls.length} ta qo'ng'iroq)`,
     `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
     `⭐ O'rtacha ball: ${avgScore}/100`,
-    `\n📈 Menejerlar reytingi (o'rtacha ball / qo'ng'iroqlar soni):\n${mgrRating}`,
+  ];
+  try {
+    const sellers = await prisma.manager.findMany({
+      where: { isActive: true, excludeFromReports: false },
+      select: { id: true },
+    });
+    const performance = await loadManagerPerformance({
+      managerIds: sellers.map((seller) => seller.id),
+      range: { from: fromStart, to: toEnd },
+    });
+    let phoenixLines: string[] = [];
+    try {
+      phoenixLines = formatPhoenixMovements(await loadPhoenixMovements({ from: fromStart, to: toEnd }));
+    } catch (error) {
+      console.error("[Report] Phoenix block unavailable:", error instanceof Error ? error.message : error);
+    }
+    const team = aggregateTeamPerformance("Kompaniya", label, [...performance.values()], phoenixLines);
+    companyBlock = [
+      ...formatCallSection(team.calls),
+      "",
+      ...formatRevenueSection(team.revenue),
+      "",
+      ...formatPlanSection(team.plan),
+      ...(phoenixLines.length ? ["", ...phoenixLines] : []),
+    ];
+  } catch (error) {
+    console.error("[Report] Company block unavailable:", error instanceof Error ? error.message : error);
+  }
+
+  return [
+    `📊 ${label} uchun umumiy hisobot`,
+    ``,
+    ...companyBlock,
+    `\n📈 Menejerlar reytingi (o'rtacha ball / tahlil qilingan qo'ng'iroqlar):\n${mgrRating}`,
     topWeak ? `\n⚠️ Eng zaif kriteriyalar:\n${topWeak}` : "",
     excludedCalls > 0
       ? `\nℹ️ Reytingdan chiqarilgan hisoblar: ${excludedCalls} ta qo'ng'iroq hisobga olinmadi.`
@@ -569,43 +632,48 @@ bot.onText(/\/help$/, async (msg) => {
       msg.chat.id,
       `🔑 *Administrator buyruqlari*\n\n` +
         `*Menejerlar:*\n` +
-        "`/managers` - barcha menejerlar ro'yxati\n" +
-        "`/manager_ids` - amoID larni nusxalash uchun qulay ro'yxat\n" +
-        "`/sync_managers` - OnlinePBX dan sinxronlash va Google Sheet yangilash\n" +
+        "/managers - barcha menejerlar ro'yxati\n" +
+        "/manager_ids - amoID larni nusxalash uchun qulay ro'yxat\n" +
+        "/sync_managers - OnlinePBX dan sinxronlash va Google Sheet yangilash\n" +
         "`/reset_code <amo_id>` - menejer uchun yangi kod yaratish\n\n" +
         `*Administratorlar:*\n` +
-        "`/admins` - barcha administratorlarni ko'rish\n" +
+        "/admins - barcha administratorlarni ko'rish\n" +
         "`/add_admin <telegram_id>` - foydalanuvchini administrator qilish\n" +
         "`/remove_admin <telegram_id>` - administrator huquqlarini olish\n\n" +
         `*Qo'ng'iroqlar tahlili:*\n` +
         "`/analyze_deal <deal_id>` - bitim bo'yicha so'nggi qo'ng'iroqni tahlil qilish\n" +
-        "`/sync_history` - qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)\n\n" +
+        "/sync_history - qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)\n\n" +
         `*Hisobotlar (jamoa bo'yicha):*\n` +
-        "`/report` - bugungi hisobot\n" +
-        "`/week` - so'nggi 7 kun\n" +
-        "`/month` - joriy oy\n" +
-        "`/period` - ixtiyoriy sana oralig'i\n" +
-        "`/errors` - 30 kunlik zaif kriteriyalar\n" +
-        "`/team_stats` - qo'ng'iroq/tushum/reja hisoboti\n" +
+        "/report - bugungi hisobot\n" +
+        "/week - so'nggi 7 kun\n" +
+        "/month - joriy oy\n" +
+        "/period - ixtiyoriy sana oralig'i\n" +
+        "/errors - 30 kunlik zaif kriteriyalar\n" +
+        "/team_stats - qo'ng'iroq/tushum/reja hisoboti\n" +
         "`/deal <id>` - bitim bo'yicha ma'lumotnoma\n\n" +
         `*Rejalar:*\n` +
         "`/set_plan <amo_id> <summa> [YYYY-MM]` - oylik reja belgilash\n" +
         "`/plans [YYYY-MM]` - barcha rejalar\n\n" +
+        `*Hisobot sozlamalari:*\n` +
+        "/rating_list - kim reytingda, kim chiqarilgan\n" +
+        "`/rating_off <amo_id>` - reytingdan chiqarish (jamoa, HR, xizmat hisoblari)\n" +
+        "`/rating_on <amo_id>` - reytingga qaytarish\n" +
+        "`/call_status [kun]` - qo'ng'iroqlar nega tahlil qilinmadi\n\n" +
         `*ROP - reyting va analitika:*\n` +
-        "`/teams` - barcha jamoalar\n" +
-        "`/all_rating` - menejerlarning umumiy reytingi (7 kun)\n" +
-        "`/all_mistakes` - kompaniya bo'yicha xatolar\n" +
-        "`/rop_team_rating` - aniq jamoa reytingi\n" +
-        "`/rop_team_mistakes` - aniq jamoa xatolari\n" +
-        "`/rop_manager` - menejer kartasi\n" +
-        "`/rop_ask` - menejer haqida AI-savol\n\n" +
+        "/teams - barcha jamoalar\n" +
+        "/all_rating - menejerlarning umumiy reytingi (7 kun)\n" +
+        "/all_mistakes - kompaniya bo'yicha xatolar\n" +
+        "/rop_team_rating - aniq jamoa reytingi\n" +
+        "/rop_team_mistakes - aniq jamoa xatolari\n" +
+        "/rop_manager - menejer kartasi\n" +
+        "/rop_ask - menejer haqida AI-savol\n\n" +
         `*ROP - jamoa boshqaruvi:*\n` +
         "`/set_role <tg_id> <manager|teamlead|rop>` - rol tayinlash\n" +
         "`/set_teamlead <amo_id>` - jamoa yaratish va TL tayinlash\n" +
         "`/add_to_team <mgr_amo_id> <tl_amo_id>` - jamoaga qo'shish\n" +
         "`/remove_from_team <amo_id>` - jamoadan chiqarish\n" +
         "`/delete_team <team_id>` - jamoani butunlay o'chirish\n" +
-        "`/teams_list` - barcha jamoalar ro'yxati\n\n" +
+        "/teams_list - barcha jamoalar ro'yxati\n\n" +
         `*Intizom testi:*\n` +
         "`/test_restrict <tg_id>` - menejerni cheklash\n" +
         "`/test_restore <tg_id>` - menejerni tiklash\n" +
@@ -620,27 +688,27 @@ bot.onText(/\/help$/, async (msg) => {
       msg.chat.id,
       `👥 *TeamLead buyruqlari*\n\n` +
         `*Shaxsiy buyruqlar:*\n` +
-        "`/report` - bugungi hisobot\n" +
-        "`/week` - so'nggi 7 kun\n" +
-        "`/month` - joriy oy\n" +
-        "`/period` - ixtiyoriy sana oralig'i\n" +
-        "`/errors` - so'nggi 30 kunlik eng ko'p xatolar\n" +
-        "`/my_stats` - qo'ng'iroq/tushum/reja hisobotim\n" +
-        "`/team_stats` - jamoa hisoboti\n" +
+        "/report - bugungi hisobot\n" +
+        "/week - so'nggi 7 kun\n" +
+        "/month - joriy oy\n" +
+        "/period - ixtiyoriy sana oralig'i\n" +
+        "/errors - so'nggi 30 kunlik eng ko'p xatolar\n" +
+        "/my_stats - qo'ng'iroq/tushum/reja hisobotim\n" +
+        "/team_stats - jamoa hisoboti\n" +
         "`/deal <id>` - bitim bo'yicha ma'lumotnoma\n" +
-        "`/ask` - dialog rejimiga kirish (30 kun ma'lumotlari)\n" +
-        "`/ask_kun` - faqat bugungi ma'lumotlar\n" +
-        "`/ask_hafta` - 7 kunlik ma'lumotlar\n" +
-        "`/ask_oy` - joriy oy ma'lumotlari\n" +
-        "`/stop_ai` - AI-murabbiy rejimidan chiqish\n\n" +
+        "/ask - dialog rejimiga kirish (30 kun ma'lumotlari)\n" +
+        "/ask_kun - faqat bugungi ma'lumotlar\n" +
+        "/ask_hafta - 7 kunlik ma'lumotlar\n" +
+        "/ask_oy - joriy oy ma'lumotlari\n" +
+        "/stop_ai - AI-murabbiy rejimidan chiqish\n\n" +
         `*Jamoa buyruqlari:*\n` +
-        "`/team` - o'z jamoangizni ko'rish\n" +
-        "`/team_rating` - jamoa reytingi\n" +
-        "`/team_mistakes` - jamoa xatolari\n" +
-        "`/team_add` - menejerlarni jamoaga biriktirish\n" +
-        "`/team_remove` - menejerlarni jamoadan chiqarish\n" +
-        "`/team_manager` - jamoa menejeri kartasi\n" +
-        "`/ask_manager` - jamoa menejeri haqida AI-savol",
+        "/team - o'z jamoangizni ko'rish\n" +
+        "/team_rating - jamoa reytingi\n" +
+        "/team_mistakes - jamoa xatolari\n" +
+        "/team_add - menejerlarni jamoaga biriktirish\n" +
+        "/team_remove - menejerlarni jamoadan chiqarish\n" +
+        "/team_manager - jamoa menejeri kartasi\n" +
+        "/ask_manager - jamoa menejeri haqida AI-savol",
       { parse_mode: "Markdown" }
     );
     return;
@@ -651,21 +719,21 @@ bot.onText(/\/help$/, async (msg) => {
       msg.chat.id,
       `📋 *Mavjud buyruqlar*\n\n` +
         `*Hisobotlar:*\n` +
-        "`/report` - bugungi hisobot\n" +
-        "`/week` - so'nggi 7 kun\n" +
-        "`/month` - joriy oy\n" +
-        "`/period` - ixtiyoriy sana oralig'i\n\n" +
+        "/report - bugungi hisobot\n" +
+        "/week - so'nggi 7 kun\n" +
+        "/month - joriy oy\n" +
+        "/period - ixtiyoriy sana oralig'i\n\n" +
         `*Xatolar tahlili:*\n` +
-        "`/errors` - so'nggi 30 kunlik eng ko'p xatolar\n" +
-        "`/my_stats` - qo'ng'iroq/tushum/reja hisobotim\n" +
+        "/errors - so'nggi 30 kunlik eng ko'p xatolar\n" +
+        "/my_stats - qo'ng'iroq/tushum/reja hisobotim\n" +
         "`/deal <id>` - bitim bo'yicha ma'lumotnoma\n\n" +
         `*AI-murabbiy:*\n` +
-        "`/ask` - dialog rejimiga kirish (30 kun ma'lumotlari)\n" +
-        "`/ask_kun` - faqat bugungi ma'lumotlar\n" +
-        "`/ask_hafta` - 7 kunlik ma'lumotlar\n" +
-        "`/ask_oy` - joriy oy ma'lumotlari\n" +
+        "/ask - dialog rejimiga kirish (30 kun ma'lumotlari)\n" +
+        "/ask_kun - faqat bugungi ma'lumotlar\n" +
+        "/ask_hafta - 7 kunlik ma'lumotlar\n" +
+        "/ask_oy - joriy oy ma'lumotlari\n" +
         "`/ask <savol>` - savolni darhol berish\n" +
-        "`/stop_ai` - AI-murabbiy rejimidan chiqish",
+        "/stop_ai - AI-murabbiy rejimidan chiqish",
       { parse_mode: "Markdown" }
     );
     return;
