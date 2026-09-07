@@ -6,6 +6,11 @@ import {
   formatManagerPerformance,
   formatTeamPerformance,
 } from "../../services/performanceReport";
+import { formatPhoenixMovements, loadPhoenixMovements } from "../../services/phoenixMovementStats";
+import {
+  formatCallProcessingBreakdown,
+  loadCallProcessingBreakdown,
+} from "../../services/callProcessingStats";
 import {
   almatyPlanMonth,
   formatPlanMonth,
@@ -91,9 +96,18 @@ async function sendPerformance(
     return;
   }
 
+  // Phoenix moves are company-wide, not per manager, so they are loaded once
+  // for the range rather than aggregated from the member rows.
+  let phoenixLines: string[] = [];
+  try {
+    phoenixLines = formatPhoenixMovements(await loadPhoenixMovements({ from, to }));
+  } catch (error) {
+    console.error("[Performance] Phoenix movement stats unavailable:", error instanceof Error ? error.message : error);
+  }
+
   await bot.sendMessage(
     msg.chat.id,
-    formatTeamPerformance(aggregateTeamPerformance(title, label, [...performance.values()])),
+    formatTeamPerformance(aggregateTeamPerformance(title, label, [...performance.values()], phoenixLines)),
   );
 }
 
@@ -125,6 +139,22 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     }
 
     await sendPerformance(bot, msg, await teamManagerIdsOf(manager.id, manager.teamId), "Jamoa");
+  });
+
+  // /call_status [N] — why calls over the last N days were or were not analyzed.
+  bot.onText(/^\/call_status(?:\s+(\d{1,2}))?$/, async (msg, match) => {
+    if (!(await requirePlanEditor(bot, msg))) return;
+
+    const days = Math.min(Math.max(Number(match![1] ?? 1), 1), 30);
+    const to = new Date();
+    to.setHours(24, 0, 0, 0);
+    const from = new Date(to);
+    from.setDate(from.getDate() - days);
+
+    await bot.sendChatAction(msg.chat.id, "typing");
+    const breakdown = await loadCallProcessingBreakdown({ from, to });
+    const label = days === 1 ? "сегодня" : `последние ${days} дн.`;
+    await bot.sendMessage(msg.chat.id, formatCallProcessingBreakdown(breakdown, label));
   });
 
   // /set_plan <amo_user_id> <amount> [YYYY-MM]

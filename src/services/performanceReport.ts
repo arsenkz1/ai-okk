@@ -45,6 +45,8 @@ export interface TeamPerformance {
   calls: CallVolumeSection;
   revenue: RevenueSection;
   plan: PlanSection | null;
+  /** Rendered Phoenix block; omitted when the caller did not load it. */
+  phoenixLines?: readonly string[];
 }
 
 export function formatMoney(amount: number): string {
@@ -146,6 +148,8 @@ export function formatTeamPerformance(team: TeamPerformance): string {
     ...formatPlanSection(team.plan),
   ];
 
+  if (team.phoenixLines?.length) lines.push("", ...team.phoenixLines);
+
   if (team.members.length > 0) {
     lines.push("", "👤 Menejerlar:");
     // Strongest revenue first: the report is read top-down for who is carrying
@@ -185,6 +189,7 @@ export function aggregateTeamPerformance(
   title: string,
   periodLabel: string,
   members: readonly ManagerPerformance[],
+  phoenixLines?: readonly string[],
 ): TeamPerformance {
   const calls = emptyCallVolumeSection();
   const revenue = emptyRevenueSection();
@@ -213,5 +218,6 @@ export function aggregateTeamPerformance(
     calls,
     revenue,
     plan: hasPlan ? { target, achieved } : null,
+    ...(phoenixLines?.length ? { phoenixLines: [...phoenixLines] } : {}),
   };
 }

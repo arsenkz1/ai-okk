@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as tarStream from "tar-stream";
 import { prisma } from "../config/database";
+import { getPbxAuthProvider } from "./pbxAuth";
 import { callProcessingQueue } from "../queues/callProcessing";
 import type { OnlinePbxWebhookPayload } from "../queues/callProcessing";
 
@@ -154,11 +155,7 @@ export async function fetchPbxHistory(
   dateTo: Date,
   count = 500
 ): Promise<PbxHistoryRecord[]> {
-  const auth = process.env.ONLINEPBX_PBX_AUTH;
   const domain = process.env.ONLINEPBX_DOMAIN ?? "pbx18476.onpbx.ru";
-
-  if (!auth) throw new Error("ONLINEPBX_PBX_AUTH is not set");
-
   const url = `https://api2.onlinepbx.ru/${domain}/mongo_history/search.json`;
 
   console.log("[PbxHistory] Fetching metadata:", {
@@ -167,20 +164,24 @@ export async function fetchPbxHistory(
     count,
   });
 
-  await pbxLimiter.throttle();
-
-  const response = await axios.post(
-    url,
-    { date_from: toRfc2822(dateFrom), date_to: toRfc2822(dateTo), count },
-    {
-      headers: {
-        "x-pbx-authentication": auth,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      timeout: 30_000,
-    }
-  );
+  // An expired session key is renewed and the read retried once.
+  const response = await getPbxAuthProvider().withAuth(async (header) => {
+    await pbxLimiter.throttle();
+    const result = await axios.post(
+      url,
+      { date_from: toRfc2822(dateFrom), date_to: toRfc2822(dateTo), count },
+      {
+        headers: {
+          "x-pbx-authentication": header,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        timeout: 30_000,
+        validateStatus: () => true,
+      }
+    );
+    return { status: result.status, data: result.data };
+  });
 
   if (response.data?.status !== "1") {
     throw new Error(

@@ -2,6 +2,7 @@ import "dotenv/config";
 import axios from "axios";
 import { normalizeAmoCrmTenantBaseUrl } from "./amoCrmRateLimiter";
 import { recordDealRevenue } from "./dealRevenueRecorder";
+import { AMO_READ_MAX_ATTEMPTS, amoRetryDelayMs, isRetryableAmoStatus } from "./amoRetryPolicy";
 import { prisma } from "../config/database";
 import { markDealAsWon, markDealAsLost } from "./googleSheets";
 import { callProcessingQueue } from "../queues/callProcessing";
@@ -50,30 +51,55 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
 // ---------------------------------------------------------------------------
 // amoCRM request pacing is installed once by ./amoCrmRateLimiter. It is durable
 // across service replicas and governs every axios request to an amoCRM tenant.
+//
+// The limiter paces our own traffic, but it cannot prevent amoCRM answering 429
+// or 5xx anyway (other integrations share the account quota). Reads are
+// therefore retried: a transient failure during a deal lookup used to end as
+// "deal not found", and the call was skipped without analysis.
 // ---------------------------------------------------------------------------
 
-async function amoGet(path: string): Promise<any> {
-  try {
-    const r = await axios.get(`${AMO_BASE_URL}${path}`, { headers: amoHeaders() });
-    return r.data;
-  } catch (err: any) {
-    if (err?.response?.status === 403) {
-      console.error(`[AmoCRM] 403 Forbidden on GET ${path}`);
-      notifyAdmins(`⛔ amoCRM 403 Forbidden\nGET ${path}\nСкорее всего запросы заблокированы.`).catch(() => {});
-    }
-    throw err;
-  }
+function amoErrorStatus(err: any): number | null {
+  const status = Number(err?.response?.status);
+  return Number.isInteger(status) ? status : null;
 }
 
+function reportForbidden(method: string, path: string): void {
+  console.error(`[AmoCRM] 403 Forbidden on ${method} ${path}`);
+  notifyAdmins(`⛔ amoCRM 403 Forbidden\n${method} ${path}\nСкорее всего запросы заблокированы.`).catch(() => {});
+}
+
+async function amoGet(path: string): Promise<any> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= AMO_READ_MAX_ATTEMPTS; attempt++) {
+    try {
+      const r = await axios.get(`${AMO_BASE_URL}${path}`, { headers: amoHeaders() });
+      return r.data;
+    } catch (err: any) {
+      lastError = err;
+      const status = amoErrorStatus(err);
+      if (status === 403) {
+        reportForbidden("GET", path);
+        throw err;
+      }
+      if (attempt === AMO_READ_MAX_ATTEMPTS || !isRetryableAmoStatus(status)) throw err;
+      const delay = amoRetryDelayMs(attempt, err?.response?.headers?.["retry-after"]);
+      console.warn(`[AmoCRM] GET ${path} failed with ${status ?? "network error"}, retry ${attempt}/${AMO_READ_MAX_ATTEMPTS - 1} in ${delay}ms`);
+      await sleep(delay);
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Writes are never retried automatically: amoCRM may have applied a request
+ * whose response was lost, and a blind repeat would duplicate a note or a task.
+ */
 async function amoPost(path: string, data: unknown): Promise<any> {
   try {
     const r = await axios.post(`${AMO_BASE_URL}${path}`, data, { headers: amoHeaders() });
     return r.data;
   } catch (err: any) {
-    if (err?.response?.status === 403) {
-      console.error(`[AmoCRM] 403 Forbidden on POST ${path}`);
-      notifyAdmins(`⛔ amoCRM 403 Forbidden\nPOST ${path}\nСкорее всего запросы заблокированы.`).catch(() => {});
-    }
+    if (amoErrorStatus(err) === 403) reportForbidden("POST", path);
     throw err;
   }
 }

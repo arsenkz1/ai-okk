@@ -11,6 +11,7 @@ import { bot } from "./bot/index"; // запускает бот в режиме 
 import { runDisciplineCheck } from "./services/disciplineCheck";
 import { notifyAdmins, notifyAdminsWithFile } from "./bot/notify";
 import { sendFieldOptionBackup } from "./services/fieldOptionBackup";
+import { sendAdminDailyReport } from "./workers/adminDailyReport";
 import { runStartupChecks } from "./startup";
 import { createConfiguredLeadInactivityWebhookRouter } from "./services/leadInactivityWebhookRuntime";
 import { initializeConfiguredLeadInactivityActivation } from "./services/leadInactivityActivationRuntime";
@@ -133,6 +134,25 @@ cron.schedule(
       console.log("[Cron] Discipline check done:", r);
     } catch (err: any) {
       console.error("[Cron] Discipline check failed:", err.message);
+    }
+  },
+  { timezone: tz }
+);
+
+// Ежедневный отчёт всем администраторам в 09:00 (Asia/Almaty).
+// Это единственный регулярный отчёт для админов, кроме основного оператора,
+// поэтому он самодостаточен: звонки, поступления, план и переводы в Феникс.
+cron.schedule(
+  "0 9 * * *",
+  async () => {
+    console.log("[Cron] Sending admin daily report...");
+    try {
+      const result = await sendAdminDailyReport({
+        send: (text) => notifyAdmins(text, "all"),
+      });
+      console.log("[Cron] Admin daily report sent:", result);
+    } catch (err: any) {
+      console.error("[Cron] Admin daily report failed:", err.message);
     }
   },
   { timezone: tz }

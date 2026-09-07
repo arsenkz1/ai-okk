@@ -161,6 +161,7 @@ export function buildCallStageAdminAlert(
   ].join("\n\n");
 }
 
+/** Whether a deal moved is what every administrator asked to see. */
 export async function notifyCallStageAdmins(alert: CallStageAdminAlert): Promise<void> {
-  await notifyAdmins(buildCallStageAdminAlert(alert));
+  await notifyAdmins(buildCallStageAdminAlert(alert), "all");
 }

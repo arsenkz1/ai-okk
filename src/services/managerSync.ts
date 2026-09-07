@@ -1,5 +1,6 @@
 import "dotenv/config";
 import axios from "axios";
+import { getPbxAuthProvider } from "./pbxAuth";
 import { prisma } from "../config/database";
 import { writeManagersToSheet } from "./googleSheets";
 import {
@@ -85,26 +86,25 @@ export async function applyPilotDisciplineManagerConfig(): Promise<void> {
 
 async function fetchPbxUsersMapping(): Promise<PbxUserMapping[]> {
   const domain = process.env.ONLINEPBX_DOMAIN;
-  const auth = process.env.ONLINEPBX_PBX_AUTH;
+  if (!domain) throw new Error("ONLINEPBX_DOMAIN is not configured in .env");
 
-  if (!domain || !auth) {
-    throw new Error("ONLINEPBX_DOMAIN or ONLINEPBX_PBX_AUTH not configured in .env");
-  }
-
-  const r = await axios.post(
-    `https://api2.onlinepbx.ru/${domain}/amocrm/get.json`,
-    {},
-    {
-      headers: {
-        "x-pbx-authentication": auth,
-        accept: "application/json",
-      },
-      timeout: 15_000,
-    }
-  );
+  // The session key expires; withAuth mints a new one and retries once when
+  // OnlinePBX reports the current key as no longer valid.
+  const r = await getPbxAuthProvider().withAuth(async (header) => {
+    const response = await axios.post(
+      `https://api2.onlinepbx.ru/${domain}/amocrm/get.json`,
+      {},
+      {
+        headers: { "x-pbx-authentication": header, accept: "application/json" },
+        timeout: 15_000,
+        validateStatus: () => true,
+      }
+    );
+    return { status: response.status, data: response.data };
+  });
 
   const data = r.data;
-  if (data.status !== "1" || !Array.isArray(data.data?.usersMapping)) {
+  if (data?.status !== "1" || !Array.isArray(data.data?.usersMapping)) {
     throw new Error(`OnlinePBX API error: ${JSON.stringify(data)}`);
   }
 
