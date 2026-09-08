@@ -1,6 +1,7 @@
 import { prisma } from "../config/database";
 import { formatManagerDisplayName } from "./managerDisplayName";
 import { fetchCallVolumeForRange, emptyCallVolume, type ManagerCallVolume } from "./callVolumeStats";
+import { loadCallVolumeFromLog } from "./pbxCallLog";
 import { almatyPlanMonth, getManagerPlans, type PlanMonth } from "./salesPlan";
 import {
   emptyCallVolumeSection,
@@ -157,16 +158,30 @@ export async function loadManagerPerformance(
   const monthRange = almatyMonthRange(now);
 
   let volume: { byManager: Map<number, ManagerCallVolume>; possiblyTruncated: boolean };
+  let volumeUnavailable = false;
   try {
-    volume = options.loadCallVolume
-      ? await options.loadCallVolume(range, extensionToManagerId)
-      : await fetchCallVolumeForRange(range.from, range.to, extensionToManagerId);
+    if (options.loadCallVolume) {
+      volume = await options.loadCallVolume(range, extensionToManagerId);
+    } else {
+      // The webhook log needs no OnlinePBX credentials, so it is tried first;
+      // history covers periods recorded before the log existed.
+      const logged = await loadCallVolumeFromLog(range, extensionToManagerId);
+      volume = logged
+        ? { byManager: logged, possiblyTruncated: false }
+        : await fetchCallVolumeForRange(range.from, range.to, extensionToManagerId);
+    }
   } catch (error) {
     // Volume is the only externally-sourced block: a PBX outage must not take
-    // the revenue and plan sections down with it.
+    // the revenue and plan sections down with it. It is flagged rather than
+    // reported as zero, which would be a false statement.
     console.error("[Performance] Call volume unavailable:", error instanceof Error ? error.message : error);
     volume = { byManager: new Map(), possiblyTruncated: false };
+    volumeUnavailable = true;
   }
+
+  // No manager has an OnlinePBX extension, so nothing could be attributed even
+  // if the read succeeded.
+  if (!volumeUnavailable && extensionToManagerId.size === 0) volumeUnavailable = true;
 
   const [scores, revenue, plans] = await Promise.all([
     loadCallScores(managerIds, range),
@@ -187,6 +202,7 @@ export async function loadManagerPerformance(
       ? Math.round(managerScores.scoreSum / managerScores.analyzed)
       : null;
     if (volume.possiblyTruncated) calls.possiblyTruncated = true;
+    if (volumeUnavailable) calls.volumeUnavailable = true;
 
     result.set(manager.id, {
       managerName: formatManagerDisplayName(manager.name),

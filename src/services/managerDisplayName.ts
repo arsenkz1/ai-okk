@@ -8,14 +8,21 @@
  */
 
 /** Markers that describe the phone system rather than the person. */
-const SYSTEM_WORDS: ReadonlySet<string> = new Set(["pbx", "пбх", "onpbx"]);
+const SYSTEM_WORDS = "pbx|пбх|onpbx";
+
+/**
+ * A trailing token that names the phone system rather than the person. The
+ * marker and the extension are often glued together in one token — "100pbx",
+ * "пбх-134" — so the number is matched alongside the marker, not separately.
+ */
+const SYSTEM_TOKEN = new RegExp(`^(?:\\d{2,5}[-\\s]?)?(?:${SYSTEM_WORDS})(?:[-\\s]?\\d{2,5})?$`, "i");
 
 function isExtensionToken(token: string): boolean {
   return /^\d{2,5}$/.test(token);
 }
 
 function isSystemToken(token: string): boolean {
-  return SYSTEM_WORDS.has(token.toLocaleLowerCase("ru-RU"));
+  return SYSTEM_TOKEN.test(token.toLocaleLowerCase("ru-RU"));
 }
 
 /**

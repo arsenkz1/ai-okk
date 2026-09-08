@@ -161,3 +161,41 @@ test("renders an empty team without inventing members", () => {
   assert.equal(text.includes("👤 Menejerlar:"), false);
   assert.equal(text.includes("📞 Qo'ng'iroqlar: 0 (dozvon: 0 · nedozvon: 0)"), true);
 });
+
+test("says the call count could not be read instead of reporting zero", () => {
+  const lines = formatCallSection({ ...emptyCallVolumeSection(), analyzed: 245, avgScore: 72, volumeUnavailable: true });
+
+  // "0 calls" alongside "245 analyzed" is self-contradictory and untrue.
+  assert.equal(lines[0], "📞 Qo'ng'iroqlar soni: ma'lumot olinmadi (OnlinePBX javob bermadi)");
+  assert.equal(lines.some((line) => line.includes("dozvon: 0")), false);
+  assert.equal(lines.some((line) => line.includes("Suhbat vaqti")), false);
+  // The score still comes from the database and stays visible.
+  assert.equal(lines.at(-1), "⭐ O'rtacha ball: 72/100 (245 ta tahlil)");
+});
+
+test("shows a dash instead of 0/0 for a member whose volume is unknown", () => {
+  const text = formatTeamPerformance(aggregateTeamPerformance("Jamoa", "Kecha", [
+    {
+      managerName: "Aziza",
+      calls: { ...emptyCallVolumeSection(), analyzed: 3, avgScore: 72, volumeUnavailable: true },
+      revenue: emptyRevenueSection(),
+      plan: null,
+    },
+  ]));
+
+  assert.equal(text.includes("• Aziza: dozvon: — · ⭐ 72/100"), true);
+  assert.equal(text.includes("0/0 dozvon"), false);
+});
+
+test("propagates an unavailable volume from any member to the team", () => {
+  const team = aggregateTeamPerformance("Jamoa", "Kecha", [
+    { managerName: "A", calls: emptyCallVolumeSection(), revenue: emptyRevenueSection(), plan: null },
+    {
+      managerName: "B",
+      calls: { ...emptyCallVolumeSection(), volumeUnavailable: true },
+      revenue: emptyRevenueSection(),
+      plan: null,
+    },
+  ]);
+  assert.equal(team.calls.volumeUnavailable, true);
+});

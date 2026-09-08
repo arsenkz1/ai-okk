@@ -14,6 +14,11 @@ export interface CallVolumeSection {
   avgScore: number | null;
   /** True when the history page cap may have hidden part of the day. */
   possiblyTruncated?: boolean;
+  /**
+   * True when OnlinePBX could not be read at all. Distinguished from a real
+   * zero: reporting "0 calls" for an outage states something untrue.
+   */
+  volumeUnavailable?: boolean;
 }
 
 export interface RevenueSection {
@@ -74,10 +79,12 @@ export function emptyRevenueSection(): RevenueSection {
 }
 
 export function formatCallSection(calls: CallVolumeSection): string[] {
-  const lines = [
-    `📞 Qo'ng'iroqlar: ${calls.total} (dozvon: ${calls.connected} · nedozvon: ${calls.missed})`,
-    `⏱ Suhbat vaqti: ${formatTalkTime(calls.talkSeconds)}`,
-  ];
+  const lines = calls.volumeUnavailable
+    ? ["📞 Qo'ng'iroqlar soni: ma'lumot olinmadi (OnlinePBX javob bermadi)"]
+    : [
+      `📞 Qo'ng'iroqlar: ${calls.total} (dozvon: ${calls.connected} · nedozvon: ${calls.missed})`,
+      `⏱ Suhbat vaqti: ${formatTalkTime(calls.talkSeconds)}`,
+    ];
   lines.push(
     calls.avgScore !== null
       ? `⭐ O'rtacha ball: ${calls.avgScore}/100 (${calls.analyzed} ta tahlil)`
@@ -134,7 +141,12 @@ function memberLine(member: ManagerPerformance): string {
   const score = member.calls.avgScore !== null ? `${member.calls.avgScore}/100` : "—";
   const percent = planPercent(member.plan);
   const planPart = percent !== null ? ` · reja ${percent}%` : "";
-  return `• ${member.managerName}: ${member.calls.connected}/${member.calls.total} dozvon · ⭐ ${score} · 💰 ${formatMoney(member.revenue.wonAmount)}${planPart}`;
+  // "0/0 dozvon" would claim the manager made no calls; an unread PBX is not
+  // the same thing as a silent day.
+  const dozvon = member.calls.volumeUnavailable
+    ? "dozvon: —"
+    : `${member.calls.connected}/${member.calls.total} dozvon`;
+  return `• ${member.managerName}: ${dozvon} · ⭐ ${score} · 💰 ${formatMoney(member.revenue.wonAmount)}${planPart}`;
 }
 
 export function formatTeamPerformance(team: TeamPerformance): string {
@@ -171,6 +183,7 @@ function addCallSections(target: CallVolumeSection, source: CallVolumeSection): 
   target.talkSeconds += source.talkSeconds;
   target.analyzed += source.analyzed;
   if (source.possiblyTruncated) target.possiblyTruncated = true;
+  if (source.volumeUnavailable) target.volumeUnavailable = true;
 }
 
 function addRevenueSections(target: RevenueSection, source: RevenueSection): void {

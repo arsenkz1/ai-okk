@@ -545,3 +545,26 @@ model RevenueStage {
   @@id([pipelineId, statusId])
   @@index([kind])
 }
+
+/// Every call_end webhook OnlinePBX delivers, including calls too short to be
+/// analyzed. The call-processing pipeline stores only conversations over six
+/// minutes, so without this table "how many calls were there" can only be
+/// answered by re-reading the OnlinePBX history API — which fails whenever the
+/// session key lapses.
+model PbxCallLog {
+  uuid           String   @id
+  direction      String
+  internalNumber String?
+  externalNumber String?
+  startedAt      DateTime @db.Timestamptz(3)
+  /// Total call length including ringing.
+  callSeconds    Int
+  /// Talk time; zero means nobody answered.
+  talkSeconds    Int
+  hangupCause    String?
+  receivedAt     DateTime @db.Timestamptz(3)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([startedAt])
+  @@index([internalNumber, startedAt])
+}

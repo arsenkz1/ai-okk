@@ -3,6 +3,7 @@ import {
   callProcessingQueue,
   OnlinePbxWebhookPayload,
 } from "../queues/callProcessing";
+import { buildPbxCallLogEntry, recordPbxCallLog } from "../services/pbxCallLog";
 
 const router = Router();
 
@@ -88,6 +89,17 @@ router.post("/webhooks/onlinepbx/call-end", async (req, res) => {
   if (raw?.event === "test_webhook") {
     console.log(`[OnlinePBX] Test webhook from domain=${raw.domain}`);
     return res.status(200).json({ ok: true });
+  }
+
+  // Logged before any filtering: the report needs the short and unanswered
+  // calls that never reach the analysis pipeline. Best-effort, because losing a
+  // volume row must never cost OnlinePBX its 200.
+  const receivedAt = new Date();
+  const logEntry = buildPbxCallLogEntry(raw, receivedAt);
+  if (logEntry) {
+    recordPbxCallLog(logEntry, receivedAt).catch((err) =>
+      console.error("[OnlinePBX] Failed to log call volume:", err?.message ?? err)
+    );
   }
 
   const payload = normalizeOnlinePbxPayload(raw);

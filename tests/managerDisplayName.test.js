@@ -38,6 +38,13 @@ test("never reduces a name to nothing or to a bare number", () => {
   assert.equal(formatManagerDisplayName("   "), "");
 });
 
+test("strips a marker glued to the extension in one token", () => {
+  assert.equal(formatManagerDisplayName("Асқарбек пбх-134"), "Асқарбек");
+  assert.equal(formatManagerDisplayName("Сарвиноз. 100pbx"), "Сарвиноз");
+  assert.equal(formatManagerDisplayName("Firdavs 134pbx"), "Firdavs");
+  assert.equal(formatManagerDisplayName("Nodir pbx 120"), "Nodir");
+});
+
 test("collapses stray whitespace", () => {
   assert.equal(formatManagerDisplayName("Ali   Team   130   pbx"), "Ali Team");
 });
