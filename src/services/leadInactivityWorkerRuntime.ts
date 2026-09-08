@@ -56,8 +56,8 @@ function createProductionWorker(
     { inactivityMs },
   );
   const amo = createLeadInactivityAmoClient({ baseUrl, accessToken });
-  // A lead moving to the Phoenix pipeline is a deal move, so it reaches every
-  // administrator rather than only the operator.
+  // The one notification every administrator receives: a lead moving into the
+  // Phoenix pipeline. Everything else is operator-only.
   return createLeadInactivityWorker({
     store,
     amo,

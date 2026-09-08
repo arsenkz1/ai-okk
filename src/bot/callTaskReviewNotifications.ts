@@ -84,21 +84,17 @@ function configuredAdminId(): string | null {
   return value || null;
 }
 
-export async function listCallTaskReviewerIds(database: CallTaskReviewerDatabase = prisma): Promise<string[]> {
-  const [admins, rops] = await Promise.all([
-    database.botAdmin.findMany({ select: { telegramUserId: true } }),
-    database.telegramLink.findMany({
-      where: { status: "used", manager: { isActive: true, role: "ROP" } },
-      select: { telegramUserId: true },
-    }),
-  ]);
-  const result = new Set<string>();
+/**
+ * Both the approval card and the test results go to ADMIN_TELEGRAM_ID only.
+ * Other administrators and ROPs keep the right to act on a card (see
+ * isCallTaskReviewer) but are no longer notified: these messages are operator
+ * traffic, not the deal-move alerts every administrator asked for.
+ */
+export async function listCallTaskReviewerIds(
+  _database: CallTaskReviewerDatabase = prisma,
+): Promise<string[]> {
   const configured = configuredAdminId();
-  if (configured) result.add(configured);
-  for (const item of [...admins, ...rops]) {
-    if (item.telegramUserId) result.add(item.telegramUserId);
-  }
-  return [...result];
+  return configured ? [configured] : [];
 }
 
 export async function isCallTaskReviewer(

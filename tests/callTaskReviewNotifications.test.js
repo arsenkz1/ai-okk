@@ -5,6 +5,8 @@ const {
   buildCallTaskProposalKeyboard,
   buildCallTaskProposalText,
   parseCallTaskReviewCallback,
+  listCallTaskReviewerIds,
+  isCallTaskReviewer,
 } = require("../dist/bot/callTaskReviewNotifications");
 
 const action = {
@@ -40,4 +42,53 @@ test("only known signed-shape call-task callback payloads are accepted", () => {
   });
   assert.equal(parseCallTaskReviewCallback("cta:bad:today_18"), null);
   assert.equal(parseCallTaskReviewCallback("cta:AbCdEfGhIjKlMnOp:delete_everything"), null);
+});
+
+// A database that would have supplied extra recipients under the old rule.
+const noisyDatabase = {
+  botAdmin: {
+    async findMany() { return [{ telegramUserId: "222" }, { telegramUserId: "333" }]; },
+    async findUnique({ where }) {
+      return ["222", "333"].includes(where.telegramUserId) ? { telegramUserId: where.telegramUserId } : null;
+    },
+  },
+  telegramLink: {
+    async findMany() { return [{ telegramUserId: "444" }]; },
+    async findFirst() { return { telegramUserId: "444" }; },
+  },
+};
+
+test("sends approval cards and test results to ADMIN_TELEGRAM_ID only", async () => {
+  const previous = process.env.ADMIN_TELEGRAM_ID;
+  process.env.ADMIN_TELEGRAM_ID = "111";
+  try {
+    // Other administrators and ROPs are no longer notified.
+    assert.deepEqual(await listCallTaskReviewerIds(noisyDatabase), ["111"]);
+  } finally {
+    if (previous === undefined) delete process.env.ADMIN_TELEGRAM_ID;
+    else process.env.ADMIN_TELEGRAM_ID = previous;
+  }
+});
+
+test("sends nothing rather than to everyone when no admin id is configured", async () => {
+  const previous = process.env.ADMIN_TELEGRAM_ID;
+  delete process.env.ADMIN_TELEGRAM_ID;
+  try {
+    assert.deepEqual(await listCallTaskReviewerIds(noisyDatabase), []);
+  } finally {
+    if (previous !== undefined) process.env.ADMIN_TELEGRAM_ID = previous;
+  }
+});
+
+test("still lets an admin or ROP act on a card they were handed", async () => {
+  const previous = process.env.ADMIN_TELEGRAM_ID;
+  process.env.ADMIN_TELEGRAM_ID = "111";
+  try {
+    // Narrowing who is notified must not revoke anyone's right to approve.
+    assert.equal(await isCallTaskReviewer("111", noisyDatabase), true);
+    assert.equal(await isCallTaskReviewer("222", noisyDatabase), true);
+  } finally {
+    if (previous === undefined) delete process.env.ADMIN_TELEGRAM_ID;
+    else process.env.ADMIN_TELEGRAM_ID = previous;
+  }
 });

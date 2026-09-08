@@ -161,7 +161,7 @@ export function buildCallStageAdminAlert(
   ].join("\n\n");
 }
 
-/** Whether a deal moved is what every administrator asked to see. */
+/** Operator-only: administrators receive Phoenix moves and nothing else. */
 export async function notifyCallStageAdmins(alert: CallStageAdminAlert): Promise<void> {
-  await notifyAdmins(buildCallStageAdminAlert(alert), "all");
+  await notifyAdmins(buildCallStageAdminAlert(alert));
 }
