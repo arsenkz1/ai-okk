@@ -9,6 +9,7 @@ import {
 } from "./leadInactivityDelay";
 import { createLeadInactivityStore, type LeadInactivityStore } from "./leadInactivityStore";
 import { createLeadInactivityWebhookProcessor } from "./leadInactivityWebhook";
+import { isInactivityMovementPaused } from "./inactivityMovementSwitch";
 
 export type LeadInactivityEnvironment = Record<string, string | undefined>;
 
@@ -46,6 +47,10 @@ export function createConfiguredLeadInactivityWebhookRouter(
     createPrismaLeadInactivityPersistence(prisma),
     { inactivityMs },
   );
-  const processor = createLeadInactivityWebhookProcessor({ amo, store });
+  const processor = createLeadInactivityWebhookProcessor({
+    amo,
+    store,
+    isMovementStopped: () => isInactivityMovementPaused(),
+  });
   return createLeadInactivityWebhookRouter({ secret, processor });
 }

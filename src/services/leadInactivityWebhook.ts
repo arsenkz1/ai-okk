@@ -25,6 +25,8 @@ export interface CreateLeadInactivityWebhookProcessorOptions {
   amo: Pick<LeadInactivityAmoClient, "readLead">;
   store: Pick<LeadInactivityStore, "recordLeadEvent">;
   now?: () => Date;
+  /** Durable operator stop; when it reports true, events are dropped. */
+  isMovementStopped?: () => Promise<boolean>;
 }
 
 export interface ProtectedLeadInactivityWebhookRequest {
@@ -181,6 +183,13 @@ export function createLeadInactivityWebhookProcessor(
       const receivedAt = now();
       const events = parseLeadInactivityWebhookEvents(body, receivedAt);
       const result: LeadInactivityWebhookProcessorResult = { accepted: 0, ignored: 0, duplicates: 0, requiresFreshRead: 0 };
+
+      // A stopped worker must not accumulate a hidden queue: while the switch
+      // is off, touches are acknowledged to amoCRM but never recorded.
+      if (options.isMovementStopped && await options.isMovementStopped()) {
+        result.ignored = events.length;
+        return result;
+      }
 
       for (const event of events) {
         const lead = await options.amo.readLead(event.leadId);

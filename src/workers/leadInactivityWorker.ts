@@ -104,6 +104,8 @@ export interface LeadInactivityWorkerAmoClient {
 }
 
 export interface LeadInactivityWorkerResult {
+  /** True when the operator switch stopped the pass before any claim. */
+  paused?: boolean;
   scanned: number;
   claimed: number;
   moved: number;
@@ -119,6 +121,12 @@ export interface LeadInactivityWorker {
 export interface CreateLeadInactivityWorkerOptions {
   store: LeadInactivityWorkerStore;
   amo: LeadInactivityWorkerAmoClient;
+  /**
+   * Durable operator stop, read on every pass. When it reports stopped the pass
+   * claims nothing; the queue itself is cleared by the stop command, so there is
+   * nothing here to resume later.
+   */
+  isMovementPaused?: () => Promise<boolean>;
   notifyAdmins?: (text: string) => Promise<void>;
   testingMode?: boolean;
   clock?: () => Date;
@@ -438,6 +446,11 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
       const runLeaseToken = randomId();
       if (!await options.store.tryAcquireWorkerRunLease(runLeaseToken, now)) return result;
       try {
+        // Checked first, before leases are released or slots are ensured: a
+        // stopped worker must leave the durable state exactly as it found it.
+        if (options.isMovementPaused && await options.isMovementPaused()) {
+          return { ...result, paused: true };
+        }
         if (!testingMode && !await options.store.isProductionBaselineComplete()) {
           throw new Error("unrestricted production movement is blocked: durable production baseline is not complete");
         }

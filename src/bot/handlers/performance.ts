@@ -14,6 +14,12 @@ import {
 } from "../../services/callProcessingStats";
 import { fetchAllPipelines } from "../../services/amocrm";
 import { formatRevenueStageSync, syncRevenueStages } from "../../services/revenueStageSync";
+import { formatInactivityStatus, loadInactivityStatus } from "../../services/inactivityStatus";
+import {
+  formatInactivityMovementSwitch,
+  getInactivityMovementSwitch,
+  setInactivityMovementPaused,
+} from "../../services/inactivityMovementSwitch";
 import {
   almatyPlanMonth,
   formatPlanMonth,
@@ -145,6 +151,32 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     }
 
     await sendPerformance(bot, msg, await teamManagerIdsOf(manager.id, manager.teamId), "Jamoa");
+  });
+
+  // /inactivity_on | /inactivity_off — durable pause switch for Phoenix moves.
+  // Takes effect on the next worker pass (within a minute), no redeploy needed.
+  bot.onText(/^\/inactivity_(on|off)$/, async (msg, match) => {
+    if (!(await requirePlanEditor(bot, msg))) return;
+    const paused = match![1] === "off";
+    const state = await setInactivityMovementPaused(paused, String(msg.from!.id));
+    await bot.sendMessage(msg.chat.id, formatInactivityMovementSwitch(state));
+  });
+
+  // /inactivity_switch — current state of the pause switch alone.
+  bot.onText(/^\/inactivity_switch$/, async (msg) => {
+    if (!(await requirePlanEditor(bot, msg))) return;
+    await bot.sendMessage(msg.chat.id, formatInactivityMovementSwitch(await getInactivityMovementSwitch()));
+  });
+
+  // /inactivity_status — why the Phoenix worker is or is not moving leads.
+  bot.onText(/^\/inactivity_status$/, async (msg) => {
+    if (!(await requirePlanEditor(bot, msg))) return;
+    await bot.sendChatAction(msg.chat.id, "typing");
+    try {
+      await bot.sendMessage(msg.chat.id, formatInactivityStatus(await loadInactivityStatus()));
+    } catch (error) {
+      await bot.sendMessage(msg.chat.id, `❌ Не удалось прочитать состояние: ${error instanceof Error ? error.message : "ошибка"}`);
+    }
   });
 
   // /sync_stages — discover the revenue stages of every amoCRM pipeline.

@@ -656,7 +656,10 @@ bot.onText(/\/help$/, async (msg) => {
         "/rating_off <amo_id> - reytingdan chiqarish (jamoa, HR, xizmat hisoblari)\n" +
         "/rating_on <amo_id> - reytingga qaytarish\n" +
         "/call_status [kun] - qo'ng'iroqlar nega tahlil qilinmadi\n" +
-        "/sync_stages - amoCRM voronkalaridan tushum bosqichlarini sinxronlash\n\n" +
+        "/sync_stages - amoCRM voronkalaridan tushum bosqichlarini sinxronlash\n" +
+        "/inactivity_status - Feniks vorkeri nega ishlamayapti\n" +
+        "/inactivity_off - Feniksga ko'chirishni to'liq to'xtatish (navbat tozalanadi)\n" +
+        "/inactivity_on - Feniksga ko'chirishni yoqish\n\n" +
         `ROP - reyting va analitika:\n` +
         "/teams - barcha jamoalar\n" +
         "/all_rating - menejerlarning umumiy reytingi (7 kun)\n" +
