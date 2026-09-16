@@ -19,6 +19,11 @@ export const INACTIVITY_MOVEMENT_PAUSED_SETTING_KEY = "lead_inactivity.movement_
 
 export interface InactivityMovementSwitchState {
   paused: boolean;
+  /**
+   * True once the operator has switched moves on through the bot: from then on
+   * the 100-per-day cap no longer applies. Never set by anything else.
+   */
+  dailyCapDisabled: boolean;
   /** Who flipped it and when; null when it has never been touched. */
   changedBy: string | null;
   changedAt: Date | null;
@@ -26,24 +31,29 @@ export interface InactivityMovementSwitchState {
 
 interface StoredSwitch {
   paused: boolean;
+  dailyCapDisabled?: boolean;
   changedBy: string | null;
   changedAt: string;
 }
 
+const UNTOUCHED: InactivityMovementSwitchState = { paused: false, dailyCapDisabled: false, changedBy: null, changedAt: null };
+
 function parseStored(raw: string | null): InactivityMovementSwitchState {
-  if (!raw) return { paused: false, changedBy: null, changedAt: null };
+  if (!raw) return UNTOUCHED;
   try {
     const parsed = JSON.parse(raw) as Partial<StoredSwitch>;
     const changedAt = typeof parsed.changedAt === "string" ? new Date(parsed.changedAt) : null;
     return {
       paused: parsed.paused === true,
+      dailyCapDisabled: parsed.dailyCapDisabled === true,
       changedBy: typeof parsed.changedBy === "string" ? parsed.changedBy : null,
       changedAt: changedAt && !Number.isNaN(changedAt.getTime()) ? changedAt : null,
     };
   } catch {
-    // A corrupt value must fail towards "running": a paused worker that cannot
-    // be un-paused is worse than one that keeps its agreed behaviour.
-    return { paused: false, changedBy: null, changedAt: null };
+    // A corrupt value must fail towards "running with the cap": a paused worker
+    // that cannot be un-paused is worse than one that keeps its agreed
+    // behaviour, and the cap is the conservative side of that behaviour.
+    return UNTOUCHED;
   }
 }
 
@@ -105,6 +115,12 @@ export async function isInactivityMovementPaused(
   return (await getInactivityMovementSwitch(database)).paused;
 }
 
+export async function isInactivityDailyCapDisabled(
+  database: InactivityMovementSwitchDatabase = prisma,
+): Promise<boolean> {
+  return (await getInactivityMovementSwitch(database)).dailyCapDisabled;
+}
+
 export interface SetInactivityMovementResult extends InactivityMovementSwitchState {
   /** Watches cleared by a stop; always 0 when turning on. */
   clearedWatches: number;
@@ -121,7 +137,15 @@ export async function setInactivityMovementPaused(
   database: InactivityMovementSwitchDatabase = prisma,
   now = new Date(),
 ): Promise<SetInactivityMovementResult> {
-  const stored: StoredSwitch = { paused, changedBy, changedAt: now.toISOString() };
+  // Switching on through the bot is what lifts the daily cap; switching off
+  // leaves that decision as it was, so a later "on" does not need re-arming.
+  const previous = await getInactivityMovementSwitch(database);
+  const stored: StoredSwitch = {
+    paused,
+    dailyCapDisabled: paused ? previous.dailyCapDisabled : true,
+    changedBy,
+    changedAt: now.toISOString(),
+  };
   const value = JSON.stringify(stored);
   await database.leadInactivitySetting.upsert({
     where: { key: INACTIVITY_MOVEMENT_PAUSED_SETTING_KEY },
@@ -129,7 +153,7 @@ export async function setInactivityMovementPaused(
     create: { key: INACTIVITY_MOVEMENT_PAUSED_SETTING_KEY, value },
   });
   const clearedWatches = paused ? await clearActiveInactivityWatches(database, now) : 0;
-  return { paused, changedBy, changedAt: now, clearedWatches };
+  return { paused, dailyCapDisabled: stored.dailyCapDisabled === true, changedBy, changedAt: now, clearedWatches };
 }
 
 function formatAlmaty(value: Date): string {
@@ -156,5 +180,6 @@ export function formatInactivityMovementSwitch(
     const cleared = state.clearedWatches !== undefined ? ` Снято с отслеживания лидов: ${state.clearedWatches}.` : "";
     return `⛔ Переводы в Феникс ОСТАНОВЛЕНЫ${who}.${cleared} Новые касания не отслеживаются. Включение начнёт отсчёт заново.`;
   }
-  return `▶️ Переводы в Феникс включены${who}. Лиды берутся под наблюдение со следующего касания.`;
+  const cap = state.dailyCapDisabled ? " Суточный лимит снят." : "";
+  return `▶️ Переводы в Феникс включены${who}.${cap} Лиды берутся под наблюдение со следующего касания.`;
 }

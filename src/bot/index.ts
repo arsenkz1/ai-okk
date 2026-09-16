@@ -659,7 +659,7 @@ bot.onText(/\/help$/, async (msg) => {
         "/sync_stages - amoCRM voronkalaridan tushum bosqichlarini sinxronlash\n" +
         "/inactivity_status - Feniks vorkeri nega ishlamayapti\n" +
         "/inactivity_off - Feniksga ko'chirishni to'liq to'xtatish (navbat tozalanadi)\n" +
-        "/inactivity_on - Feniksga ko'chirishni yoqish\n\n" +
+        "/inactivity_on - yoqish va 7 kun tegilmagan lidlarni ko'chirishni taklif qilish\n\n" +
         `ROP - reyting va analitika:\n` +
         "/teams - barcha jamoalar\n" +
         "/all_rating - menejerlarning umumiy reytingi (7 kun)\n" +

@@ -8,7 +8,7 @@ import {
   resolveTestingLeadMovementMode,
 } from "./leadInactivityDelay";
 import { createLeadInactivityStore } from "./leadInactivityStore";
-import { isInactivityMovementPaused } from "./inactivityMovementSwitch";
+import { isInactivityDailyCapDisabled, isInactivityMovementPaused } from "./inactivityMovementSwitch";
 import {
   createLeadInactivityWorker,
   LEAD_INACTIVITY_WORKER_INTERVAL_MS,
@@ -63,6 +63,7 @@ function createProductionWorker(
     store,
     amo,
     isMovementPaused: () => isInactivityMovementPaused(),
+    isDailyCapDisabled: () => isInactivityDailyCapDisabled(),
     notifyAdmins: (text) => notifyAdmins(text, "all"),
     testingMode,
   });

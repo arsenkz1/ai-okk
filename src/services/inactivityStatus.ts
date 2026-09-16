@@ -22,6 +22,8 @@ export interface InactivityStatusSnapshot {
   workerEnabled: boolean;
   /** Operator pause switch; independent of the environment flag. */
   movementPaused: boolean;
+  /** True once the operator switched moves on: the 100-per-day cap is off. */
+  dailyCapDisabled: boolean;
   /** null when the mode variable is missing or malformed. */
   testingMode: boolean | null;
   activationBoundary: Date | null;
@@ -97,6 +99,7 @@ export async function loadInactivityStatus(
   return {
     workerEnabled,
     movementPaused: movementSwitch.paused,
+    dailyCapDisabled: movementSwitch.dailyCapDisabled,
     testingMode,
     activationBoundary,
     baselineComplete: setting(PRODUCTION_BASELINE_COMPLETED_SETTING_KEY) !== null,
@@ -140,7 +143,7 @@ export function diagnoseInactivity(status: InactivityStatusSnapshot): string | n
   if ((status.watchesByState.uncertain ?? 0) > 0) {
     return `Есть ${status.watchesByState.uncertain} лидов в состоянии uncertain — они выпали из очереди навсегда, и любой uncertain обрывает проход. Требуется ручной разбор.`;
   }
-  if (status.dailyLimit !== null && status.dailyUsed >= status.dailyLimit) {
+  if (!status.dailyCapDisabled && status.dailyLimit !== null && status.dailyUsed >= status.dailyLimit) {
     return `Суточный лимит исчерпан: ${status.dailyUsed}/${status.dailyLimit}. Очередь возобновится в 14:00 по Алматы.`;
   }
   if ((status.watchesByState.watching ?? 0) === 0) {
@@ -190,9 +193,11 @@ export function formatInactivityStatus(status: InactivityStatusSnapshot): string
     ...states.map((state) => `• ${state}: ${status.watchesByState[state] ?? 0}`),
     `• к переводу прямо сейчас: ${status.dueNow}`,
     "",
-    status.dailyBucket
-      ? `Суточный лимит (${status.dailyBucket}): ${status.dailyUsed}/${status.dailyLimit}`
-      : "Суточный лимит: операционная дата не задана",
+    status.dailyCapDisabled
+      ? `Суточный лимит: снят оператором (за сегодня переведено ${status.dailyUsed})`
+      : status.dailyBucket
+        ? `Суточный лимит (${status.dailyBucket}): ${status.dailyUsed}/${status.dailyLimit}`
+        : "Суточный лимит: операционная дата не задана",
     "",
     "За последние 24 часа:",
     ...(Object.keys(status.auditsLast24h).length

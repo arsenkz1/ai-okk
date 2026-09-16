@@ -39,7 +39,7 @@ function fakeDatabase(initial = null, watches = []) {
 
 test("defaults to running when the switch has never been touched", async () => {
   const database = fakeDatabase();
-  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: false, changedBy: null, changedAt: null });
+  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: false, dailyCapDisabled: false, changedBy: null, changedAt: null });
   assert.equal(await isInactivityMovementPaused(database), false);
 });
 
@@ -48,9 +48,9 @@ test("records who paused it and when, and reads it back", async () => {
   const at = new Date("2026-09-15T05:00:00.000Z");
   const state = await setInactivityMovementPaused(true, "295612129", database, at);
 
-  assert.deepEqual(state, { paused: true, changedBy: "295612129", changedAt: at, clearedWatches: 0 });
+  assert.deepEqual(state, { paused: true, dailyCapDisabled: false, changedBy: "295612129", changedAt: at, clearedWatches: 0 });
   // Reading back returns the stored state; the cleared count is per-operation.
-  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: true, changedBy: "295612129", changedAt: at });
+  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: true, dailyCapDisabled: false, changedBy: "295612129", changedAt: at });
   assert.equal(await isInactivityMovementPaused(database), true);
 });
 
@@ -164,4 +164,49 @@ test("a running switch lets the pass proceed as before", async () => {
 
   assert.equal(result.paused, undefined);
   assert.equal(calls.includes("listDue"), true, "the queue was actually scanned");
+});
+
+test("switching on lifts the daily cap; switching off keeps that decision", async () => {
+  const database = fakeDatabase();
+  const on = await setInactivityMovementPaused(false, "111", database);
+  assert.equal(on.dailyCapDisabled, true);
+  const off = await setInactivityMovementPaused(true, "111", database);
+  assert.equal(off.dailyCapDisabled, true, "a stop does not re-arm the cap");
+  assert.equal((await getInactivityMovementSwitch(database)).dailyCapDisabled, true);
+});
+
+test("an untouched or corrupt switch keeps the daily cap on", async () => {
+  assert.equal((await getInactivityMovementSwitch(fakeDatabase())).dailyCapDisabled, false);
+  assert.equal((await getInactivityMovementSwitch(fakeDatabase("garbage"))).dailyCapDisabled, false);
+});
+
+test("with the cap lifted the worker reserves no daily slots and never returns early", async () => {
+  const { calls, store } = trackingStore();
+  store.hasDailyMovementCapacity = async () => { calls.push("hasCapacity"); return false; }; // a "full" day
+  const worker = createLeadInactivityWorker({
+    store,
+    amo: { async readLead() { throw new Error("unused"); }, async readLeadHistory() { throw new Error("unused"); }, async moveLeadToTarget() { throw new Error("unused"); } },
+    isMovementPaused: async () => false,
+    isDailyCapDisabled: async () => true,
+    testingMode: false,
+  });
+
+  await worker.runOnce();
+
+  assert.equal(calls.includes("ensureDaily"), false);
+  assert.equal(calls.includes("hasCapacity"), false, "a full day must not stop an uncapped pass");
+  assert.equal(calls.includes("listDue"), true);
+});
+
+test("the cap cannot be lifted in testing mode", async () => {
+  const { calls, store } = trackingStore();
+  const worker = createLeadInactivityWorker({
+    store,
+    amo: { async readLead() { throw new Error("unused"); }, async readLeadHistory() { throw new Error("unused"); }, async moveLeadToTarget() { throw new Error("unused"); } },
+    isMovementPaused: async () => false,
+    isDailyCapDisabled: async () => true,
+    testingMode: true,
+  });
+  await worker.runOnce();
+  assert.equal(calls.includes("ensureTestSlots"), true, "the five-slot test cap still applies");
 });

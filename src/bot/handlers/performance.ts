@@ -18,8 +18,18 @@ import { formatInactivityStatus, loadInactivityStatus } from "../../services/ina
 import {
   formatInactivityMovementSwitch,
   getInactivityMovementSwitch,
+  isInactivityMovementPaused,
   setInactivityMovementPaused,
 } from "../../services/inactivityMovementSwitch";
+import {
+  buildSweepKeyboard,
+  createSweepConfirmationService,
+  formatSweepDecision,
+  formatSweepProposal,
+  parseSweepCallback,
+} from "../../services/inactivitySweepConfirmation";
+import { createLeadInactivityAmoClient } from "../../services/leadInactivityAmoClient";
+import { notifyAdmins } from "../notify";
 import {
   almatyPlanMonth,
   formatPlanMonth,
@@ -153,13 +163,90 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     await sendPerformance(bot, msg, await teamManagerIdsOf(manager.id, manager.teamId), "Jamoa");
   });
 
-  // /inactivity_on | /inactivity_off — durable pause switch for Phoenix moves.
-  // Takes effect on the next worker pass (within a minute), no redeploy needed.
-  bot.onText(/^\/inactivity_(on|off)$/, async (msg, match) => {
+  // The amoCRM client is only needed for the sweep and only when the worker is
+  // configured; built lazily so a bot without those credentials still starts.
+  let sweepService: ReturnType<typeof createSweepConfirmationService> | null = null;
+  const getSweepService = () => {
+    if (sweepService) return sweepService;
+    const baseUrl = process.env.AMOCRM_BASE_URL?.trim();
+    const accessToken = process.env.AMOCRM_ACCESS_TOKEN?.trim();
+    if (!baseUrl || !accessToken) return null;
+    const amo = createLeadInactivityAmoClient({ baseUrl, accessToken });
+    sweepService = createSweepConfirmationService({
+      listEligibleLeads: () => amo.listAllowedSourceStageLeads(),
+      moveLeadToTarget: (leadId, target) => amo.moveLeadToTarget(leadId, target),
+      isStopped: () => isInactivityMovementPaused(),
+      onMoved: (candidate) => notifyAdmins(
+        ["✅ Перемещение по неактивности", `Сделка: #${candidate.leadId}`].join("\n"),
+        "all",
+      ),
+    });
+    return sweepService;
+  };
+
+  // /inactivity_off — full stop: clears the queue, webhooks record nothing.
+  bot.onText(/^\/inactivity_off$/, async (msg) => {
     if (!(await requirePlanEditor(bot, msg))) return;
-    const paused = match![1] === "off";
-    const state = await setInactivityMovementPaused(paused, String(msg.from!.id));
+    const state = await setInactivityMovementPaused(true, String(msg.from!.id));
     await bot.sendMessage(msg.chat.id, formatInactivityMovementSwitch(state));
+  });
+
+  // /inactivity_on — switch on, then offer to sweep every lead already idle
+  // for 7 days. The sweep itself waits for an explicit yes from this operator;
+  // afterwards the worker runs on its usual 72-hour rule.
+  bot.onText(/^\/inactivity_on$/, async (msg) => {
+    if (!(await requirePlanEditor(bot, msg))) return;
+    const requestedBy = String(msg.from!.id);
+    const state = await setInactivityMovementPaused(false, requestedBy);
+
+    const service = getSweepService();
+    if (!service) {
+      await bot.sendMessage(msg.chat.id, `${formatInactivityMovementSwitch(state)}\n\n⚠️ amoCRM не настроен — массовый перенос недоступен.`);
+      return;
+    }
+
+    await bot.sendChatAction(msg.chat.id, "typing");
+    try {
+      const started = await service.start(requestedBy);
+      if (started.kind === "nothing_to_move") {
+        await bot.sendMessage(
+          msg.chat.id,
+          `${formatInactivityMovementSwitch(state)}\n\nЛидов без касаний 7 дней и дольше нет (проверено: ${started.scanned}).`,
+        );
+        return;
+      }
+      await bot.sendMessage(msg.chat.id, formatSweepProposal(started.pending, started.scanned), {
+        reply_markup: buildSweepKeyboard(started.pending.token),
+      });
+    } catch (error) {
+      await bot.sendMessage(
+        msg.chat.id,
+        `${formatInactivityMovementSwitch(state)}\n\n❌ Не удалось получить список лидов из amoCRM: ${error instanceof Error ? error.message : "ошибка"}`,
+      );
+    }
+  });
+
+  bot.on("callback_query", async (query) => {
+    const callback = parseSweepCallback(query.data);
+    if (!callback) return;
+    const chatId = query.message?.chat.id;
+    const service = getSweepService();
+    if (!service || !chatId) {
+      await bot.answerCallbackQuery(query.id, { text: "Недоступно" });
+      return;
+    }
+
+    await bot.answerCallbackQuery(query.id);
+    // Clear the buttons first so a slow sweep cannot be re-tapped mid-run.
+    await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: query.message!.message_id }).catch(() => {});
+    if (callback.decision === "yes") await bot.sendMessage(chatId, "⏳ Переношу лиды в Феникс…");
+
+    try {
+      const result = await service.decide(callback.token, callback.decision, String(query.from.id));
+      await bot.sendMessage(chatId, formatSweepDecision(result));
+    } catch (error) {
+      await bot.sendMessage(chatId, `❌ Массовый перенос прерван ошибкой: ${error instanceof Error ? error.message : "ошибка"}`);
+    }
   });
 
   // /inactivity_switch — current state of the pause switch alone.

@@ -18,6 +18,12 @@ import { TESTING_LEADS_MOVEMENT_LIMIT } from "../services/leadInactivityStore";
 import { almatyDailyMovementBucket, dailyMovementLimitForBucket } from "../services/leadInactivityDailyCap";
 
 export const LEAD_INACTIVITY_WORKER_INTERVAL_MS = 60_000;
+/**
+ * Per-pass batch when the daily cap is lifted. Not a business limit — it only
+ * bounds one minute's worth of amoCRM PATCHes so a pass cannot run unbounded;
+ * whatever is left is picked up on the next pass.
+ */
+export const UNCAPPED_BATCH_LIMIT = 500;
 
 export interface LeadInactivityWorkerAudit {
   id: string;
@@ -127,6 +133,11 @@ export interface CreateLeadInactivityWorkerOptions {
    * nothing here to resume later.
    */
   isMovementPaused?: () => Promise<boolean>;
+  /**
+   * When it reports true the 100-per-day cap is not applied: no slot is
+   * reserved before the PATCH and a full day never returns early.
+   */
+  isDailyCapDisabled?: () => Promise<boolean>;
   notifyAdmins?: (text: string) => Promise<void>;
   testingMode?: boolean;
   clock?: () => Date;
@@ -177,6 +188,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
     operationalStartDate: string,
     result: LeadInactivityWorkerResult,
     renewWorkerRunLease: () => Promise<boolean>,
+    dailyCapApplies: boolean,
   ): Promise<void> => {
     const auditId = randomId();
     const dailyReservation = { slot: null as LeadInactivityDailyMovementSlot | null };
@@ -257,7 +269,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         isMoveMutationCurrent: async (): Promise<boolean> => (
           await renewWorkerRunLease() && await options.store.isMoveMutationCurrent(claimed)
         ),
-        ...(!testingMode ? {
+        ...(dailyCapApplies ? {
           beforeFinalPatch: async (): Promise<"allow" | "daily_capacity_unavailable"> => {
             const finalNow = clock();
             const finalBucketDate = almatyDailyMovementBucket(finalNow, operationalStartDate);
@@ -455,12 +467,16 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
           throw new Error("unrestricted production movement is blocked: durable production baseline is not complete");
         }
         await options.store.releaseExpiredWatchLeases(now);
+        // Testing mode has its own five-slot cap; the operator can lift the
+        // daily cap only in production mode, never the testing one.
+        const dailyCapApplies = !testingMode
+          && !(options.isDailyCapDisabled && await options.isDailyCapDisabled());
         const operationalStartDate = testingMode
           ? "9999-12-31"
           : await options.store.getDailyMovementOperationalStartDate();
         const dailyBucketDate = almatyDailyMovementBucket(now, operationalStartDate);
         const dailyMovementLimit = dailyMovementLimitForBucket(dailyBucketDate);
-        if (!testingMode) {
+        if (dailyCapApplies) {
           await options.store.ensureDailyMovementSlots(dailyBucketDate, dailyMovementLimit);
           if (!await options.store.hasDailyMovementCapacity(dailyBucketDate, dailyMovementLimit)) {
             return result;
@@ -469,7 +485,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         if (testingMode) await options.store.ensureTestSlots(TESTING_LEADS_MOVEMENT_LIMIT);
         const maxWatchesPerRun = testingMode
           ? Math.min(requestedBatchLimit ?? TESTING_LEADS_MOVEMENT_LIMIT, TESTING_LEADS_MOVEMENT_LIMIT)
-          : (requestedBatchLimit ?? dailyMovementLimit);
+          : (requestedBatchLimit ?? (dailyCapApplies ? dailyMovementLimit : UNCAPPED_BATCH_LIMIT));
         const leadIds = await listPrioritizedDueWatchLeadIds(now, maxWatchesPerRun);
         result.scanned = leadIds.length;
         for (const leadId of leadIds) {
@@ -483,12 +499,13 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
             operationalStartDate,
             result,
             () => options.store.renewWorkerRunLease(runLeaseToken, clock()),
+            dailyCapApplies,
           );
           const currentDailyBucketDate = almatyDailyMovementBucket(clock(), operationalStartDate);
           const currentDailyMovementLimit = dailyMovementLimitForBucket(currentDailyBucketDate);
           if (
             result.uncertain > 0
-            || (!testingMode && !await options.store.hasDailyMovementCapacity(currentDailyBucketDate, currentDailyMovementLimit))
+            || (dailyCapApplies && !await options.store.hasDailyMovementCapacity(currentDailyBucketDate, currentDailyMovementLimit))
           ) break;
         }
         return result;
