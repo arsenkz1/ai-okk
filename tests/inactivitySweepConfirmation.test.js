@@ -12,7 +12,8 @@ const {
 } = require("../dist/services/inactivitySweepConfirmation");
 
 const now = new Date("2026-09-16T05:00:00.000Z");
-const idle = (id) => ({ id, createdAt: now, updatedAt: new Date(now.getTime() - 300 * 3600 * 1000), pipelineId: 6909890, statusId: 58160726, responsibleUserId: 1, name: null });
+// 5 days idle: inside the 3–7 day sweep band.
+const idle = (id) => ({ id, createdAt: now, updatedAt: new Date(now.getTime() - 120 * 3600 * 1000), pipelineId: 6909890, statusId: 58160726, responsibleUserId: 1, name: null });
 
 function service(overrides = {}) {
   const moved = [];
@@ -108,21 +109,38 @@ test("the proposal names the count per pipeline and who may answer", () => {
       { leadId: 3, pipelineId: 6909890, statusId: 1, lastTouchedAt: now },
     ],
   }, 40);
-  assert.equal(text.includes("Найдено лидов без касаний 7 дней и дольше: 3"), true);
+  assert.equal(text.includes("Найдено лидов без касаний 3 дня и дольше: 3"), true);
+  assert.equal(text.includes("7 дней"), false, "there is no upper bound any more");
+  assert.equal(text.includes("перепроверяется по истории"), true);
   assert.equal(text.includes("• UZUM: 2"), true);
   assert.equal(text.includes("• EXODE: 1"), true);
   assert.equal(text.includes("только тот, кто отправил команду"), true);
+  // The deals are named so they can be inspected before anything moves.
+  assert.equal(text.includes("#1 — 0.0 · UZUM"), true);
+  assert.equal(text.includes("/inactivity_lead <ID>"), true);
+});
+
+test("a long list is capped in the card and says how many were left out", () => {
+  const candidates = Array.from({ length: 20 }, (_, i) => ({ leadId: i + 1, pipelineId: 6909890, statusId: 1, lastTouchedAt: now }));
+  const text = formatSweepProposal({ token: "t", requestedBy: "1", createdAt: now, candidates }, 100);
+  assert.equal(text.split("\n").filter((line) => line.startsWith("#")).length, 15);
+  assert.equal(text.includes("… и ещё 5"), true);
 });
 
 test("the outcome message accounts for every candidate", () => {
   const text = formatSweepDecision({
     kind: "swept", candidates: 10,
-    result: { moved: 6, notMoved: 1, uncertain: 1, stoppedAt: { index: 8, reason: "uncertain" } },
+    result: { moved: 6, notMoved: 1, uncertain: 1, skippedRecentTouch: 2, guardFailed: 0, movedCandidates: [], stoppedAt: { index: 8, reason: "uncertain" } },
   });
+  assert.equal(text.includes("было касание за последние 3 дня: 2"), true);
+  assert.equal(text.includes("ежедневная сверка в 22:00"), true);
   assert.equal(text.includes("6 из 10"), true);
   assert.equal(text.includes("лид изменился"), true);
   assert.equal(text.includes("не обработано: 2"), true);
   assert.equal(text.includes("без суточного лимита"), true);
   assert.equal(formatSweepDecision({ kind: "wrong_user" }).includes("только тот"), true);
-  assert.equal(formatSweepDecision({ kind: "declined", candidates: 4 }).includes("4 лидов не тронуты"), true);
+  const declined = formatSweepDecision({ kind: "declined", candidates: 4 });
+  assert.equal(declined.includes("4 лидов не тронуты"), true);
+  // "No" is not a reprieve: the nightly sweep takes them anyway, and says so.
+  assert.equal(declined.includes("сверка в 22:00 — она перенесёт их сама"), true);
 });

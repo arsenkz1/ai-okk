@@ -12,6 +12,15 @@ import { runDisciplineCheck } from "./services/disciplineCheck";
 import { notifyAdmins, notifyAdminsWithFile } from "./bot/notify";
 import { sendFieldOptionBackup } from "./services/fieldOptionBackup";
 import { sendAdminDailyReport } from "./workers/adminDailyReport";
+import { prisma } from "./config/database";
+import { splitTelegramMessage } from "./bot/longMessage";
+import { createSweepRuntime } from "./services/inactivitySweepRuntime";
+import {
+  claimNightlySweepDay,
+  formatNightlySweepReport,
+  formatSweepMovedSummary,
+  runNightlyInactivitySweep,
+} from "./services/inactivityNightlySweep";
 import { runStartupChecks } from "./startup";
 import { createConfiguredLeadInactivityWebhookRouter } from "./services/leadInactivityWebhookRuntime";
 import { initializeConfiguredLeadInactivityActivation } from "./services/leadInactivityActivationRuntime";
@@ -153,6 +162,40 @@ cron.schedule(
       console.log("[Cron] Admin daily report sent:", result);
     } catch (err: any) {
       console.error("[Cron] Admin daily report failed:", err.message);
+    }
+  },
+  { timezone: tz }
+);
+
+// Сверка неактивности каждый день в 22:00: воркер двигает только лиды, по
+// которым приходили вебхуки, а сверка идёт прямо в amoCRM и переносит всё, что
+// простояло 3+ дней. Без подтверждения, поэтому сама проверяет, что воркер
+// включён, режим боевой и переводы не остановлены; раз в сутки на все реплики.
+cron.schedule(
+  "0 22 * * *",
+  async () => {
+    console.log("[Cron] Running nightly inactivity sweep...");
+    try {
+      const runtime = createSweepRuntime();
+      if (!runtime) {
+        console.log("[Cron] Nightly inactivity sweep skipped: amoCRM is not configured");
+        return;
+      }
+      const result = await runNightlyInactivitySweep({
+        ...runtime,
+        claimDay: (day) => claimNightlySweepDay(day, prisma),
+      });
+      console.log("[Cron] Nightly inactivity sweep:", result.kind, result.kind === "skipped" ? result.reason : "");
+
+      const report = formatNightlySweepReport(result);
+      if (report) for (const chunk of splitTelegramMessage(report)) await notifyAdmins(chunk);
+      if (result.kind === "swept" && result.result.moved > 0) {
+        const summary = formatSweepMovedSummary("Сверка неактивности 22:00", result.result.movedCandidates);
+        for (const chunk of splitTelegramMessage(summary)) await notifyAdmins(chunk, "all");
+      }
+    } catch (err: any) {
+      console.error("[Cron] Nightly inactivity sweep failed:", err.message);
+      await notifyAdmins(`⚠️ Сверка неактивности 22:00 прервана ошибкой: ${err.message}`).catch(() => {});
     }
   },
   { timezone: tz }

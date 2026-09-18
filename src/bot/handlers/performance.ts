@@ -18,7 +18,6 @@ import { formatInactivityStatus, loadInactivityStatus } from "../../services/ina
 import {
   formatInactivityMovementSwitch,
   getInactivityMovementSwitch,
-  isInactivityMovementPaused,
   setInactivityMovementPaused,
 } from "../../services/inactivityMovementSwitch";
 import {
@@ -29,7 +28,11 @@ import {
   parseSweepCallback,
 } from "../../services/inactivitySweepConfirmation";
 import { createLeadInactivityAmoClient } from "../../services/leadInactivityAmoClient";
+import { diagnoseLead, formatLeadDiagnosis, loadLeadDiagnosisInput } from "../../services/inactivityLeadDiagnosis";
 import { notifyAdmins } from "../notify";
+import { splitTelegramMessage } from "../longMessage";
+import { createSweepRuntime } from "../../services/inactivitySweepRuntime";
+import { formatSweepMovedSummary } from "../../services/inactivityNightlySweep";
 import {
   almatyPlanMonth,
   formatPlanMonth,
@@ -168,21 +171,30 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
   let sweepService: ReturnType<typeof createSweepConfirmationService> | null = null;
   const getSweepService = () => {
     if (sweepService) return sweepService;
-    const baseUrl = process.env.AMOCRM_BASE_URL?.trim();
-    const accessToken = process.env.AMOCRM_ACCESS_TOKEN?.trim();
-    if (!baseUrl || !accessToken) return null;
-    const amo = createLeadInactivityAmoClient({ baseUrl, accessToken });
-    sweepService = createSweepConfirmationService({
-      listEligibleLeads: () => amo.listAllowedSourceStageLeads(),
-      moveLeadToTarget: (leadId, target) => amo.moveLeadToTarget(leadId, target),
-      isStopped: () => isInactivityMovementPaused(),
-      onMoved: (candidate) => notifyAdmins(
-        ["✅ Перемещение по неактивности", `Сделка: #${candidate.leadId}`].join("\n"),
-        "all",
-      ),
-    });
+    const runtime = createSweepRuntime();
+    if (!runtime) return null;
+    sweepService = createSweepConfirmationService(runtime);
     return sweepService;
   };
+
+  // /inactivity_lead <id> — why this one deal has not been moved to Phoenix.
+  bot.onText(/^\/inactivity_lead\s+(\d{4,12})$/, async (msg, match) => {
+    if (!(await requirePlanEditor(bot, msg))) return;
+    const baseUrl = process.env.AMOCRM_BASE_URL?.trim();
+    const accessToken = process.env.AMOCRM_ACCESS_TOKEN?.trim();
+    if (!baseUrl || !accessToken) {
+      await bot.sendMessage(msg.chat.id, "⚠️ amoCRM не настроен.");
+      return;
+    }
+    await bot.sendChatAction(msg.chat.id, "typing");
+    try {
+      const amo = createLeadInactivityAmoClient({ baseUrl, accessToken });
+      const input = await loadLeadDiagnosisInput(Number(match![1]), { readLead: (id) => amo.readLead(id) });
+      await bot.sendMessage(msg.chat.id, formatLeadDiagnosis(input, diagnoseLead(input)));
+    } catch (error) {
+      await bot.sendMessage(msg.chat.id, `❌ Не удалось проверить сделку: ${error instanceof Error ? error.message : "ошибка"}`);
+    }
+  });
 
   // /inactivity_off — full stop: clears the queue, webhooks record nothing.
   bot.onText(/^\/inactivity_off$/, async (msg) => {
@@ -191,9 +203,9 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     await bot.sendMessage(msg.chat.id, formatInactivityMovementSwitch(state));
   });
 
-  // /inactivity_on — switch on, then offer to sweep every lead already idle
-  // for 7 days. The sweep itself waits for an explicit yes from this operator;
-  // afterwards the worker runs on its usual 72-hour rule.
+  // /inactivity_on — switch on, then offer to sweep every lead idle for 3+
+  // days. The sweep waits for an explicit yes from this operator; afterwards
+  // the worker runs on its 72-hour rule and the nightly sweep reconciles.
   bot.onText(/^\/inactivity_on$/, async (msg) => {
     if (!(await requirePlanEditor(bot, msg))) return;
     const requestedBy = String(msg.from!.id);
@@ -211,7 +223,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
       if (started.kind === "nothing_to_move") {
         await bot.sendMessage(
           msg.chat.id,
-          `${formatInactivityMovementSwitch(state)}\n\nЛидов без касаний 7 дней и дольше нет (проверено: ${started.scanned}).`,
+          `${formatInactivityMovementSwitch(state)}\n\nЛидов без касаний 3 дня и дольше нет (проверено: ${started.scanned}).`,
         );
         return;
       }
@@ -244,6 +256,12 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     try {
       const result = await service.decide(callback.token, callback.decision, String(query.from.id));
       await bot.sendMessage(chatId, formatSweepDecision(result));
+      // One summary for every administrator, not a message per deal: a first
+      // sweep can move hundreds, and Telegram would throttle the flood.
+      if (result.kind === "swept" && result.result.moved > 0) {
+        const summary = formatSweepMovedSummary("Массовый перенос по неактивности", result.result.movedCandidates);
+        for (const chunk of splitTelegramMessage(summary)) await notifyAdmins(chunk, "all");
+      }
     } catch (error) {
       await bot.sendMessage(chatId, `❌ Массовый перенос прерван ошибкой: ${error instanceof Error ? error.message : "ошибка"}`);
     }

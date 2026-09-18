@@ -44,7 +44,9 @@ export interface SweepConfirmationDependencies {
     target: { sourcePipelineIds: readonly number[]; targetPipelineId: number; targetStatusId: number },
   ): Promise<AmoInactivityMoveOutcome>;
   isStopped?(): Promise<boolean>;
+  hasRecentTouch?(candidate: SweepCandidate): Promise<boolean>;
   onMoved?(candidate: SweepCandidate): Promise<void>;
+  onUncertain?(candidate: SweepCandidate): Promise<void>;
   now?: () => Date;
   randomToken?: () => string;
 }
@@ -106,7 +108,9 @@ export function createSweepConfirmationService(dependencies: SweepConfirmationDe
       const result = await moveSweepCandidates(entry.candidates, {
         moveLeadToTarget: dependencies.moveLeadToTarget,
         isStopped: dependencies.isStopped,
+        hasRecentTouch: dependencies.hasRecentTouch,
         onMoved: dependencies.onMoved,
+        onUncertain: dependencies.onUncertain,
       });
       return { kind: "swept", result, candidates: entry.candidates.length };
     },
@@ -134,17 +138,32 @@ export function buildSweepKeyboard(token: string): { inline_keyboard: Array<Arra
   };
 }
 
+/** Deals listed by ID in the card; beyond this only the count is shown. */
+export const SWEEP_PROPOSAL_MAX_LISTED = 15;
+
+function idleDays(candidate: SweepCandidate, now: Date): string {
+  return ((now.getTime() - candidate.lastTouchedAt.getTime()) / (24 * 3600 * 1000)).toFixed(1);
+}
+
 export function formatSweepProposal(pending: PendingSweep, scanned: number): string {
   const byPipeline = countByPipeline(pending.candidates);
+  const listed = pending.candidates.slice(0, SWEEP_PROPOSAL_MAX_LISTED);
+  const rest = pending.candidates.length - listed.length;
   const lines = [
     "▶️ Переводы в Феникс включены.",
     "",
-    `Найдено лидов без касаний 7 дней и дольше: ${pending.candidates.length}`,
+    `Найдено лидов без касаний 3 дня и дольше: ${pending.candidates.length}`,
     `(проверено лидов на подходящих стадиях: ${scanned})`,
     "",
     ...byPipeline.map(({ pipelineId, count }) => `• ${phoenixSourceName(pipelineId)}: ${count}`),
     "",
+    "Сделки (простой, дней):",
+    ...listed.map((candidate) => `#${candidate.leadId} — ${idleDays(candidate, pending.createdAt)} · ${phoenixSourceName(candidate.pipelineId)}`),
+    ...(rest > 0 ? [`… и ещё ${rest}`] : []),
+    "Почему конкретная сделка не уехала сама: /inactivity_lead <ID>",
+    "",
     "Перевести их все в Феникс сейчас?",
+    "(Перед переносом каждая сделка перепроверяется по истории: тронутые за последние 3 дня пропускаются.)",
     "Ответить может только тот, кто отправил команду. Запрос действует 10 минут.",
   ];
   return lines.join("\n");
@@ -159,13 +178,15 @@ export function formatSweepDecision(result: SweepDecisionResult): string {
     case "wrong_user":
       return "❌ Подтвердить может только тот, кто отправил команду.";
     case "declined":
-      return `✅ Переводы включены, массовый перенос отменён (${result.candidates} лидов не тронуты). Дальше воркер работает в обычном режиме.`;
+      return `✅ Переводы включены, массовый перенос отменён (${result.candidates} лидов не тронуты). Дальше: воркер по правилу 3 дня, плюс ежедневная сверка в 22:00 — она перенесёт их сама.`;
     case "swept": {
       const { result: sweep, candidates } = result;
       const lines = [
         `🔥 Массовый перенос в Феникс: ${sweep.moved} из ${candidates}`,
       ];
+      if (sweep.skippedRecentTouch > 0) lines.push(`• пропущено — по истории было касание за последние 3 дня: ${sweep.skippedRecentTouch}`);
       if (sweep.notMoved > 0) lines.push(`• не переведены (лид изменился между проверкой и переносом): ${sweep.notMoved}`);
+      if (sweep.guardFailed > 0) lines.push(`• ⚠️ не удалось проверить историю, сделки не тронуты: ${sweep.guardFailed}`);
       if (sweep.uncertain > 0) lines.push(`• ⚠️ неопределённый ответ amoCRM: ${sweep.uncertain} — требует ручной проверки`);
       if (sweep.stoppedAt) {
         const left = candidates - sweep.stoppedAt.index;
@@ -175,7 +196,7 @@ export function formatSweepDecision(result: SweepDecisionResult): string {
             : `⛔ Остановлено командой /inactivity_off; не обработано: ${left}.`,
         );
       }
-      lines.push("", "Дальше воркер работает в обычном режиме: 3 дня без касаний, без суточного лимита.");
+      lines.push("", "Дальше: воркер по правилу 3 дня без касаний, без суточного лимита, плюс ежедневная сверка в 22:00.");
       return lines.join("\n");
     }
   }
