@@ -1,7 +1,10 @@
 import { prisma } from "../config/database";
 import { askGeminiRaw } from "../services/aiAnalysis";
 import { loadManagerPerformance } from "../services/performanceData";
+import { applyAmoRevenueForManagers } from "../services/companyPerformance";
 import {
+  bold,
+  escapeHtml,
   formatCallSection,
   formatPlanSection,
   formatRevenueSection,
@@ -101,8 +104,8 @@ async function buildDailyReport(
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3);
 
-  const topWeakText = topWeak.map(([w]) => `  • ${w}`).join("\n");
-  const topStrongText = topStrong.map(([s]) => `  • ${s}`).join("\n");
+  const topWeakText = topWeak.map(([w]) => `  • ${escapeHtml(w)}`).join("\n");
+  const topStrongText = topStrong.map(([s]) => `  • ${escapeHtml(s)}`).join("\n");
 
   const today = `${from.getDate()} ${UZ_MONTHS[from.getMonth()]}`;
 
@@ -117,16 +120,16 @@ async function buildDailyReport(
     ].join("\n")
     : [
       "",
-      `📞 Tahlil qilingan qo'ng'iroqlar: ${calls.length}`,
-      `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
-      avgScoreStr ? `⭐ O'rtacha ball: ${avgScoreStr}/100` : "",
+      `${bold("Tahlil qilingan qo'ng'iroqlar:")} ${calls.length}`,
+      `${bold("Jami vaqt:")} ${formatDuration(totalTalk)}`,
+      avgScoreStr ? `${bold("O'rtacha ball:")} ${avgScoreStr}/100` : "",
     ].filter(Boolean).join("\n");
 
   const statsText = [
-    `📊 Kechagi hisoboting — ${today}`,
+    bold(`Kechagi hisoboting — ${today}`),
     performanceText,
-    topStrongText ? `\n💪 Kuchli tomonlar:\n${topStrongText}` : "",
-    topWeakText ? `\n⚠️ O'sish sohalari:\n${topWeakText}` : "",
+    topStrongText ? `\n${bold("Kuchli tomonlar:")}\n${topStrongText}` : "",
+    topWeakText ? `\n${bold("O'sish sohalari:")}\n${topWeakText}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -157,7 +160,7 @@ QISQA motivatsion sharh yoz (2-3 gap):
 
   const fullText = [
     statsText,
-    aiComment ? `\n🤖 ${aiComment}` : "",
+    aiComment ? `\n${bold("AI-murabbiy:")} ${escapeHtml(aiComment)}` : "",
     `\nBatafsil: /report`,
   ]
     .filter(Boolean)
@@ -216,6 +219,14 @@ export async function sendDailyReports(
   } catch (err: any) {
     console.error("[DailyReport] Performance data unavailable:", err.message);
   }
+  // Revenue comes from amoCRM itself, so a manager sees the deals they closed
+  // even when the webhook that would have recorded them never arrived.
+  await applyAmoRevenueForManagers({
+    performance: performanceByManager,
+    managers,
+    range: { from: yesterdayFrom, to: today },
+    logPrefix: "[DailyReport]",
+  });
 
   let sent = 0;
   let skipped = 0;

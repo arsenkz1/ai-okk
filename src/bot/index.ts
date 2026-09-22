@@ -41,12 +41,14 @@ import { sendLongMessage } from "./longMessage";
 import { formatManagerDisplayName } from "../services/managerDisplayName";
 import { loadManagerPerformance } from "../services/performanceData";
 import {
-  aggregateTeamPerformance,
+  bold,
+  escapeHtml,
   formatCallSection,
   formatPlanSection,
   formatRevenueSection,
 } from "../services/performanceReport";
-import { formatPhoenixMovements, loadPhoenixMovements } from "../services/phoenixMovementStats";
+import { amoUserIdMap } from "../services/amoDailyFacts";
+import { applyAmoRevenueForManagers, buildCompanyTeam } from "../services/companyPerformance";
 import { installSafeTelegramSender } from "./safeTelegram";
 
 // ---------------------------------------------------------------------------
@@ -249,7 +251,7 @@ async function buildReport(
   });
 
   if (!calls.length) {
-    return `📊 ${label} uchun hisobot\n\nBu davr uchun tahlil qilingan qo'ng'iroqlar topilmadi.`;
+    return `${bold(`${label} uchun hisobot`)}\n\nBu davr uchun tahlil qilingan qo'ng'iroqlar topilmadi.`;
   }
 
   const scores = calls
@@ -272,27 +274,37 @@ async function buildReport(
   const topWeak = Object.entries(weakMap)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
-    .map(([w]) => `  • ${w}`)
+    .map(([w]) => `  • ${escapeHtml(w)}`)
     .join("\n");
 
   const topStrong = Object.entries(strongMap)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
-    .map(([s]) => `  • ${s}`)
+    .map(([s]) => `  • ${escapeHtml(s)}`)
     .join("\n");
 
   // Calls, revenue and plan come from the shared performance builder so the
   // report shows the same numbers as the daily one, not a second version.
   let performanceBlock: string[] = [
-    `📞 Tahlil qilingan qo'ng'iroqlar: ${calls.length}`,
-    `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
-    `⭐ O'rtacha ball: ${avgScore}/100`,
+    `${bold("Tahlil qilingan qo'ng'iroqlar:")} ${calls.length}`,
+    `${bold("Jami vaqt:")} ${formatDuration(totalTalk)}`,
+    `${bold("O'rtacha ball:")} ${avgScore}/100`,
   ];
   try {
-    const performance = (await loadManagerPerformance({
+    const performanceById = await loadManagerPerformance({
       managerIds: [managerId],
       range: { from: fromStart, to: toEnd },
-    })).get(managerId);
+    });
+    const owner = await prisma.manager.findUnique({ where: { id: managerId }, select: { id: true, amoUserId: true } });
+    if (owner) {
+      await applyAmoRevenueForManagers({
+        performance: performanceById,
+        managers: [owner],
+        range: { from: fromStart, to: toEnd },
+        logPrefix: "[Report]",
+      });
+    }
+    const performance = performanceById.get(managerId);
     if (performance) {
       performanceBlock = [
         ...formatCallSection(performance.calls),
@@ -307,11 +319,11 @@ async function buildReport(
   }
 
   return [
-    `📊 ${label} uchun hisobot`,
+    bold(`${label} uchun hisobot`),
     ``,
     ...performanceBlock,
-    topStrong ? `\n💪 Kuchli tomonlar:\n${topStrong}` : "",
-    topWeak ? `\n⚠️ O'sish sohalari:\n${topWeak}` : "",
+    topStrong ? `\n${bold("Kuchli tomonlar:")}\n${topStrong}` : "",
+    topWeak ? `\n${bold("O'sish sohalari:")}\n${topWeak}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -333,7 +345,7 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
   const excludedCalls = allCalls.length - calls.length;
 
   if (!calls.length) {
-    return `📊 ${label} uchun umumiy hisobot\n\nBu davr uchun tahlil qilingan qo'ng'iroqlar topilmadi.`;
+    return `${bold(`${label} uchun umumiy hisobot`)}\n\nBu davr uchun tahlil qilingan qo'ng'iroqlar topilmadi.`;
   }
 
   const totalTalk = calls.reduce((a, c) => a + c.durationSeconds, 0);
@@ -352,7 +364,7 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
   const mgrRating = [...mgrMap.entries()]
     .map(([name, { total, count }]) => ({ name, avg: total / count, count }))
     .sort((a, b) => b.avg - a.avg)
-    .map((m, i) => `${i + 1}. ${m.name} — ${m.avg.toFixed(0)}/100 (${m.count} ta)`)
+    .map((m, i) => `${i + 1}. ${escapeHtml(m.name)} — ${m.avg.toFixed(0)}/100 (${m.count} ta)`)
     .join("\n");
 
   // Топ слабых критериев
@@ -363,7 +375,7 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
   const topWeak = Object.entries(weakMap)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
-    .map(([w, n]) => `  • ${w} (${n}×)`)
+    .map(([w, n]) => `  • ${escapeHtml(w)} (${n}×)`)
     .join("\n");
 
   const managerCount = new Set(calls.map(c => c.managerId).filter(Boolean)).size;
@@ -371,26 +383,27 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
   // The company block is the same one the daily report sends: calls with the
   // connected/missed split, revenue, plan progress and Phoenix moves.
   let companyBlock: string[] = [
-    `👥 Menejerlar: ${managerCount} (jami ${calls.length} ta qo'ng'iroq)`,
-    `⏱ Jami vaqt: ${formatDuration(totalTalk)}`,
-    `⭐ O'rtacha ball: ${avgScore}/100`,
+    `${bold("Menejerlar:")} ${managerCount} (jami ${calls.length} ta qo'ng'iroq)`,
+    `${bold("Jami vaqt:")} ${formatDuration(totalTalk)}`,
+    `${bold("O'rtacha ball:")} ${avgScore}/100`,
   ];
   try {
     const sellers = await prisma.manager.findMany({
       where: { isActive: true, excludeFromReports: false },
-      select: { id: true },
+      select: { id: true, amoUserId: true },
     });
     const performance = await loadManagerPerformance({
       managerIds: sellers.map((seller) => seller.id),
       range: { from: fromStart, to: toEnd },
     });
-    let phoenixLines: string[] = [];
-    try {
-      phoenixLines = formatPhoenixMovements(await loadPhoenixMovements({ from: fromStart, to: toEnd }));
-    } catch (error) {
-      console.error("[Report] Phoenix block unavailable:", error instanceof Error ? error.message : error);
-    }
-    const team = aggregateTeamPerformance("Kompaniya", label, [...performance.values()], phoenixLines);
+    const { team, phoenixLines } = await buildCompanyTeam({
+      title: "Kompaniya",
+      label,
+      range: { from: fromStart, to: toEnd },
+      performance,
+      amoUserIdByManagerId: amoUserIdMap(sellers),
+      logPrefix: "[Report]",
+    });
     companyBlock = [
       ...formatCallSection(team.calls),
       "",
@@ -404,13 +417,13 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
   }
 
   return [
-    `📊 ${label} uchun umumiy hisobot`,
+    bold(`${label} uchun umumiy hisobot`),
     ``,
     ...companyBlock,
-    `\n📈 Menejerlar reytingi (o'rtacha ball / tahlil qilingan qo'ng'iroqlar):\n${mgrRating}`,
-    topWeak ? `\n⚠️ Eng zaif kriteriyalar:\n${topWeak}` : "",
+    `\n${bold("Menejerlar reytingi")} (o'rtacha ball / tahlil qilingan qo'ng'iroqlar):\n${mgrRating}`,
+    topWeak ? `\n${bold("Eng zaif kriteriyalar:")}\n${topWeak}` : "",
     excludedCalls > 0
-      ? `\nℹ️ Reytingdan chiqarilgan hisoblar: ${excludedCalls} ta qo'ng'iroq hisobga olinmadi.`
+      ? `\nReytingdan chiqarilgan hisoblar: ${excludedCalls} ta qo'ng'iroq hisobga olinmadi.`
       : "",
   ].filter(Boolean).join("\n");
 }
@@ -856,7 +869,7 @@ bot.on("message", async (msg) => {
     const label = `${fmt(from)} — ${fmt(to)}`;
 
     if (state.adminMode) {
-      await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label));
+      await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label), { parse_mode: "HTML" });
       return;
     }
 
@@ -865,7 +878,7 @@ bot.on("message", async (msg) => {
       await bot.sendMessage(msg.chat.id, "❌ Siz avtorizatsiya qilinmagansiz.");
       return;
     }
-    await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
+    await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label), { parse_mode: "HTML" });
     return;
   }
 
@@ -992,11 +1005,11 @@ bot.onText(/\/report$/, async (msg) => {
   const { from, to, label } = presetRange("day");
   await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
   if (await isAdmin(tgId) && !(await getManager(tgId))) {
-    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label));
+    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label), { parse_mode: "HTML" });
   }
   const manager = await requireManager(msg);
   if (!manager) return;
-  await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
+  await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label), { parse_mode: "HTML" });
 });
 
 bot.onText(/\/week$/, async (msg) => {
@@ -1005,11 +1018,11 @@ bot.onText(/\/week$/, async (msg) => {
   const { from, to, label } = presetRange("week");
   await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
   if (await isAdmin(tgId) && !(await getManager(tgId))) {
-    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label));
+    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label), { parse_mode: "HTML" });
   }
   const manager = await requireManager(msg);
   if (!manager) return;
-  await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
+  await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label), { parse_mode: "HTML" });
 });
 
 bot.onText(/\/month$/, async (msg) => {
@@ -1018,11 +1031,11 @@ bot.onText(/\/month$/, async (msg) => {
   const { from, to, label } = presetRange("month");
   await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
   if (await isAdmin(tgId) && !(await getManager(tgId))) {
-    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label));
+    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label), { parse_mode: "HTML" });
   }
   const manager = await requireManager(msg);
   if (!manager) return;
-  await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label));
+  await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label), { parse_mode: "HTML" });
 });
 
 // ---------------------------------------------------------------------------

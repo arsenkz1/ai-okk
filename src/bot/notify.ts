@@ -81,7 +81,11 @@ export async function notifyAdminsWithFile(
  * site becomes operator-only without being touched, and only the notifications
  * explicitly marked "all" reach every administrator.
  */
-export async function notifyAdmins(text: string, audience: AdminAudience = "primary"): Promise<void> {
+export async function notifyAdmins(
+  text: string,
+  audience: AdminAudience = "primary",
+  options: { parse_mode?: "HTML" } = {},
+): Promise<void> {
   const bot = getNotifyBot();
   if (!bot) return;
 
@@ -89,7 +93,7 @@ export async function notifyAdmins(text: string, audience: AdminAudience = "prim
 
   for (const id of ids) {
     try {
-      await bot.sendMessage(id, text);
+      await bot.sendMessage(id, text, options);
     } catch (err: any) {
       console.error(`[Bot] notifyAdmins failed for ${id}:`, err.message);
     }

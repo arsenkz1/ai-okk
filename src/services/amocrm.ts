@@ -3,6 +3,20 @@ import axios from "axios";
 import { normalizeAmoCrmTenantBaseUrl } from "./amoCrmRateLimiter";
 import { recordDealRevenue } from "./dealRevenueRecorder";
 import { AMO_READ_MAX_ATTEMPTS, amoRetryDelayMs, isRetryableAmoStatus } from "./amoRetryPolicy";
+import {
+  EVENT_LIST_PAGE_SIZE,
+  LEAD_LIST_PAGE_SIZE,
+  leadStatusChangesIntoParams,
+  leadsByIdsParams,
+  leadsClosedInRangeParams,
+  pipelineStageRefs,
+  toLeadFact,
+  toLeadStatusChange,
+  type AmoDateRange,
+  type AmoLeadFact,
+  type AmoLeadStatusChange,
+  type AmoStageRef,
+} from "./amoListingParams";
 import { prisma } from "../config/database";
 import { markDealAsWon, markDealAsLost } from "./googleSheets";
 import { callProcessingQueue } from "../queues/callProcessing";
@@ -846,6 +860,83 @@ async function fetchPipelineNames(
   } catch {
     return null;
   }
+}
+
+export type { AmoLeadFact, AmoLeadStatusChange, AmoStageRef } from "./amoListingParams";
+
+/** Enough for any real day; a report must never page forever. */
+const LEAD_LIST_MAX_PAGES = 200;
+const EVENT_LIST_MAX_PAGES = 400;
+
+async function listPages<T>(
+  path: string,
+  baseParams: URLSearchParams,
+  pageSize: number,
+  maxPages: number,
+  embeddedKey: "leads" | "events",
+  parse: (raw: unknown) => T | null,
+): Promise<T[]> {
+  if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) throw new Error("amoCRM credentials are not configured");
+  const rows: T[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const params = new URLSearchParams(baseParams);
+    params.set("limit", String(pageSize));
+    params.set("page", String(page));
+    const data = await amoGet(`${path}?${params.toString()}`);
+    // An empty page comes back as 204 with no body, which axios hands over as
+    // an empty string rather than an error.
+    const embedded = (data as { _embedded?: Record<string, unknown> } | null)?._embedded?.[embeddedKey];
+    const raws: unknown[] = Array.isArray(embedded) ? embedded : [];
+    for (const raw of raws) {
+      const row = parse(raw);
+      if (row !== null) rows.push(row);
+    }
+    if (raws.length < pageSize) return rows;
+  }
+  throw new Error(`amoCRM listing ${path} exceeded the page limit`);
+}
+
+/**
+ * Leads closed inside the range, in every pipeline. `closed_at` is stamped the
+ * moment a deal reaches won or lost; callers separate the two by status.
+ */
+export async function fetchLeadsClosedInRange(range: AmoDateRange): Promise<AmoLeadFact[]> {
+  return listPages("/api/v4/leads", leadsClosedInRangeParams(range), LEAD_LIST_PAGE_SIZE, LEAD_LIST_MAX_PAGES, "leads", toLeadFact);
+}
+
+const LEADS_BY_IDS_CHUNK = 100;
+
+/** Current state of the given deals; unknown ids are simply absent. */
+export async function fetchLeadFactsByIds(ids: readonly number[]): Promise<AmoLeadFact[]> {
+  const unique = [...new Set(ids)];
+  const facts: AmoLeadFact[] = [];
+  for (let offset = 0; offset < unique.length; offset += LEADS_BY_IDS_CHUNK) {
+    const chunk = unique.slice(offset, offset + LEADS_BY_IDS_CHUNK);
+    facts.push(...await listPages("/api/v4/leads", leadsByIdsParams(chunk), LEAD_LIST_PAGE_SIZE, 2, "leads", toLeadFact));
+  }
+  return facts;
+}
+
+/** Every stage change inside the range that landed on one of the stages. */
+export async function fetchLeadStatusChangesInto(
+  stages: readonly AmoStageRef[],
+  range: AmoDateRange,
+): Promise<AmoLeadStatusChange[]> {
+  if (stages.length === 0) return [];
+  return listPages(
+    "/api/v4/events",
+    leadStatusChangesIntoParams(stages, range),
+    EVENT_LIST_PAGE_SIZE,
+    EVENT_LIST_MAX_PAGES,
+    "events",
+    toLeadStatusChange,
+  );
+}
+
+/** All stages of one pipeline, including its won and lost. */
+export async function fetchPipelineStageRefs(pipelineId: number): Promise<AmoStageRef[]> {
+  if (!AMO_BASE_URL || !AMO_ACCESS_TOKEN) throw new Error("amoCRM credentials are not configured");
+  return pipelineStageRefs(await amoGet(`/api/v4/leads/pipelines/${pipelineId}`));
 }
 
 /** Every pipeline with its statuses; used to discover revenue stages. */

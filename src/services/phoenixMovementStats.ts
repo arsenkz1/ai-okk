@@ -1,6 +1,7 @@
 import { prisma } from "../config/database";
 import { INACTIVITY_SOURCE_PIPELINES, TARGET_PIPELINE_ID } from "./leadInactivityPolicy";
 import { pipelineLabel } from "./dealDossier";
+import { bold, escapeHtml } from "./performanceReport";
 
 /**
  * How many deals the inactivity worker moved into the Phoenix (trainee)
@@ -70,15 +71,32 @@ export async function loadPhoenixMovements(range: { from: Date; to: Date }): Pro
 /** Renders the Phoenix block; every source pipeline is listed with its count. */
 export function formatPhoenixMovements(stats: PhoenixMovementStats): string[] {
   if (stats.total === 0 && stats.uncertain === 0) {
-    return ["🔥 Феникс (стажёр): переводов не было"];
+    return [`${bold("Феникс (стажёр):")} переводов не было`];
   }
 
-  const lines = [`🔥 Феникс (стажёр): ${stats.total} сделок`];
+  const lines = [`${bold("Феникс (стажёр):")} ${stats.total} сделок`];
   for (const row of stats.rows) {
-    lines.push(`• ${row.pipelineName}: ${row.count}`);
+    lines.push(`${escapeHtml(row.pipelineName)}: ${row.count}`);
   }
   if (stats.uncertain > 0) {
-    lines.push(`⚠️ Неподтверждённых переводов: ${stats.uncertain} — требуется проверка вручную`);
+    lines.push(`Неподтверждённых переводов: ${stats.uncertain} — требуется проверка вручную`);
   }
+  return lines;
+}
+
+/**
+ * Same block, fed by amoCRM's own stage-change events, so deals moved by hand
+ * and moves from before the deploy are counted; the audit table only knows
+ * what this service did.
+ */
+export function formatPhoenixArrivals(fact: {
+  total: number;
+  byPipeline: ReadonlyArray<{ pipelineId: number; count: number }>;
+  unknownOrigin: number;
+}): string[] {
+  if (fact.total === 0) return [`${bold("Феникс (стажёр):")} переводов не было`];
+  const lines = [`${bold("Феникс (стажёр):")} ${fact.total} сделок`];
+  for (const row of fact.byPipeline) lines.push(`${escapeHtml(phoenixSourceName(row.pipelineId))}: ${row.count}`);
+  if (fact.unknownOrigin > 0) lines.push(`исходная воронка не определена: ${fact.unknownOrigin}`);
   return lines;
 }

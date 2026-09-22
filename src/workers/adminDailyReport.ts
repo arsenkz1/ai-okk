@@ -1,7 +1,8 @@
 import { prisma } from "../config/database";
 import { loadManagerPerformance } from "../services/performanceData";
-import { aggregateTeamPerformance, formatTeamPerformance } from "../services/performanceReport";
-import { formatPhoenixMovements, loadPhoenixMovements } from "../services/phoenixMovementStats";
+import { formatTeamPerformance } from "../services/performanceReport";
+import { amoUserIdMap } from "../services/amoDailyFacts";
+import { buildCompanyTeam } from "../services/companyPerformance";
 
 /**
  * The company report every administrator receives once a day.
@@ -39,28 +40,22 @@ export async function sendAdminDailyReport(
   dependencies: SendAdminDailyReportDependencies,
 ): Promise<AdminDailyReportResult> {
   const { from, to, label } = yesterdayRange(dependencies.now?.() ?? new Date());
-  const managers = await prisma.manager.findMany({ where: { isActive: true }, select: { id: true } });
+  const managers = await prisma.manager.findMany({ where: { isActive: true }, select: { id: true, amoUserId: true } });
 
   const performance = await loadManagerPerformance({
     managerIds: managers.map((manager) => manager.id),
     range: { from, to },
   });
 
-  // Phoenix numbers must survive a failure in the rest of the report and the
-  // other way round: they come from unrelated tables.
-  let phoenixLines: string[] = [];
-  let phoenixMoves = 0;
-  try {
-    const phoenix = await loadPhoenixMovements({ from, to });
-    phoenixLines = formatPhoenixMovements(phoenix);
-    phoenixMoves = phoenix.total;
-  } catch (error) {
-    console.error("[AdminDailyReport] Phoenix stats unavailable:", error instanceof Error ? error.message : error);
-  }
-
-  const report = formatTeamPerformance(
-    aggregateTeamPerformance("Kompaniya", label, [...performance.values()], phoenixLines),
-  );
+  const { team, phoenixTotal: phoenixMoves } = await buildCompanyTeam({
+    title: "Kompaniya",
+    label,
+    range: { from, to },
+    performance,
+    amoUserIdByManagerId: amoUserIdMap(managers),
+    logPrefix: "[AdminDailyReport]",
+  });
+  const report = formatTeamPerformance(team);
 
   await dependencies.send(report);
   return { sent: true, managers: managers.length, phoenixMoves };

@@ -39,53 +39,53 @@ test("formats talk time with hours only when there are hours", () => {
 
 test("reports call volume with the connected/missed split", () => {
   const lines = formatCallSection(calls());
-  assert.equal(lines[0], "📞 Qo'ng'iroqlar: 40 (dozvon: 25 · nedozvon: 15)");
-  assert.equal(lines[1], "⏱ Suhbat vaqti: 2s 0d");
-  assert.equal(lines[2], "⭐ O'rtacha ball: 72/100 (4 ta tahlil)");
+  assert.equal(lines[0], "<b>Qo'ng'iroqlar:</b> 40 (dozvon: 25 · nedozvon: 15)");
+  assert.equal(lines[1], "<b>Suhbat vaqti:</b> 2s 0d");
+  assert.equal(lines[2], "<b>O'rtacha ball:</b> 72/100 (4 ta tahlil)");
   assert.equal(lines.length, 3);
 });
 
 test("says plainly when nothing was analyzed rather than showing a zero score", () => {
   const lines = formatCallSection(calls({ analyzed: 0, avgScore: null }));
-  assert.equal(lines[2], "⭐ O'rtacha ball: tahlil qilingan qo'ng'iroq yo'q");
+  assert.equal(lines[2], "<b>O'rtacha ball:</b> tahlil qilingan qo'ng'iroq yo'q");
 });
 
 test("warns when the history page cap may have hidden part of the day", () => {
   const lines = formatCallSection(calls({ possiblyTruncated: true }));
-  assert.equal(lines.at(-1), "⚠️ Qo'ng'iroqlar soni to'liq bo'lmasligi mumkin (tarix limiti).");
+  assert.equal(lines.at(-1), "Qo'ng'iroqlar soni to'liq bo'lmasligi mumkin (tarix limiti).");
 });
 
 test("reports won and part-paid revenue as separate lines", () => {
   const lines = formatRevenueSection(revenue());
   assert.deepEqual(lines, [
-    "💰 Tushumlar:",
-    "• Muvaffaqiyatli: 2 ta · 12 500 000",
-    "• Qisman to'langan: 1 ta · 1 800 000",
+    "<b>Tushumlar (amoCRM):</b>",
+    "Muvaffaqiyatli: 2 ta · 12 500 000",
+    "Qisman to'langan: 1 ta · 1 800 000",
   ]);
 });
 
 test("never hides that some payments have no resolved amount", () => {
   const lines = formatRevenueSection(revenue({ unknownAmountCount: 2 }));
-  assert.equal(lines.at(-1), "⚠️ Summasi aniqlanmagan bitimlar: 2 ta");
+  assert.equal(lines.at(-1), "Byudjeti bo'sh bitimlar: 2 ta");
 });
 
 test("shows plan progress and what is left", () => {
   assert.deepEqual(formatPlanSection({ target: 50000000, achieved: 32000000 }), [
-    "🎯 Oylik reja: 50 000 000",
-    "✅ Bajarildi: 32 000 000 (64%)",
-    "📉 Qoldi: 18 000 000",
+    "<b>Oylik reja:</b> 50 000 000",
+    "Bajarildi: 32 000 000 (64%)",
+    "Qoldi: 18 000 000",
   ]);
 });
 
 test("celebrates an exceeded plan instead of printing a negative remainder", () => {
   const lines = formatPlanSection({ target: 50000000, achieved: 62000000 });
-  assert.equal(lines[1], "✅ Bajarildi: 62 000 000 (124%)");
-  assert.equal(lines[2], "🎉 Reja bajarildi! Ortiqcha: 12 000 000");
+  assert.equal(lines[1], "Bajarildi: 62 000 000 (124%)");
+  assert.equal(lines[2], "Reja bajarildi. Ortiqcha: 12 000 000");
 });
 
 test("states that no plan is set rather than dividing by zero", () => {
-  assert.deepEqual(formatPlanSection(null), ["🎯 Oylik reja: belgilanmagan"]);
-  assert.deepEqual(formatPlanSection({ target: 0, achieved: 100 }), ["🎯 Oylik reja: belgilanmagan"]);
+  assert.deepEqual(formatPlanSection(null), ["<b>Oylik reja:</b> belgilanmagan"]);
+  assert.deepEqual(formatPlanSection({ target: 0, achieved: 100 }), ["<b>Oylik reja:</b> belgilanmagan"]);
   assert.equal(planPercent(null), null);
   assert.equal(planPercent({ target: 0, achieved: 100 }), null);
   assert.equal(planPercent({ target: 200, achieved: 50 }), 25);
@@ -97,10 +97,10 @@ test("builds a manager report with every section present", () => {
     "Kecha (12.08)",
   );
 
-  assert.equal(text.startsWith("📊 Kecha (12.08) — Aziza"), true);
-  assert.equal(text.includes("📞 Qo'ng'iroqlar: 40 (dozvon: 25 · nedozvon: 15)"), true);
-  assert.equal(text.includes("• Muvaffaqiyatli: 2 ta · 12 500 000"), true);
-  assert.equal(text.includes("📉 Qoldi: 18 000 000"), true);
+  assert.equal(text.startsWith("<b>Kecha (12.08) — Aziza</b>"), true);
+  assert.equal(text.includes("<b>Qo'ng'iroqlar:</b> 40 (dozvon: 25 · nedozvon: 15)"), true);
+  assert.equal(text.includes("Muvaffaqiyatli: 2 ta · 12 500 000"), true);
+  assert.equal(text.includes("Qoldi: 18 000 000"), true);
 });
 
 test("weights the team score by call count, not by manager count", () => {
@@ -132,7 +132,7 @@ test("leaves the team plan unset when no member has one", () => {
     { managerName: "A", calls: calls(), revenue: revenue(), plan: null },
   ]);
   assert.equal(team.plan, null);
-  assert.equal(formatTeamPerformance(team).includes("🎯 Oylik reja: belgilanmagan"), true);
+  assert.equal(formatTeamPerformance(team).includes("<b>Oylik reja:</b> belgilanmagan"), true);
 });
 
 test("propagates a truncation warning from any member to the team", () => {
@@ -149,28 +149,28 @@ test("lists team members by revenue, strongest first", () => {
     { managerName: "Yuqori", calls: calls(), revenue: revenue({ wonAmount: 9000000 }), plan: { target: 10000000, achieved: 9000000 } },
   ]));
 
-  const memberLines = text.split("\n").filter((line) => line.startsWith("• Past") || line.startsWith("• Yuqori"));
-  assert.equal(memberLines[0].startsWith("• Yuqori"), true);
+  const memberLines = text.split("\n").filter((line) => line.startsWith("Past") || line.startsWith("Yuqori"));
+  assert.equal(memberLines[0].startsWith("Yuqori"), true);
   assert.equal(memberLines[0].includes("reja 90%"), true);
-  assert.equal(memberLines[1].startsWith("• Past"), true);
+  assert.equal(memberLines[1].startsWith("Past"), true);
   assert.equal(memberLines[1].includes("reja"), false);
 });
 
 test("renders an empty team without inventing members", () => {
   const text = formatTeamPerformance(aggregateTeamPerformance("Jamoa", "Kecha", []));
-  assert.equal(text.includes("👤 Menejerlar:"), false);
-  assert.equal(text.includes("📞 Qo'ng'iroqlar: 0 (dozvon: 0 · nedozvon: 0)"), true);
+  assert.equal(text.includes("<b>Menejerlar:</b>"), false);
+  assert.equal(text.includes("<b>Qo'ng'iroqlar:</b> 0 (dozvon: 0 · nedozvon: 0)"), true);
 });
 
 test("says the call count could not be read instead of reporting zero", () => {
   const lines = formatCallSection({ ...emptyCallVolumeSection(), analyzed: 245, avgScore: 72, volumeUnavailable: true });
 
   // "0 calls" alongside "245 analyzed" is self-contradictory and untrue.
-  assert.equal(lines[0], "📞 Qo'ng'iroqlar soni: ma'lumot olinmadi (OnlinePBX javob bermadi)");
+  assert.equal(lines[0], "<b>Qo'ng'iroqlar:</b> ma'lumot olinmadi (OnlinePBX javob bermadi)");
   assert.equal(lines.some((line) => line.includes("dozvon: 0")), false);
   assert.equal(lines.some((line) => line.includes("Suhbat vaqti")), false);
   // The score still comes from the database and stays visible.
-  assert.equal(lines.at(-1), "⭐ O'rtacha ball: 72/100 (245 ta tahlil)");
+  assert.equal(lines.at(-1), "<b>O'rtacha ball:</b> 72/100 (245 ta tahlil)");
 });
 
 test("shows a dash instead of 0/0 for a member whose volume is unknown", () => {
@@ -183,7 +183,7 @@ test("shows a dash instead of 0/0 for a member whose volume is unknown", () => {
     },
   ]));
 
-  assert.equal(text.includes("• Aziza: dozvon: — · ⭐ 72/100"), true);
+  assert.equal(text.includes("Aziza: dozvon: — · ball 72/100"), true);
   assert.equal(text.includes("0/0 dozvon"), false);
 });
 

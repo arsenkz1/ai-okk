@@ -1,12 +1,9 @@
 import TelegramBot from "node-telegram-bot-api";
 import { prisma } from "../../config/database";
 import { loadManagerPerformance } from "../../services/performanceData";
-import {
-  aggregateTeamPerformance,
-  formatManagerPerformance,
-  formatTeamPerformance,
-} from "../../services/performanceReport";
-import { formatPhoenixMovements, loadPhoenixMovements } from "../../services/phoenixMovementStats";
+import { formatManagerPerformance, formatTeamPerformance } from "../../services/performanceReport";
+import { amoUserIdMap } from "../../services/amoDailyFacts";
+import { applyAmoRevenueForManagers, buildCompanyTeam } from "../../services/companyPerformance";
 import { formatManagerDisplayName } from "../../services/managerDisplayName";
 import {
   formatCallProcessingBreakdown,
@@ -109,28 +106,32 @@ async function sendPerformance(
   const performance = await loadManagerPerformance({ managerIds, range: { from, to } });
 
   if (title === null) {
+    const owner = await prisma.manager.findUnique({ where: { id: managerIds[0] }, select: { id: true, amoUserId: true } });
+    if (owner) {
+      await applyAmoRevenueForManagers({ performance, managers: [owner], range: { from, to }, logPrefix: "[Performance]" });
+    }
     const single = performance.get(managerIds[0]);
     if (!single) {
       await bot.sendMessage(msg.chat.id, "ℹ️ Ma'lumot topilmadi.");
       return;
     }
-    await bot.sendMessage(msg.chat.id, formatManagerPerformance(single, label));
+    await bot.sendMessage(msg.chat.id, formatManagerPerformance(single, label), { parse_mode: "HTML" });
     return;
   }
 
-  // Phoenix moves are company-wide, not per manager, so they are loaded once
-  // for the range rather than aggregated from the member rows.
-  let phoenixLines: string[] = [];
-  try {
-    phoenixLines = formatPhoenixMovements(await loadPhoenixMovements({ from, to }));
-  } catch (error) {
-    console.error("[Performance] Phoenix movement stats unavailable:", error instanceof Error ? error.message : error);
-  }
+  // Phoenix arrivals and revenue come from amoCRM itself, not from our tables,
+  // so hand-made moves and pre-deploy history are counted.
+  const members = await prisma.manager.findMany({ where: { id: { in: managerIds } }, select: { id: true, amoUserId: true } });
+  const { team } = await buildCompanyTeam({
+    title,
+    label,
+    range: { from, to },
+    performance,
+    amoUserIdByManagerId: amoUserIdMap(members),
+    logPrefix: "[Performance]",
+  });
 
-  await bot.sendMessage(
-    msg.chat.id,
-    formatTeamPerformance(aggregateTeamPerformance(title, label, [...performance.values()], phoenixLines)),
-  );
+  await bot.sendMessage(msg.chat.id, formatTeamPerformance(team), { parse_mode: "HTML" });
 }
 
 export function registerPerformanceHandlers(bot: TelegramBot): void {

@@ -120,7 +120,7 @@ cron.schedule(
     console.log("[Cron] Sending daily reports...");
     try {
       const result = await sendDailyReports(async (chatId, text) => {
-        await bot.sendMessage(chatId, text);
+        await bot.sendMessage(chatId, text, { parse_mode: "HTML" });
       });
       console.log("[Cron] Daily reports done:", result);
     } catch (err: any) {
@@ -157,7 +157,7 @@ cron.schedule(
     console.log("[Cron] Sending admin daily report...");
     try {
       const result = await sendAdminDailyReport({
-        send: (text) => notifyAdmins(text, "all"),
+        send: (text) => notifyAdmins(text, "all", { parse_mode: "HTML" }),
       });
       console.log("[Cron] Admin daily report sent:", result);
     } catch (err: any) {

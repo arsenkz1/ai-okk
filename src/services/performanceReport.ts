@@ -26,8 +26,10 @@ export interface RevenueSection {
   wonAmount: number;
   partialCount: number;
   partialAmount: number;
-  /** Recorded payments whose amount could not be resolved yet. */
+  /** Deals counted whose budget is empty in amoCRM. */
   unknownAmountCount: number;
+  /** True when no part-paid stage has been synced yet, so that line is necessarily 0. */
+  stagesNotSynced?: boolean;
 }
 
 export interface PlanSection {
@@ -78,56 +80,66 @@ export function emptyRevenueSection(): RevenueSection {
   return { wonCount: 0, wonAmount: 0, partialCount: 0, partialAmount: 0, unknownAmountCount: 0 };
 }
 
+/** Telegram HTML: only these three characters need escaping in text nodes. */
+export function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+export const bold = (value: string): string => `<b>${escapeHtml(value)}</b>`;
+
 export function formatCallSection(calls: CallVolumeSection): string[] {
   const lines = calls.volumeUnavailable
-    ? ["📞 Qo'ng'iroqlar soni: ma'lumot olinmadi (OnlinePBX javob bermadi)"]
+    ? [`${bold("Qo'ng'iroqlar:")} ma'lumot olinmadi (OnlinePBX javob bermadi)`]
     : [
-      `📞 Qo'ng'iroqlar: ${calls.total} (dozvon: ${calls.connected} · nedozvon: ${calls.missed})`,
-      `⏱ Suhbat vaqti: ${formatTalkTime(calls.talkSeconds)}`,
+      `${bold("Qo'ng'iroqlar:")} ${calls.total} (dozvon: ${calls.connected} · nedozvon: ${calls.missed})`,
+      `${bold("Suhbat vaqti:")} ${formatTalkTime(calls.talkSeconds)}`,
     ];
   lines.push(
     calls.avgScore !== null
-      ? `⭐ O'rtacha ball: ${calls.avgScore}/100 (${calls.analyzed} ta tahlil)`
-      : "⭐ O'rtacha ball: tahlil qilingan qo'ng'iroq yo'q",
+      ? `${bold("O'rtacha ball:")} ${calls.avgScore}/100 (${calls.analyzed} ta tahlil)`
+      : `${bold("O'rtacha ball:")} tahlil qilingan qo'ng'iroq yo'q`,
   );
   if (calls.possiblyTruncated) {
-    lines.push("⚠️ Qo'ng'iroqlar soni to'liq bo'lmasligi mumkin (tarix limiti).");
+    lines.push("Qo'ng'iroqlar soni to'liq bo'lmasligi mumkin (tarix limiti).");
   }
   return lines;
 }
 
 export function formatRevenueSection(revenue: RevenueSection): string[] {
   const lines = [
-    "💰 Tushumlar:",
-    `• Muvaffaqiyatli: ${revenue.wonCount} ta · ${formatMoney(revenue.wonAmount)}`,
-    `• Qisman to'langan: ${revenue.partialCount} ta · ${formatMoney(revenue.partialAmount)}`,
+    bold("Tushumlar (amoCRM):"),
+    `Muvaffaqiyatli: ${revenue.wonCount} ta · ${formatMoney(revenue.wonAmount)}`,
+    `Qisman to'langan: ${revenue.partialCount} ta · ${formatMoney(revenue.partialAmount)}`,
   ];
   if (revenue.unknownAmountCount > 0) {
-    // Never hide that a number is incomplete: the amount field is not set up.
-    lines.push(`⚠️ Summasi aniqlanmagan bitimlar: ${revenue.unknownAmountCount} ta`);
+    // Never hide that a number is incomplete: the budget field is empty.
+    lines.push(`Byudjeti bo'sh bitimlar: ${revenue.unknownAmountCount} ta`);
+  }
+  if (revenue.stagesNotSynced) {
+    lines.push("Qisman to'lov bosqichlari sinxronlanmagan — /sync_stages");
   }
   return lines;
 }
 
 export function formatPlanSection(plan: PlanSection | null): string[] {
-  if (!plan || plan.target <= 0) return ["🎯 Oylik reja: belgilanmagan"];
+  if (!plan || plan.target <= 0) return [`${bold("Oylik reja:")} belgilanmagan`];
   const percent = planPercent(plan) ?? 0;
   const remaining = Math.max(0, plan.target - plan.achieved);
   const lines = [
-    `🎯 Oylik reja: ${formatMoney(plan.target)}`,
-    `✅ Bajarildi: ${formatMoney(plan.achieved)} (${percent}%)`,
+    `${bold("Oylik reja:")} ${formatMoney(plan.target)}`,
+    `Bajarildi: ${formatMoney(plan.achieved)} (${percent}%)`,
   ];
   lines.push(
     remaining > 0
-      ? `📉 Qoldi: ${formatMoney(remaining)}`
-      : `🎉 Reja bajarildi! Ortiqcha: ${formatMoney(plan.achieved - plan.target)}`,
+      ? `Qoldi: ${formatMoney(remaining)}`
+      : `Reja bajarildi. Ortiqcha: ${formatMoney(plan.achieved - plan.target)}`,
   );
   return lines;
 }
 
 export function formatManagerPerformance(performance: ManagerPerformance, periodLabel: string): string {
   return [
-    `📊 ${periodLabel} — ${performance.managerName}`,
+    bold(`${periodLabel} — ${performance.managerName}`),
     "",
     ...formatCallSection(performance.calls),
     "",
@@ -146,12 +158,12 @@ function memberLine(member: ManagerPerformance): string {
   const dozvon = member.calls.volumeUnavailable
     ? "dozvon: —"
     : `${member.calls.connected}/${member.calls.total} dozvon`;
-  return `• ${member.managerName}: ${dozvon} · ⭐ ${score} · 💰 ${formatMoney(member.revenue.wonAmount)}${planPart}`;
+  return `${escapeHtml(member.managerName)}: ${dozvon} · ball ${score} · ${formatMoney(member.revenue.wonAmount)}${planPart}`;
 }
 
 export function formatTeamPerformance(team: TeamPerformance): string {
   const lines = [
-    `👥 ${team.title} — ${team.periodLabel}`,
+    bold(`${team.title} — ${team.periodLabel}`),
     "",
     ...formatCallSection(team.calls),
     "",
@@ -163,7 +175,7 @@ export function formatTeamPerformance(team: TeamPerformance): string {
   if (team.phoenixLines?.length) lines.push("", ...team.phoenixLines);
 
   if (team.members.length > 0) {
-    lines.push("", "👤 Menejerlar:");
+    lines.push("", bold("Menejerlar:"));
     // Strongest revenue first: the report is read top-down for who is carrying
     // the month, with a stable name order for equal amounts.
     const ordered = [...team.members].sort((left, right) => (
@@ -192,6 +204,7 @@ function addRevenueSections(target: RevenueSection, source: RevenueSection): voi
   target.partialCount += source.partialCount;
   target.partialAmount += source.partialAmount;
   target.unknownAmountCount += source.unknownAmountCount;
+  if (source.stagesNotSynced) target.stagesNotSynced = true;
 }
 
 /**
