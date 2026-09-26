@@ -7,6 +7,8 @@ const {
   setInactivityMovementPaused,
   formatInactivityMovementSwitch,
   INACTIVITY_MOVEMENT_PAUSED_SETTING_KEY,
+  formatInactivityDailyCap,
+  setInactivityDailyCap,
 } = require("../dist/services/inactivityMovementSwitch");
 const { createLeadInactivityWorker } = require("../dist/workers/leadInactivityWorker");
 
@@ -39,7 +41,7 @@ function fakeDatabase(initial = null, watches = []) {
 
 test("defaults to running when the switch has never been touched", async () => {
   const database = fakeDatabase();
-  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: false, dailyCapDisabled: false, changedBy: null, changedAt: null });
+  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: false, dailyCapDisabled: false, dailyCapExplicit: false, changedBy: null, changedAt: null });
   assert.equal(await isInactivityMovementPaused(database), false);
 });
 
@@ -48,9 +50,9 @@ test("records who paused it and when, and reads it back", async () => {
   const at = new Date("2026-09-15T05:00:00.000Z");
   const state = await setInactivityMovementPaused(true, "295612129", database, at);
 
-  assert.deepEqual(state, { paused: true, dailyCapDisabled: false, changedBy: "295612129", changedAt: at, clearedWatches: 0 });
+  assert.deepEqual(state, { paused: true, dailyCapDisabled: false, dailyCapExplicit: false, changedBy: "295612129", changedAt: at, clearedWatches: 0 });
   // Reading back returns the stored state; the cleared count is per-operation.
-  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: true, dailyCapDisabled: false, changedBy: "295612129", changedAt: at });
+  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: true, dailyCapDisabled: false, dailyCapExplicit: false, changedBy: "295612129", changedAt: at });
   assert.equal(await isInactivityMovementPaused(database), true);
 });
 
@@ -209,4 +211,40 @@ test("the cap cannot be lifted in testing mode", async () => {
   });
   await worker.runOnce();
   assert.equal(calls.includes("ensureTestSlots"), true, "the five-slot test cap still applies");
+});
+
+test("the cap command toggles only the cap and leaves moves as they are", async () => {
+  const database = fakeDatabase();
+  await setInactivityMovementPaused(true, "111", database);
+  const off = await setInactivityDailyCap(false, "222", database);
+  assert.equal(off.dailyCapDisabled, true);
+  assert.equal(off.paused, true, "moves stay stopped");
+  const on = await setInactivityDailyCap(true, "222", database);
+  assert.equal(on.dailyCapDisabled, false);
+  assert.deepEqual(
+    { ...(await getInactivityMovementSwitch(database)), changedAt: null },
+    { paused: true, dailyCapDisabled: false, dailyCapExplicit: true, changedBy: "222", changedAt: null },
+  );
+});
+
+test("an explicit cap survives /inactivity_on instead of being lifted again", async () => {
+  const database = fakeDatabase();
+  await setInactivityDailyCap(true, "222", database);
+  const on = await setInactivityMovementPaused(false, "111", database);
+  assert.equal(on.dailyCapDisabled, false, "the operator asked for the cap; switching on keeps it");
+  assert.equal((await getInactivityMovementSwitch(database)).dailyCapDisabled, false);
+
+  await setInactivityDailyCap(false, "222", database);
+  await setInactivityMovementPaused(true, "111", database);
+  assert.equal((await setInactivityMovementPaused(false, "111", database)).dailyCapDisabled, true);
+});
+
+test("the cap message says which way it is set and what it does not limit", () => {
+  const base = { paused: false, dailyCapExplicit: true, changedBy: null, changedAt: null };
+  const capped = formatInactivityDailyCap({ ...base, dailyCapDisabled: false }, { limit: 100, used: 37 });
+  assert.match(capped, /ВКЛЮЧЁН: не больше 100 в день/);
+  assert.match(capped, /Сегодня уже переведено воркером: 37/);
+  const lifted = formatInactivityDailyCap({ ...base, dailyCapDisabled: true, paused: true });
+  assert.match(lifted, /СНЯТ/);
+  assert.match(lifted, /остановлены/);
 });

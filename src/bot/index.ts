@@ -673,7 +673,10 @@ bot.onText(/\/help$/, async (msg) => {
         "/inactivity_status - Feniks vorkeri nega ishlamayapti\n" +
         "/inactivity_lead <id> - aniq bitim nega Feniksga o'tmagan\n" +
         "/inactivity_off - Feniksga ko'chirishni to'liq to'xtatish (navbat tozalanadi)\n" +
-        "/inactivity_on - yoqish va 3+ kun tegilmagan lidlarni ko'chirishni taklif qilish\n\n" +
+        "/inactivity_on - yoqish va 3+ kun tegilmagan lidlarni ko'chirishni taklif qilish\n" +
+        "/inactivity_limit_on - kuniga 100 ta ko'chirish limitini yoqish\n" +
+        "/inactivity_limit_off - kunlik limitni o'chirish (cheklovsiz)\n" +
+        "/inactivity_limit - limit holatini ko'rish\n\n" +
         `ROP - reyting va analitika:\n` +
         "/teams - barcha jamoalar\n" +
         "/all_rating - menejerlarning umumiy reytingi (7 kun)\n" +

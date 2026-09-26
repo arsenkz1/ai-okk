@@ -13,8 +13,10 @@ import { fetchAllPipelines } from "../../services/amocrm";
 import { formatRevenueStageSync, syncRevenueStages } from "../../services/revenueStageSync";
 import { formatInactivityStatus, loadInactivityStatus } from "../../services/inactivityStatus";
 import {
+  formatInactivityDailyCap,
   formatInactivityMovementSwitch,
   getInactivityMovementSwitch,
+  setInactivityDailyCap,
   setInactivityMovementPaused,
 } from "../../services/inactivityMovementSwitch";
 import {
@@ -265,6 +267,28 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
       }
     } catch (error) {
       await bot.sendMessage(chatId, `❌ Массовый перенос прерван ошибкой: ${error instanceof Error ? error.message : "ошибка"}`);
+    }
+  });
+
+  // /inactivity_limit_on | /inactivity_limit_off — the 100-per-day cap alone,
+  // independent of whether moves run. /inactivity_limit shows the current one.
+  bot.onText(/^\/inactivity_limit(?:_(on|off))?$/, async (msg, match) => {
+    if (!(await requirePlanEditor(bot, msg))) return;
+    const action = match?.[1];
+    try {
+      const state = action
+        ? await setInactivityDailyCap(action === "on", String(msg.from!.id))
+        : await getInactivityMovementSwitch();
+      let today: { limit: number | null; used: number } | null = null;
+      try {
+        const status = await loadInactivityStatus();
+        today = { limit: status.dailyLimit, used: status.dailyUsed };
+      } catch {
+        // The counter is a courtesy; the switch itself is already written.
+      }
+      await bot.sendMessage(msg.chat.id, formatInactivityDailyCap(state, today));
+    } catch (error) {
+      await bot.sendMessage(msg.chat.id, `Не удалось изменить лимит: ${error instanceof Error ? error.message : "ошибка"}`);
     }
   });
 
