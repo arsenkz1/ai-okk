@@ -1,6 +1,6 @@
 import { prisma } from "../config/database";
 import { loadManagerPerformance } from "../services/performanceData";
-import { formatTeamPerformance } from "../services/performanceReport";
+import { deliverTeamPerformance, type TeamReportFile } from "../services/teamPerformanceDelivery";
 import { amoUserIdMap } from "../services/amoDailyFacts";
 import { buildCompanyTeam } from "../services/companyPerformance";
 
@@ -17,6 +17,8 @@ export interface AdminDailyReportResult {
   sent: boolean;
   managers: number;
   phoenixMoves: number;
+  /** True when the manager table went out as an Excel file rather than in the text. */
+  membersInFile: boolean;
 }
 
 function yesterdayRange(now: Date): { from: Date; to: Date; label: string } {
@@ -33,6 +35,8 @@ function yesterdayRange(now: Date): { from: Date; to: Date; label: string } {
 
 export interface SendAdminDailyReportDependencies {
   send: (text: string) => Promise<void>;
+  /** Delivers the manager table as a file; without it the managers stay in the text. */
+  sendFile?: (file: TeamReportFile) => Promise<void>;
   now?: () => Date;
 }
 
@@ -55,8 +59,11 @@ export async function sendAdminDailyReport(
     amoUserIdByManagerId: amoUserIdMap(managers),
     logPrefix: "[AdminDailyReport]",
   });
-  const report = formatTeamPerformance(team);
-
-  await dependencies.send(report);
-  return { sent: true, managers: managers.length, phoenixMoves };
+  const { membersInFile } = await deliverTeamPerformance({
+    team,
+    sendText: dependencies.send,
+    sendFile: dependencies.sendFile,
+    logPrefix: "[AdminDailyReport]",
+  });
+  return { sent: true, managers: managers.length, phoenixMoves, membersInFile };
 }

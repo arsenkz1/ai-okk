@@ -9,7 +9,7 @@ import { sendDailyReports } from "./workers/dailyReport";
 import "./workers/callProcessor";
 import { bot } from "./bot/index"; // запускает бот в режиме polling
 import { runDisciplineCheck } from "./services/disciplineCheck";
-import { notifyAdmins, notifyAdminsWithFile } from "./bot/notify";
+import { notifyAdmins, notifyAdminsWithDocument, notifyAdminsWithFile } from "./bot/notify";
 import { sendFieldOptionBackup } from "./services/fieldOptionBackup";
 import { sendAdminDailyReport } from "./workers/adminDailyReport";
 import { prisma } from "./config/database";
@@ -158,6 +158,7 @@ cron.schedule(
     try {
       const result = await sendAdminDailyReport({
         send: (text) => notifyAdmins(text, "all", { parse_mode: "HTML" }),
+        sendFile: (file) => notifyAdminsWithDocument(file, "all"),
       });
       console.log("[Cron] Admin daily report sent:", result);
     } catch (err: any) {

@@ -1,7 +1,8 @@
 import TelegramBot from "node-telegram-bot-api";
 import { prisma } from "../../config/database";
 import { loadManagerPerformance } from "../../services/performanceData";
-import { formatManagerPerformance, formatTeamPerformance } from "../../services/performanceReport";
+import { formatManagerPerformance } from "../../services/performanceReport";
+import { deliverTeamPerformance } from "../../services/teamPerformanceDelivery";
 import { amoUserIdMap } from "../../services/amoDailyFacts";
 import { applyAmoRevenueForManagers, buildCompanyTeam } from "../../services/companyPerformance";
 import { formatManagerDisplayName } from "../../services/managerDisplayName";
@@ -133,7 +134,17 @@ async function sendPerformance(
     logPrefix: "[Performance]",
   });
 
-  await bot.sendMessage(msg.chat.id, formatTeamPerformance(team), { parse_mode: "HTML" });
+  await deliverTeamPerformance({
+    team,
+    sendText: (text) => bot.sendMessage(msg.chat.id, text, { parse_mode: "HTML" }).then(() => undefined),
+    sendFile: (file) => bot.sendDocument(
+      msg.chat.id,
+      file.buffer,
+      { caption: file.caption },
+      { filename: file.filename, contentType: file.contentType },
+    ).then(() => undefined),
+    logPrefix: "[Performance]",
+  });
 }
 
 export function registerPerformanceHandlers(bot: TelegramBot): void {

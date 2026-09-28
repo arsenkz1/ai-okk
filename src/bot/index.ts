@@ -46,9 +46,11 @@ import {
   formatCallSection,
   formatPlanSection,
   formatRevenueSection,
+  type TeamPerformance,
 } from "../services/performanceReport";
 import { amoUserIdMap } from "../services/amoDailyFacts";
 import { applyAmoRevenueForManagers, buildCompanyTeam } from "../services/companyPerformance";
+import { buildTeamReportFile } from "../services/teamPerformanceDelivery";
 import { installSafeTelegramSender } from "./safeTelegram";
 
 // ---------------------------------------------------------------------------
@@ -329,7 +331,13 @@ async function buildReport(
     .join("\n");
 }
 
-async function buildAdminReport(from: Date, to: Date, label: string): Promise<string> {
+interface AdminReport {
+  text: string;
+  /** Company team for the period; null when the block could not be built. */
+  team: TeamPerformance | null;
+}
+
+async function buildAdminReport(from: Date, to: Date, label: string): Promise<AdminReport> {
   const fromStart = new Date(from); fromStart.setHours(0, 0, 0, 0);
   const toEnd = new Date(to); toEnd.setHours(23, 59, 59, 999);
 
@@ -345,7 +353,7 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
   const excludedCalls = allCalls.length - calls.length;
 
   if (!calls.length) {
-    return `${bold(`${label} uchun umumiy hisobot`)}\n\nBu davr uchun tahlil qilingan qo'ng'iroqlar topilmadi.`;
+    return { text: `${bold(`${label} uchun umumiy hisobot`)}\n\nBu davr uchun tahlil qilingan qo'ng'iroqlar topilmadi.`, team: null };
   }
 
   const totalTalk = calls.reduce((a, c) => a + c.durationSeconds, 0);
@@ -387,6 +395,7 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
     `${bold("Jami vaqt:")} ${formatDuration(totalTalk)}`,
     `${bold("O'rtacha ball:")} ${avgScore}/100`,
   ];
+  let companyTeam: TeamPerformance | null = null;
   try {
     const sellers = await prisma.manager.findMany({
       where: { isActive: true, excludeFromReports: false },
@@ -404,6 +413,7 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
       amoUserIdByManagerId: amoUserIdMap(sellers),
       logPrefix: "[Report]",
     });
+    companyTeam = team;
     companyBlock = [
       ...formatCallSection(team.calls),
       "",
@@ -416,7 +426,7 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
     console.error("[Report] Company block unavailable:", error instanceof Error ? error.message : error);
   }
 
-  return [
+  const text = [
     bold(`${label} uchun umumiy hisobot`),
     ``,
     ...companyBlock,
@@ -426,6 +436,20 @@ async function buildAdminReport(from: Date, to: Date, label: string): Promise<st
       ? `\nReytingdan chiqarilgan hisoblar: ${excludedCalls} ta qo'ng'iroq hisobga olinmadi.`
       : "",
   ].filter(Boolean).join("\n");
+  return { text, team: companyTeam };
+}
+
+/**
+ * The admin period report: the text, then the manager table as an Excel file,
+ * the same one the 09:00 report and /team_stats attach.
+ */
+async function sendAdminReport(chatId: TelegramBot.ChatId, from: Date, to: Date, label: string): Promise<void> {
+  const report = await buildAdminReport(from, to, label);
+  await bot.sendMessage(chatId, report.text, { parse_mode: "HTML" });
+  const file = report.team ? await buildTeamReportFile(report.team, "[Report]") : null;
+  if (file) {
+    await bot.sendDocument(chatId, file.buffer, { caption: file.caption }, { filename: file.filename, contentType: file.contentType });
+  }
 }
 
 function presetRange(preset: "day" | "week" | "month"): { from: Date; to: Date; label: string } {
@@ -872,7 +896,7 @@ bot.on("message", async (msg) => {
     const label = `${fmt(from)} — ${fmt(to)}`;
 
     if (state.adminMode) {
-      await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label), { parse_mode: "HTML" });
+      await sendAdminReport(msg.chat.id, from, to, label);
       return;
     }
 
@@ -1008,7 +1032,7 @@ bot.onText(/\/report$/, async (msg) => {
   const { from, to, label } = presetRange("day");
   await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
   if (await isAdmin(tgId) && !(await getManager(tgId))) {
-    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label), { parse_mode: "HTML" });
+    return void await sendAdminReport(msg.chat.id, from, to, label);
   }
   const manager = await requireManager(msg);
   if (!manager) return;
@@ -1021,7 +1045,7 @@ bot.onText(/\/week$/, async (msg) => {
   const { from, to, label } = presetRange("week");
   await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
   if (await isAdmin(tgId) && !(await getManager(tgId))) {
-    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label), { parse_mode: "HTML" });
+    return void await sendAdminReport(msg.chat.id, from, to, label);
   }
   const manager = await requireManager(msg);
   if (!manager) return;
@@ -1034,7 +1058,7 @@ bot.onText(/\/month$/, async (msg) => {
   const { from, to, label } = presetRange("month");
   await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
   if (await isAdmin(tgId) && !(await getManager(tgId))) {
-    return void await bot.sendMessage(msg.chat.id, await buildAdminReport(from, to, label), { parse_mode: "HTML" });
+    return void await sendAdminReport(msg.chat.id, from, to, label);
   }
   const manager = await requireManager(msg);
   if (!manager) return;

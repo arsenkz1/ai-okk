@@ -56,24 +56,42 @@ export async function adminRecipients(audience: AdminAudience): Promise<string[]
   return resolvePrimaryAdminIds();
 }
 
+export interface AdminDocument {
+  buffer: Buffer;
+  filename: string;
+  contentType: string;
+  caption?: string;
+}
+
+export async function notifyAdminsWithDocument(document: AdminDocument, audience: AdminAudience = "primary"): Promise<void> {
+  const bot = getNotifyBot();
+  if (!bot) return;
+
+  const ids = await adminRecipients(audience);
+  for (const id of ids) {
+    try {
+      await bot.sendDocument(
+        id,
+        document.buffer,
+        document.caption ? { caption: document.caption, parse_mode: "HTML" } : {},
+        { filename: document.filename, contentType: document.contentType },
+      );
+    } catch (err: any) {
+      console.error(`[Bot] notifyAdminsWithDocument failed for ${id}:`, err.message);
+    }
+  }
+}
+
 export async function notifyAdminsWithFile(
   caption: string,
   content: string,
   filename: string,
   audience: AdminAudience = "primary"
 ): Promise<void> {
-  const bot = getNotifyBot();
-  if (!bot) return;
-
-  const ids = await adminRecipients(audience);
-  const buffer = Buffer.from(content, "utf-8");
-  for (const id of ids) {
-    try {
-      await bot.sendDocument(id, buffer, { caption, parse_mode: "HTML" }, { filename, contentType: "text/plain" });
-    } catch (err: any) {
-      console.error(`[Bot] notifyAdminsWithFile failed for ${id}:`, err.message);
-    }
-  }
+  await notifyAdminsWithDocument(
+    { buffer: Buffer.from(content, "utf-8"), filename, contentType: "text/plain", caption },
+    audience,
+  );
 }
 
 /**

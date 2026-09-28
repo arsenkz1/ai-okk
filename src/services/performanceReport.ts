@@ -161,7 +161,23 @@ function memberLine(member: ManagerPerformance): string {
   return `${escapeHtml(member.managerName)}: ${dozvon} · ball ${score} · ${formatMoney(member.revenue.wonAmount)}${planPart}`;
 }
 
-export function formatTeamPerformance(team: TeamPerformance): string {
+/**
+ * Strongest revenue first: the report is read top-down for who is carrying
+ * the month, with a stable name order for equal amounts.
+ */
+export function orderTeamMembers(members: readonly ManagerPerformance[]): ManagerPerformance[] {
+  return [...members].sort((left, right) => (
+    right.revenue.wonAmount - left.revenue.wonAmount
+    || left.managerName.localeCompare(right.managerName)
+  ));
+}
+
+export interface FormatTeamOptions {
+  /** The per-manager table travels as a separate file, so it stays out of the text. */
+  membersInFile?: boolean;
+}
+
+export function formatTeamPerformance(team: TeamPerformance, options: FormatTeamOptions = {}): string {
   const lines = [
     bold(`${team.title} — ${team.periodLabel}`),
     "",
@@ -174,15 +190,9 @@ export function formatTeamPerformance(team: TeamPerformance): string {
 
   if (team.phoenixLines?.length) lines.push("", ...team.phoenixLines);
 
-  if (team.members.length > 0) {
+  if (team.members.length > 0 && !options.membersInFile) {
     lines.push("", bold("Menejerlar:"));
-    // Strongest revenue first: the report is read top-down for who is carrying
-    // the month, with a stable name order for equal amounts.
-    const ordered = [...team.members].sort((left, right) => (
-      right.revenue.wonAmount - left.revenue.wonAmount
-      || left.managerName.localeCompare(right.managerName)
-    ));
-    lines.push(...ordered.map(memberLine));
+    lines.push(...orderTeamMembers(team.members).map(memberLine));
   }
 
   return lines.join("\n");
