@@ -52,6 +52,11 @@ export const ALLOWED_INACTIVITY_SOURCE_STAGES: readonly InactivityStagePair[] = 
 
 export const TARGET_PIPELINE_ID = 9055770;
 export const TARGET_STATUS_ID = 72917546;
+/**
+ * Tag put on every deal the inactivity rule moves to Phoenix, so the trainees
+ * and reports can tell an overdue deal from one placed there by hand.
+ */
+export const INACTIVITY_MOVE_TAG = "prosrochka";
 export const INACTIVITY_MS = 72 * 60 * 60 * 1000;
 
 export const DIRECT_LEAD_WEBHOOK_ACTIONS = Object.freeze([

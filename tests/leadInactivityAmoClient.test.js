@@ -479,7 +479,11 @@ test("moves a freshly read lead while preserving its responsible manager and con
     pipeline_id: 9055770,
     status_id: 72917546,
     responsible_user_id: 77,
+    // The overdue tag rides in the move itself; tags_to_add appends and never
+    // replaces the deal's own tags.
+    tags_to_add: [{ name: "prosrochka" }],
   });
+  assert.equal("_embedded" in requests[2].data, false, "existing tags are never overwritten");
   assert.equal(requests[3].method, "GET");
 });
 

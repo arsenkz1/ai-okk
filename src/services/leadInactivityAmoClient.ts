@@ -4,7 +4,7 @@ import {
   type AmoCrmGlobalRateLimiter,
   waitForGlobalAmoCrmRequestSlot,
 } from "./amoCrmRateLimiter";
-import { ALLOWED_INACTIVITY_SOURCE_STAGES, isAllowedInactivitySourceStage } from "./leadInactivityPolicy";
+import { ALLOWED_INACTIVITY_SOURCE_STAGES, isAllowedInactivitySourceStage, INACTIVITY_MOVE_TAG } from "./leadInactivityPolicy";
 
 export const AMO_INACTIVITY_MAX_REQUESTS_PER_SECOND = AMOCRM_GLOBAL_MAX_REQUESTS_PER_SECOND;
 export const AMO_INACTIVITY_MIN_REQUEST_INTERVAL_MS = 1_000 / AMO_INACTIVITY_MAX_REQUESTS_PER_SECOND;
@@ -469,11 +469,21 @@ export function createLeadInactivityAmoClient(options: CreateLeadInactivityAmoCl
         return { kind: "not_moved", reason: "fence_cancelled", lead: current };
       }
 
-      const patch: { id: number; pipeline_id: number; status_id: number; responsible_user_id?: number } = {
+      const patch: {
+        id: number;
+        pipeline_id: number;
+        status_id: number;
+        responsible_user_id?: number;
+        tags_to_add: Array<{ name: string }>;
+      } = {
         id: current.id,
         pipeline_id: target.targetPipelineId,
         status_id: target.targetStatusId,
         ...(current.responsibleUserId === null ? {} : { responsible_user_id: current.responsibleUserId }),
+        // Travels in the same request as the move: a deal is tagged exactly
+        // when it is moved, never one without the other. `tags_to_add` appends
+        // by name and leaves the deal's existing tags alone.
+        tags_to_add: [{ name: INACTIVITY_MOVE_TAG }],
       };
       const refreshSourceStageBeforePatch = async (): Promise<boolean> => {
         if (isMoveMutationCurrent && !await isMoveMutationCurrent()) return false;
