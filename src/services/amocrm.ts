@@ -32,13 +32,16 @@ const AMO_BASE_URL = process.env.AMOCRM_BASE_URL
 const AMO_ACCESS_TOKEN = process.env.AMOCRM_ACCESS_TOKEN;
 
 // Pipeline IDs и qualifying stage IDs по воронкам
-export const QUALIFYING_PIPELINE_IDS = [6909890, 8425422, 9055778, 9888398];
+// Pipelines whose deals the local phone table remembers and whose won/lost
+// moves are mirrored to Google Sheets.
+export const QUALIFYING_PIPELINE_IDS = [6909890, 8425422, 9055778, 9888398, 10734414];
 
 export const QUALIFYING_STAGE_IDS = new Set([
-  58160726, 58160902, // Основная воронка: Квалифицирован, ОЖОП
-  68567458, 68567462, // Стажёры:          Квалифицирован, ОЖОП
-  78631750, 78631754, // DATA:              Квалифицирован, ОЖОП
-  72917586, 72919958, // Exode:             Квалифицирован, ОЖОП
+  58160726, 58160902, // UZUM:  Квалифицирован, ОЖОП
+  68567458, 68567462, // WB:    Квалифицирован, ОЖОП
+  78631750, 78631754, // Дата:  Квалифицирован, ОЖОП
+  72917586, 72919958, // EXODE: Квалифицирован, ОЖОП
+  84554934, 84554938, // AI:    Квалифицирован, ОЖОП
 ]);
 
 // ---------------------------------------------------------------------------
