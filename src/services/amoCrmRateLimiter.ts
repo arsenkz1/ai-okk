@@ -1,4 +1,5 @@
 import axios, { type InternalAxiosRequestConfig } from "axios";
+import https from "node:https";
 import { prisma } from "../config/database";
 
 export const AMOCRM_GLOBAL_MAX_REQUESTS_PER_SECOND = 5;
@@ -183,12 +184,31 @@ export function waitForGlobalAmoCrmRequestSlot(): Promise<void> {
   return globalAmoCrmRateLimiter.waitForRequestSlot();
 }
 
+/**
+ * amoCRM requests never reuse a connection.
+ *
+ * Node keeps idle sockets open and hands the next request to one of them.
+ * amoCRM closes idle connections on its side, and a request written into a
+ * socket it has just closed dies with ECONNRESET ("socket hang up") before any
+ * response. Our writes are deliberately not retried, so one such hiccup cost a
+ * deal its note. With the rate limiter already spacing requests 260 ms apart,
+ * a fresh TLS handshake per request is cheap next to that gap; the rest of the
+ * process (Gemini, PBX, Google) keeps its keep-alive agent.
+ */
+export const amoCrmHttpsAgent = new https.Agent({ keepAlive: false });
+
+export function applyAmoCrmConnectionPolicy<T extends InternalAxiosRequestConfig>(request: T): T {
+  if (isAmoCrmRequestUrl(request.url, request.baseURL) && !request.httpsAgent) {
+    request.httpsAgent = amoCrmHttpsAgent;
+  }
+  return request;
+}
+
 export function createAmoCrmAxiosRequestGate(rateLimiter: AmoCrmGlobalRateLimiter) {
   return async (request: AmoCrmRateLimitedAxiosRequestConfig): Promise<AmoCrmRateLimitedAxiosRequestConfig> => {
-    if (
-      isAmoCrmRequestUrl(request.url, request.baseURL)
-      && request.__amoCrmGlobalRateLimitReserved !== true
-    ) {
+    if (!isAmoCrmRequestUrl(request.url, request.baseURL)) return request;
+    applyAmoCrmConnectionPolicy(request);
+    if (request.__amoCrmGlobalRateLimitReserved !== true) {
       await rateLimiter.waitForRequestSlot();
     }
     return request;

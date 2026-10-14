@@ -26,6 +26,7 @@ import { createConfiguredLeadInactivityWebhookRouter } from "./services/leadInac
 import { initializeConfiguredLeadInactivityActivation } from "./services/leadInactivityActivationRuntime";
 import { subscribeConfiguredLeadInactivityEvents } from "./services/leadInactivitySubscriptionRuntime";
 import { startConfiguredLeadInactivityWorker } from "./services/leadInactivityWorkerRuntime";
+import { summarizeError } from "./services/errorSummary";
 void bot; // используется через polling
 
 const app = express();
@@ -79,7 +80,7 @@ app.post("/admin/sync-amocrm", async (req, res) => {
 
   syncContactsFromAmoCrm(fromDate)
     .then((r) => console.log("[AdminSync] amoCRM contacts done:", r))
-    .catch((e) => console.error("[AdminSync] amoCRM contacts failed:", e));
+    .catch((e) => console.error("[AdminSync] amoCRM contacts failed:", summarizeError(e)));
 });
 
 /**
@@ -91,7 +92,7 @@ app.post("/admin/sync-managers", async (_req, res) => {
 
   syncManagersFromPbx()
     .then((r) => console.log("[AdminSync] Managers done:", r))
-    .catch((e) => console.error("[AdminSync] Managers failed:", e));
+    .catch((e) => console.error("[AdminSync] Managers failed:", summarizeError(e)));
 });
 
 // ---------------------------------------------------------------------------

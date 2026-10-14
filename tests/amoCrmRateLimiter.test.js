@@ -7,6 +7,8 @@ const {
   AMOCRM_GLOBAL_MAX_REQUESTS_PER_SECOND,
   AMOCRM_GLOBAL_MIN_REQUEST_INTERVAL_MS,
   createPrismaAmoCrmRateSlotStore,
+  amoCrmHttpsAgent,
+  applyAmoCrmConnectionPolicy,
   createAmoCrmAxiosRequestGate,
   createAmoCrmGlobalRateLimiter,
   isAmoCrmRequestUrl,
@@ -183,4 +185,23 @@ test("every amoCRM axios entrypoint installs the shared global rate gate before 
     ].join("")], { cwd: sourceRoot, encoding: "utf8" });
     assert.equal(output.trim().split("\n").at(-1), "1", entrypoint);
   }
+});
+
+test("amoCRM requests get a no-keep-alive agent; other hosts keep their own", async () => {
+  assert.equal(amoCrmHttpsAgent.keepAlive, false);
+
+  const amo = applyAmoCrmConnectionPolicy({ url: "https://example.amocrm.ru/api/v4/leads/1/notes", headers: {} });
+  assert.equal(amo.httpsAgent, amoCrmHttpsAgent);
+
+  const pbx = applyAmoCrmConnectionPolicy({ url: "https://api2.onlinepbx.ru/x", headers: {} });
+  assert.equal(pbx.httpsAgent, undefined);
+
+  // A caller's explicit agent wins.
+  const own = { keepAlive: true };
+  assert.equal(applyAmoCrmConnectionPolicy({ url: "https://example.amocrm.ru/api/v4/leads", httpsAgent: own }).httpsAgent, own);
+
+  // The installed gate applies the agent even when the slot was reserved elsewhere.
+  const gate = createAmoCrmAxiosRequestGate({ waitForRequestSlot: async () => {} });
+  const reserved = await gate({ url: "https://example.amocrm.ru/api/v4/leads", __amoCrmGlobalRateLimitReserved: true });
+  assert.equal(reserved.httpsAgent, amoCrmHttpsAgent);
 });

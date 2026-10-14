@@ -25,6 +25,7 @@ import {
   ensureDealInDb,
   normalizePhone,
 } from "../services/amocrm";
+import { summarizeError } from "../services/errorSummary";
 
 async function ensureCallRecord(
   payload: OnlinePbxWebhookPayload,
@@ -154,7 +155,7 @@ async function writeDealNote(
       await addNoteToDeal(dealId, text);
       return;
     } catch (err) {
-      console.error(`[CallWorker] Failed to add amo note (${label}, attempt ${attempt}):`, err);
+      console.error(`[CallWorker] Failed to add amo note (${label}, attempt ${attempt}):`, summarizeError(err));
     }
   }
   await notifyAdmins(
@@ -316,7 +317,7 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
 
       }
     } catch (err) {
-      console.error("[CallWorker] Transcription from file failed:", err);
+      console.error("[CallWorker] Transcription from file failed:", summarizeError(err));
       // Удаляем битый файл если он есть
       try { if (fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath); } catch {}
     }
@@ -527,7 +528,7 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
       "",                                                               // T Сделка закрыта?
     ]);
   } catch (err) {
-    console.error("[CallWorker] Failed to append to Google Sheets:", err);
+    console.error("[CallWorker] Failed to append to Google Sheets:", summarizeError(err));
   }
 
   // amoCRM bitimiga mijoz portreti va AI tavsiyalari izohlarini qo'shish
@@ -564,7 +565,7 @@ createWorker("call_processing", async (job) => {
   try {
     await processCallJob(data, job.attemptsMade, maxAttempts);
   } catch (error: any) {
-    console.error("Error processing call job:", error);
+    console.error("Error processing call job:", summarizeError(error));
     // Обновляем статус звонка как error, если удалось определить запись
     try {
       const call = await prisma.call.findUnique({

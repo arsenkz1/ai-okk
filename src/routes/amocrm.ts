@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { handleAmoCrmWebhook } from "../services/amocrm";
+import { summarizeError } from "../services/errorSummary";
 
 const router = Router();
 
@@ -13,7 +14,7 @@ const router = Router();
 router.post("/webhooks/amocrm", async (req, res) => {
   res.status(200).json({ ok: true });
   handleAmoCrmWebhook(req.body)
-    .catch((err) => console.error("[AmoWebhook] Handler error:", err));
+    .catch((err) => console.error("[AmoWebhook] Handler error:", summarizeError(err)));
 });
 
 export default router;
