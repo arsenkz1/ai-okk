@@ -89,5 +89,15 @@ export interface ActionDefinition {
   showWhen?: (ctx: { userId: number; access: Access }) => boolean;
   /** Position inside the section keyboard; lower first, ties keep definition order. Default 100. */
   order?: number;
+  /**
+   * Gathers arguments from buttons step by step. Called for every trigger
+   * that is not a command: returns "waiting" after asking the next question,
+   * "done" when `run` may proceed with `ctx.args`.
+   */
+  collect?: (ctx: ActionContext) => Promise<"done" | "waiting">;
+  /** Unpacks one callback argument into several command arguments. */
+  decodeArg?: (arg: string) => string[];
+  /** Human text for the confirmation of a dangerous action, from its arguments. */
+  confirmLabel?: (args: string[]) => string;
   run(ctx: ActionContext): Promise<void>;
 }

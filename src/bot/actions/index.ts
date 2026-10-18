@@ -9,3 +9,4 @@ import "./aiCoach";
 import "./help";
 import "./admin";
 import "./inputFlows";
+import "./pickerFlows";

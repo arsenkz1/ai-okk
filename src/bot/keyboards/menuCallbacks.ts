@@ -2,7 +2,7 @@ import type TelegramBot from "node-telegram-bot-api";
 import { summarizeError } from "../../services/errorSummary";
 import { bold, escapeHtml } from "../../services/performanceReport";
 import { resolveAccess as resolveAccessFromDb, type Access } from "../access";
-import { runFromCallback } from "../actions/dispatch";
+import { needsMoreArgs, runFromCallback } from "../actions/dispatch";
 import { getAction, SECTIONS, visibleActions, type SectionDefinition } from "../actions/registry";
 import type { ActionDefinition, SectionId } from "../actions/types";
 import { claimCallback as claimCallbackInRedis, claimCallbackAction as claimCallbackActionInRedis } from "../dedupe";
@@ -172,12 +172,14 @@ export function registerMenuCallbackHandler(bot: MenuBot, dependencies: Partial<
         return;
       }
 
-      // An action that still has to ask for its value is confirmed after the
-      // answer, with the value in the question; see inputFlows.
-      const willAskFirst = action.input !== undefined && parsed.arg === null;
-      if (action.dangerous && parsed.decision !== "yes" && !willAskFirst) {
+      const args = parsed.arg === null ? [] : (action.decodeArg ? action.decodeArg(parsed.arg) : [parsed.arg]);
+
+      // A dangerous action is confirmed once its arguments are complete, so
+      // the question names what will happen; until then it keeps collecting.
+      if (action.dangerous && parsed.decision !== "yes" && !needsMoreArgs(action, args)) {
         await answer();
-        await bot.sendMessage(chatId, confirmText(action, parsed.arg ?? undefined), { parse_mode: "HTML", reply_markup: confirmKeyboard(action, parsed.arg ?? undefined) });
+        const label = action.confirmLabel ? action.confirmLabel(args) : (parsed.arg ?? undefined);
+        await bot.sendMessage(chatId, confirmText(action, label), { parse_mode: "HTML", reply_markup: confirmKeyboard(action, parsed.arg ?? undefined) });
         return;
       }
 
@@ -195,7 +197,7 @@ export function registerMenuCallbackHandler(bot: MenuBot, dependencies: Partial<
         userId: query.from.id,
         telegramUserId,
         access,
-        args: parsed.arg === null ? [] : [parsed.arg],
+        args,
         // The message under the button was sent by the bot, so its `from` is
         // the bot. Action bodies written for commands read the user from
         // `msg.from`; they get the person who tapped.

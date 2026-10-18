@@ -6,6 +6,9 @@ import { getCallTaskAutomationRuntime } from "../../services/callTaskAutomationR
 import { isCallTaskReviewer, parseCallTaskReviewCallback } from "../callTaskReviewNotifications";
 import { defineAction } from "../actions/registry";
 import { registerCommandActions } from "../actions/dispatch";
+import { defineInputHandler } from "../inputHandlers";
+import { pendingInput } from "../pendingInput";
+import { cancelKeyboard } from "../keyboards/cancel";
 
 function resultText(result: Awaited<ReturnType<typeof executeReviewedCallTaskProposal>>): string {
   if (result.kind === "confirmed") return `✅ Задача #${result.taskId} и примечание созданы.`;
@@ -57,6 +60,32 @@ async function isAuthorized(queryOrMessage: { from?: TelegramBot.User }, bot: Te
   return null;
 }
 
+export const TASK_DUE_PROMPT = "Укажите срок в формате YYYY-MM-DD ЧЧ:ММ (время Алматы), например 2026-08-05 15:00.";
+export const TASK_DUE_ERROR_TEXT = "❌ Нужна будущая дата в формате YYYY-MM-DD ЧЧ:ММ (Алматы). Попробуйте ещё раз.";
+
+// The typed deadline after "Указать срок" on a proposal card: the same path
+// as /call_task_time, without copying the token by hand.
+defineInputHandler("task_due", async ({ bot, chatId, userId, telegramUserId, text, input, pending }) => {
+  const dueAt = parseAlmatyDateTimeInput(text.trim());
+  if (!dueAt || dueAt.getTime() <= Date.now()) {
+    await bot.sendMessage(chatId, TASK_DUE_ERROR_TEXT, { reply_markup: cancelKeyboard() });
+    return;
+  }
+  await pending.cancel(userId);
+  if (!(await isCallTaskReviewer(telegramUserId))) {
+    await bot.sendMessage(chatId, "❌ У вас нет прав администратора или РОП для этой операции.");
+    return;
+  }
+  const token = String(input.payload.token ?? "");
+  try {
+    const result = await approveProposal(token, dueAt, telegramUserId);
+    await bot.sendMessage(chatId, resultText(result));
+  } catch (error) {
+    console.error("[CallTaskAutomation] Typed proposal deadline failed", { approvalToken: token, reason: error instanceof Error ? error.message : "unknown error" });
+    await bot.sendMessage(chatId, "⚠️ Не удалось обработать срок. Повторная задача не отправлялась.");
+  }
+});
+
 export function registerCallTaskReviewHandlers(bot: TelegramBot): void {
   bot.on("callback_query", async (query) => {
     const callback = parseCallTaskReviewCallback(query.data);
@@ -71,10 +100,8 @@ export function registerCallTaskReviewHandlers(bot: TelegramBot): void {
     try {
       if (callback.command === "custom") {
         await bot.answerCallbackQuery(query.id);
-        await bot.sendMessage(
-          chatId,
-          `Укажите срок: /call_task_time ${callback.approvalToken} 2026-08-05 15:00\nВремя — Алматы.`,
-        );
+        await pendingInput.expect(query.from.id, "task_due", { token: callback.approvalToken });
+        await bot.sendMessage(chatId, TASK_DUE_PROMPT, { reply_markup: cancelKeyboard() });
         return;
       }
       if (callback.command === "reject") {

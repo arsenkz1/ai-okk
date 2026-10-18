@@ -4,6 +4,7 @@ import type { AmoRoleRights } from "../../services/amoRights";
 import { formatDealSummaryReport } from "../../services/dealSummaryReport";
 import { findLinkedManager } from "../access";
 import { sendLongMessage } from "../longMessage";
+import { createStepsCollect } from "./pickerFlows";
 import { defineAction } from "./registry";
 
 /**
@@ -23,7 +24,7 @@ const ADMIN = { roles: ["admin"] as const, denyText: ADMIN_DENY_TEXT };
 // ---------------------------------------------------------------------------
 
 defineAction({
-  id: "sync_managers", section: "sync", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "PBX menejerlar",
+  id: "sync_managers", section: "sync", order: 10, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "PBX menejerlar",
   command: { pattern: /\/sync_managers$/, usage: "/sync_managers", description: "OnlinePBX dan sinxronlash va Google Sheet yangilash" },
   async run(ctx) {
     const { syncManagersFromPbx } = await import("../../services/managerSync");
@@ -51,7 +52,7 @@ defineAction({
 });
 
 defineAction({
-  id: "sync_history", section: "sync", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Qo'ng'iroqlar tarixi",
+  id: "sync_history", section: "sync", order: 11, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Qo'ng'iroqlar tarixi",
   command: { pattern: /\/sync_history/, usage: "/sync_history", description: "qo'ng'iroqlar tarixini sinxronlash (so'nggi 7 kun)" },
   async run(ctx) {
     const { syncHistoryRange } = await import("../../services/pbxHistory");
@@ -112,7 +113,7 @@ defineAction({
 // ---------------------------------------------------------------------------
 
 defineAction({
-  id: "managers", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Menejerlar",
+  id: "managers", section: "users", order: 10, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Menejerlar",
   command: { pattern: /\/managers$/, usage: "/managers", description: "barcha menejerlar ro'yxati" },
   async run(ctx) {
     const managers = await prisma.manager.findMany({
@@ -145,7 +146,7 @@ defineAction({
 });
 
 defineAction({
-  id: "manager_ids", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "amoID ro'yxati",
+  id: "manager_ids", section: "users", order: 11, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "amoID ro'yxati",
   command: { pattern: /\/manager_ids$/, usage: "/manager_ids", description: "amoID larni nusxalash uchun qulay ro'yxat" },
   async run(ctx) {
     const managers = await prisma.manager.findMany({
@@ -176,7 +177,7 @@ defineAction({
 });
 
 defineAction({
-  id: "admins", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Adminlar",
+  id: "admins", section: "users", order: 12, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Adminlar",
   command: { pattern: /\/admins$/, usage: "/admins", description: "barcha administratorlarni ko'rish" },
   async run(ctx) {
     const admins = await prisma.botAdmin.findMany({ orderBy: { createdAt: "asc" } });
@@ -196,7 +197,7 @@ defineAction({
 });
 
 defineAction({
-  id: "add_admin", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Admin qo'shish",
+  id: "add_admin", section: "users", order: 21, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Admin qo'shish",
   input: { kind: "telegram_id", prompt: "Yangi administratorning Telegram ID raqamini yuboring:" },
   command: { pattern: /\/add_admin (\d+)/, usage: "/add_admin <telegram_id>", description: "foydalanuvchini administrator qilish" },
   async run(ctx) {
@@ -216,7 +217,7 @@ defineAction({
 });
 
 defineAction({
-  id: "remove_admin", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Adminni olib tashlash", dangerous: true,
+  id: "remove_admin", section: "users", order: 22, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Adminni olib tashlash", dangerous: true,
   input: { kind: "telegram_id", prompt: "Olib tashlanadigan administratorning Telegram ID raqamini yuboring:" },
   command: { pattern: /\/remove_admin (\d+)/, usage: "/remove_admin <telegram_id>", description: "administrator huquqlarini olish" },
   async run(ctx) {
@@ -237,7 +238,9 @@ defineAction({
 });
 
 defineAction({
-  id: "reset_code", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Kod qayta berish", dangerous: true,
+  id: "reset_code", section: "users", order: 20, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Kod qayta berish", dangerous: true,
+  collect: createStepsCollect("reset_code", [{ kind: "managers", title: "Kod qayta beriladigan menejerni tanlang" }]),
+  confirmLabel: ([amoUserId]) => `amoCRM ID ${amoUserId}`,
   command: { pattern: /\/reset_code (\d+)/, usage: "/reset_code <amo_id>", description: "menejer uchun yangi kod yaratish" },
   async run(ctx) {
     const { resetManagerCode } = await import("../../services/managerSync");
@@ -260,7 +263,7 @@ defineAction({
 // ---------------------------------------------------------------------------
 
 defineAction({
-  id: "analyze_deal", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Bitimni tahlil qilish",
+  id: "analyze_deal", section: "users", order: 40, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Bitimni tahlil qilish",
   input: { kind: "deal_id", prompt: "Tahlil uchun bitim ID raqamini yuboring:" },
   command: { pattern: /\/analyze_deal (\d+)/, usage: "/analyze_deal <deal_id>", description: "bitim bo'yicha so'nggi qo'ng'iroqni tahlil qilish" },
   async run(ctx) {
@@ -418,7 +421,7 @@ defineAction({
 // ---------------------------------------------------------------------------
 
 defineAction({
-  id: "check_tg", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Telegram ID tekshirish", commandOnly: true,
+  id: "check_tg", section: "users", order: 90, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Telegram ID tekshirish", commandOnly: true,
   command: { pattern: /\/check_tg (.+)/, usage: "/check_tg <tg_id>", description: "BDDagi bog'lanishni tekshirish" },
   async run(ctx) {
     const tgId = ctx.args[0];
@@ -441,7 +444,7 @@ defineAction({
 });
 
 defineAction({
-  id: "test_restrict", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Cheklash (test)", commandOnly: true, dangerous: true,
+  id: "test_restrict", section: "users", order: 91, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Cheklash (test)", commandOnly: true, dangerous: true,
   command: { pattern: /\/test_restrict (.+)/, usage: "/test_restrict <tg_id>", description: "menejerni cheklash" },
   async run(ctx) {
     const { getAmoUserRoleId, restrictAmoRoleNewLeadAccess } = await import("../../services/amoRights");
@@ -532,7 +535,7 @@ defineAction({
 });
 
 defineAction({
-  id: "test_restore", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Tiklash (test)", commandOnly: true,
+  id: "test_restore", section: "users", order: 92, roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Tiklash (test)", commandOnly: true,
   command: { pattern: /\/test_restore (.+)/, usage: "/test_restore <tg_id>", description: "menejerni tiklash" },
   async run(ctx) {
     const { restoreAmoRoleRights } = await import("../../services/amoRights");

@@ -5,6 +5,7 @@ import { defineAction } from "../actions/registry";
 import { registerCommandActions } from "../actions/dispatch";
 import { syncCommandMenuForManager, syncCommandMenuForTelegramUser } from "../commandMenu";
 import { refreshMainMenuForManager, refreshMainMenuForTelegramUser } from "../keyboards/mainMenu";
+import { createStepsCollect, ROLE_OPTIONS, splitPacked } from "../actions/pickerFlows";
 
 type ManagerRole = "MANAGER" | "TEAMLEAD" | "ROP";
 
@@ -21,7 +22,7 @@ async function requireAdmin(bot: TelegramBot, msg: TelegramBot.Message): Promise
 
 export function registerAdminRoleHandlers(bot: TelegramBot) {
   defineAction({
-    id: "set_role", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Rol berish", dangerous: true,
+    id: "set_role", section: "users", order: 30, decodeArg: splitPacked, collect: createStepsCollect("set_role", [{ kind: "linkedUsers", title: "Foydalanuvchini tanlang" }, { kind: "choice", title: "Rolni tanlang", options: () => ROLE_OPTIONS }]), confirmLabel: ([tgId, role]) => `Telegram ID ${tgId} → ${role}`, roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Rol berish", dangerous: true,
     command: { pattern: /\/set_role (\S+) (\S+)/, usage: "/set_role <tg_id> <manager|teamlead|rop>", description: "rol tayinlash" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -72,7 +73,7 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "set_teamlead", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Tim-lid tayinlash",
+    id: "set_teamlead", section: "users", order: 31, collect: createStepsCollect("set_teamlead", [{ kind: "managers", title: "Tim-lid qilib tayinlanadigan menejerni tanlang" }]), roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Tim-lid tayinlash",
     command: { pattern: /\/set_teamlead (\d+)/, usage: "/set_teamlead <amo_id>", description: "jamoa yaratish va TL tayinlash" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -109,7 +110,7 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "add_to_team", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoaga qo'shish",
+    id: "add_to_team", section: "users", order: 32, decodeArg: splitPacked, collect: createStepsCollect("add_to_team", [{ kind: "managers", title: "Menejerni tanlang" }, { kind: "managers", filter: { role: "TEAMLEAD" }, title: "Tim-lidni tanlang" }]), roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoaga qo'shish",
     command: { pattern: /\/add_to_team (\d+) (\d+)/, usage: "/add_to_team <mgr_amo_id> <tl_amo_id>", description: "jamoaga qo'shish" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -156,7 +157,7 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "remove_from_team", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoadan olib tashlash",
+    id: "remove_from_team", section: "users", order: 33, collect: createStepsCollect("remove_from_team", [{ kind: "managers", title: "Jamoadan chiqariladigan menejerni tanlang" }]), roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoadan olib tashlash",
     command: { pattern: /\/remove_from_team (\d+)/, usage: "/remove_from_team <amo_id>", description: "jamoadan chiqarish" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -182,7 +183,7 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "delete_team", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoani o'chirish", dangerous: true,
+    id: "delete_team", section: "users", order: 34, collect: createStepsCollect("delete_team", [{ kind: "teams", title: "O'chiriladigan jamoani tanlang" }]), roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoani o'chirish",
     command: { pattern: /\/delete_team (\d+)/, usage: "/delete_team <team_id>", description: "jamoani butunlay o'chirish" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -225,7 +226,7 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "teams_list", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoalar ro'yxati",
+    id: "teams_list", section: "users", order: 13, roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoalar ro'yxati",
     command: { pattern: /\/teams_list$/, usage: "/teams_list", description: "barcha jamoalar ro'yxati" },
     async run(ctx) {
       const msg = ctx.message!;

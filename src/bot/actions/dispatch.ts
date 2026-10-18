@@ -43,22 +43,32 @@ export function usageText(action: ActionDefinition): string {
   return `Foydalanish: ${action.command?.usage ?? `/${action.id}`}`;
 }
 
+/** True while a non-command trigger has fewer arguments than the command needs. */
+export function needsMoreArgs(action: ActionDefinition, args: readonly string[]): boolean {
+  return action.command !== undefined && args.length < requiredArgCount(action.command.usage);
+}
+
 export async function execute(action: ActionDefinition, ctx: ActionContext): Promise<void> {
   if (!isAllowed(action, ctx.access)) {
     await ctx.bot.sendMessage(ctx.chatId, denialText(action, ctx.access));
     return;
   }
   // A command always arrives with its arguments matched; a button may not.
-  // An action that knows what to ask for asks; any other answers with the
-  // usage line instead of running on an empty argument.
-  if (ctx.source !== "command" && action.command && ctx.args.length < requiredArgCount(action.command.usage)) {
-    if (action.input) {
-      await ctx.pending.expect(ctx.userId, action.input.kind, { action: action.id });
-      await ctx.bot.sendMessage(ctx.chatId, action.input.prompt, { reply_markup: cancelKeyboard() });
+  // An action with a multi-step collector lets it decide; one that knows the
+  // single value to ask for asks; any other answers with the usage line
+  // instead of running on an empty argument.
+  if (ctx.source !== "command") {
+    if (action.collect) {
+      if ((await action.collect(ctx)) === "waiting") return;
+    } else if (needsMoreArgs(action, ctx.args)) {
+      if (action.input) {
+        await ctx.pending.expect(ctx.userId, action.input.kind, { action: action.id });
+        await ctx.bot.sendMessage(ctx.chatId, action.input.prompt, { reply_markup: cancelKeyboard() });
+        return;
+      }
+      await ctx.bot.sendMessage(ctx.chatId, usageText(action));
       return;
     }
-    await ctx.bot.sendMessage(ctx.chatId, usageText(action));
-    return;
   }
   await action.run(ctx);
 }

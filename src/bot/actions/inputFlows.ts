@@ -26,7 +26,8 @@ export async function dispatchAnswer(ctx: InputContext, value: string): Promise<
   const action = getAction(actionId);
   const access = await flowDeps.resolveAccess(ctx.telegramUserId);
   if (action.dangerous) {
-    await ctx.bot.sendMessage(ctx.chatId, confirmText(action, value), { parse_mode: "HTML", reply_markup: confirmKeyboard(action, value) });
+    const label = action.confirmLabel ? action.confirmLabel([value]) : value;
+    await ctx.bot.sendMessage(ctx.chatId, confirmText(action, label), { parse_mode: "HTML", reply_markup: confirmKeyboard(action, value) });
     return;
   }
   await runFromInput(ctx.bot as TelegramBot, action.id, {

@@ -59,7 +59,8 @@ test("the company section shows the ROP analytics first, then plans and ratings,
     ["Menejer kartasi", "m:rop_manager"],
     ["Menejer haqida AI-savol", "m:rop_ask"],
     ["Bosqichlarni sinxronlash", "m:sync_stages"],
-    ["Reyting: chiqarish/qaytarish", "m:rating_toggle"],
+    ["Reytingdan chiqarish", "m:rating_toggle:off"],
+    ["Reytingga qaytarish", "m:rating_toggle:on"],
     ["Reyting ro'yxati", "m:rating_list"],
     ["Qo'ng'iroqlar holati", "m:call_status"],
     ["Reja belgilash", "m:set_plan"],
@@ -73,12 +74,52 @@ test("the company section shows the ROP analytics first, then plans and ratings,
   }
 });
 
-test("company buttons that take no argument run on tap; the two that do still wait for S11", () => {
-  for (const id of ["teams", "all_rating", "all_mistakes", "rop_team_rating", "rop_team_mistakes", "rop_manager", "rop_ask", "sync_stages", "rating_list", "call_status", "plans"]) {
+test("company buttons either run on tap or collect their arguments with buttons", () => {
+  for (const id of ["teams", "all_rating", "all_mistakes", "rop_team_rating", "rop_team_mistakes", "rop_manager", "rop_ask", "sync_stages", "rating_list"]) {
     assert.equal(/<[^>]+>/.test(registry.getAction(id).command.usage), false, id);
+    assert.equal(registry.getAction(id).collect, undefined, id);
   }
-  for (const id of ["set_plan", "rating_toggle"]) {
-    assert.equal(/<[^>]+>/.test(registry.getAction(id).command.usage), true, id);
-    assert.equal(registry.getAction(id).input, undefined, id);
+  for (const id of ["set_plan", "rating_toggle", "call_status", "plans"]) {
+    assert.equal(typeof registry.getAction(id).collect, "function", id);
   }
+});
+
+test("the Phoenix section reads status, switch, limit, on, off, deal check, for ROP and admin only", () => {
+  const expected = [
+    ["Feniks holati", "m:inactivity_status"],
+    ["Feniks kaliti", "m:inactivity_switch"],
+    ["Feniks limiti", "m:inactivity_limit"],
+    ["Feniksni yoqish", "m:inactivity_on"],
+    ["Feniksni to'xtatish", "m:inactivity_off"],
+    ["Feniks: bitim bo'yicha", "m:inactivity_lead"],
+  ];
+  assert.deepEqual(buttons(access(false, active("ROP")), "phoenix"), expected);
+  assert.deepEqual(buttons(access(true, null), "phoenix"), expected);
+  for (const a of [access(false, active("MANAGER")), access(false, active("TEAMLEAD"))]) {
+    assert.deepEqual(buttons(a, "phoenix"), []);
+    assert.equal(mainMenuSections(a).some((s) => s.id === "phoenix"), false);
+  }
+});
+
+test("the users and sync sections exist for admins only", () => {
+  const ids = (a) => mainMenuSections(a).map((s) => s.id);
+  assert.ok(ids(access(true, null)).includes("users") && ids(access(true, null)).includes("sync"));
+  for (const a of [access(false, active("MANAGER")), access(false, active("TEAMLEAD")), access(false, active("ROP"))]) {
+    assert.equal(ids(a).some((id) => id === "users" || id === "sync"), false);
+  }
+});
+
+test("stopping Phoenix is dangerous and asks for a deal id where needed; the limit screen carries its switches", () => {
+  const { parseMenuCallback } = require("../dist/bot/keyboards/menuCallbacks");
+  const { inactivityLimitKeyboard } = require("../dist/bot/handlers/performance");
+  assert.equal(registry.getAction("inactivity_off").dangerous, true);
+  assert.equal(registry.getAction("inactivity_on").dangerous, undefined, "enabling is reversible and the sweep has its own yes/no");
+  assert.equal(registry.getAction("inactivity_lead").input.kind, "lead_id");
+  const switches = inactivityLimitKeyboard().inline_keyboard[0].map((b) => parseMenuCallback(b.callback_data));
+  assert.deepEqual(switches, [
+    { kind: "action", actionId: "inactivity_limit", arg: "on", decision: null },
+    { kind: "action", actionId: "inactivity_limit", arg: "off", decision: null },
+  ]);
+  // The command pattern still yields the same single argument.
+  assert.equal(registry.getAction("inactivity_limit").command.pattern.exec("/inactivity_limit_on")[1], "on");
 });

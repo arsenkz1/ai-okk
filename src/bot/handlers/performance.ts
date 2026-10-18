@@ -44,6 +44,8 @@ import {
 import { findLinkedManager, hasRole, resolveAccess } from "../access";
 import { defineAction } from "../actions/registry";
 import { registerCommandActions } from "../actions/dispatch";
+import { createChoiceCollect, createPickManagerCollect, createSetPlanCollect, DAY_OPTIONS, planViewMonthOptions, splitPacked } from "../actions/pickerFlows";
+import { actionCallback } from "../keyboards/menuCallbacks";
 
 /**
  * Plan management and the call/revenue/plan report for a manager, a team lead's
@@ -57,6 +59,16 @@ async function linkedManager(telegramUserId: string) {
 }
 
 export const PLAN_EDITOR_DENY_TEXT = "❌ Reja belgilash faqat ROP va administrator uchun.";
+
+/** The two switches under the limit screen; each re-runs the action with its argument. */
+export function inactivityLimitKeyboard(): TelegramBot.InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [[
+      { text: "Включить лимит", callback_data: actionCallback("inactivity_limit", "on") },
+      { text: "Снять лимит", callback_data: actionCallback("inactivity_limit", "off") },
+    ]],
+  };
+}
 
 /** Setting a plan is a ROP/admin action; team leads may only read one. */
 async function requirePlanEditor(bot: TelegramBot, msg: TelegramBot.Message): Promise<boolean> {
@@ -185,7 +197,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
 
   // /inactivity_lead <id> — why this one deal has not been moved to Phoenix.
   defineAction({
-    id: "inactivity_lead", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks: bitim bo'yicha",
+    id: "inactivity_lead", section: "phoenix", order: 60, roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks: bitim bo'yicha",
     input: { kind: "lead_id", prompt: "Bitim ID raqamini yuboring (Feniks tekshiruvi):" },
     command: { pattern: /^\/inactivity_lead\s+(\d{4,12})$/, usage: "/inactivity_lead <id>", description: "aniq bitim nega Feniksga o'tmagan" },
     async run(ctx) {
@@ -210,7 +222,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
 
   // /inactivity_off — full stop: clears the queue, webhooks record nothing.
   defineAction({
-    id: "inactivity_off", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniksni to'xtatish", dangerous: true,
+    id: "inactivity_off", section: "phoenix", order: 50, roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniksni to'xtatish", dangerous: true,
     command: { pattern: /^\/inactivity_off$/, usage: "/inactivity_off", description: "Feniksga ko'chirishni to'liq to'xtatish (navbat tozalanadi)" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -224,7 +236,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
   // days. The sweep waits for an explicit yes from this operator; afterwards
   // the worker runs on its 72-hour rule and the nightly sweep reconciles.
   defineAction({
-    id: "inactivity_on", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniksni yoqish",
+    id: "inactivity_on", section: "phoenix", order: 40, roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniksni yoqish",
     command: { pattern: /^\/inactivity_on$/, usage: "/inactivity_on", description: "yoqish va 3+ kun tegilmagan lidlarni ko'chirishni taklif qilish" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -292,7 +304,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
   // /inactivity_limit_on | /inactivity_limit_off — the 100-per-day cap alone,
   // independent of whether moves run. /inactivity_limit shows the current one.
   defineAction({
-    id: "inactivity_limit", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks limiti",
+    id: "inactivity_limit", section: "phoenix", order: 30, roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks limiti",
     command: {
       pattern: /^\/inactivity_limit(?:_(on|off))?$/, usage: "/inactivity_limit[_on|_off]", description: "kunlik limit holati va o'zgartirish",
       menu: [
@@ -316,7 +328,9 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
       } catch {
         // The counter is a courtesy; the switch itself is already written.
       }
-      await bot.sendMessage(msg.chat.id, formatInactivityDailyCap(state, today));
+      // From the keyboard the state comes with its two switches, so the limit
+      // is one screen; the command keeps its plain text.
+      await bot.sendMessage(msg.chat.id, formatInactivityDailyCap(state, today), ctx.source === "command" ? {} : { reply_markup: inactivityLimitKeyboard() });
     } catch (error) {
       await bot.sendMessage(msg.chat.id, `Не удалось изменить лимит: ${error instanceof Error ? error.message : "ошибка"}`);
     }
@@ -325,7 +339,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
 
   // /inactivity_switch — current state of the pause switch alone.
   defineAction({
-    id: "inactivity_switch", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks kaliti",
+    id: "inactivity_switch", section: "phoenix", order: 20, roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks kaliti",
     command: { pattern: /^\/inactivity_switch$/, usage: "/inactivity_switch", description: "ko'chirish kaliti holati" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -336,7 +350,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
 
   // /inactivity_status — why the Phoenix worker is or is not moving leads.
   defineAction({
-    id: "inactivity_status", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks holati",
+    id: "inactivity_status", section: "phoenix", order: 10, roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks holati",
     command: { pattern: /^\/inactivity_status$/, usage: "/inactivity_status", description: "Feniks vorkeri nega ishlamayapti" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -379,6 +393,10 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
   // (teams, ROP and service logins) out of the rankings.
   defineAction({
     id: "rating_toggle", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Reyting: chiqarish/qaytarish", dangerous: true,
+    variants: [{ label: "Reytingdan chiqarish", arg: "off" }, { label: "Reytingga qaytarish", arg: "on" }],
+    decodeArg: splitPacked,
+    collect: createPickManagerCollect("rating_toggle", { position: 1, title: "Menejerni tanlang" }),
+    confirmLabel: ([direction, amoUserId]) => `${direction === "off" ? "reytingdan chiqarish" : "reytingga qaytarish"}, amoCRM ID ${amoUserId}`,
     command: {
       pattern: /^\/rating_(off|on)\s+(\d+)$/, usage: "/rating_off <amo_id>, /rating_on <amo_id>", description: "reytingdan chiqarish yoki qaytarish",
       menu: [
@@ -443,6 +461,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
   // /call_status [N] — why calls over the last N days were or were not analyzed.
   defineAction({
     id: "call_status", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Qo'ng'iroqlar holati",
+    collect: createChoiceCollect("call_status", { position: 0, title: "Necha kun uchun?", options: () => DAY_OPTIONS }),
     command: { pattern: /^\/call_status(?:\s+(\d{1,2}))?$/, usage: "/call_status [kun]", description: "qo'ng'iroqlar nega tahlil qilinmadi" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -464,6 +483,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
   // /set_plan <amo_user_id> <amount> [YYYY-MM]
   defineAction({
     id: "set_plan", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Reja belgilash",
+    decodeArg: splitPacked, collect: createSetPlanCollect("set_plan"),
     command: { pattern: /^\/set_plan\s+(\d+)\s+([\d\s']+?)(?:\s+(\d{4}-\d{2}))?$/, usage: "/set_plan <amo_id> <summa> [YYYY-MM]", description: "oylik reja belgilash" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -518,6 +538,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
   // /plans [YYYY-MM] — every active manager's target for the month.
   defineAction({
     id: "plans", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Rejalar",
+    collect: createChoiceCollect("plans", { position: 0, title: "Qaysi oy?", options: () => planViewMonthOptions() }),
     command: { pattern: /^\/plans(?:\s+(\d{4}-\d{2}))?$/, usage: "/plans [YYYY-MM]", description: "barcha rejalar" },
     async run(ctx) {
       const msg = ctx.message!;
