@@ -13,8 +13,10 @@ import { SECTIONS, visibleActions, type SectionDefinition } from "../actions/reg
  * carries `remove_keyboard` instead, which is how the rollout is undone.
  */
 
+const ENABLED_VALUES = new Set(["true", "1", "yes", "on"]);
+
 export function keyboardsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.BOT_KEYBOARDS_ENABLED === "true";
+  return ENABLED_VALUES.has((env.BOT_KEYBOARDS_ENABLED ?? "").trim().toLowerCase());
 }
 
 /** Sections this user may open, in menu order; empty sections are hidden. */

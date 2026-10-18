@@ -41,9 +41,9 @@ test("without the flag, or without roles, the message removes any old keyboard",
   assert.ok("keyboard" in menu.mainMenuMarkup(access(false, active("MANAGER")), true));
 });
 
-test("the flag is read strictly from the environment", () => {
-  assert.equal(menu.keyboardsEnabled({ BOT_KEYBOARDS_ENABLED: "true" }), true);
-  assert.equal(menu.keyboardsEnabled({ BOT_KEYBOARDS_ENABLED: "1" }), false);
+test("the flag accepts the usual spellings of on and nothing else", () => {
+  for (const value of ["true", "1", "yes", "on", "TRUE", " True "]) assert.equal(menu.keyboardsEnabled({ BOT_KEYBOARDS_ENABLED: value }), true, value);
+  for (const value of ["false", "0", "no", "off", "", "enabled"]) assert.equal(menu.keyboardsEnabled({ BOT_KEYBOARDS_ENABLED: value }), false, value);
   assert.equal(menu.keyboardsEnabled({}), false);
 });
 

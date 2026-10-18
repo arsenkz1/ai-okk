@@ -23,6 +23,8 @@ import { findLinkedManager, resolveAccess } from "./access";
 import { claimUpdate } from "./dedupe";
 import { installDefaultCommandMenu, syncCommandMenu } from "./commandMenu";
 import { mainMenuMarkup } from "./keyboards/mainMenu";
+import { handleLabelHit, resolveLabel } from "./keyboards/labelRouter";
+import { registerMenuCallbackHandler } from "./keyboards/menuCallbacks";
 import { aiSessions, awaitingCode, periodState } from "./state";
 import "./actions";
 import { parseDate } from "./reportText";
@@ -60,6 +62,15 @@ bot.on("message", async (msg) => {
 
   const userId = msg.from.id;
   const tgId = String(userId);
+
+  // ── State 0: reply-keyboard buttons ──────────────────────────────────────
+  // Before every dialog state on purpose: a tap must act like the command it
+  // stands for even while the user is mid-dialog. Only "Bekor qilish" cancels.
+  const labelHit = resolveLabel(msg.text);
+  if (labelHit) {
+    await handleLabelHit(bot, msg, labelHit);
+    return;
+  }
 
   // ── State 1: Activation code entry ───────────────────────────────────────
   if (awaitingCode.has(userId)) {
@@ -308,6 +319,7 @@ registerTeamLeadHandlers(bot);
 registerRopHandlers(bot);
 registerCallTaskReviewHandlers(bot);
 registerPerformanceHandlers(bot);
+registerMenuCallbackHandler(bot);
 
 // ---------------------------------------------------------------------------
 // Polling errors + graceful shutdown

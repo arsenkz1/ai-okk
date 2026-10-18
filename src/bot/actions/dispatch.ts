@@ -22,9 +22,25 @@ export function denialText(action: ActionDefinition, access: Access): string {
   return NO_RIGHTS_TEXT;
 }
 
+/** `<…>` placeholders in the usage line are the arguments a run cannot do without. */
+export function requiredArgCount(usage: string): number {
+  return (usage.match(/<[^>]+>/g) ?? []).length;
+}
+
+export function usageText(action: ActionDefinition): string {
+  return `Foydalanish: ${action.command?.usage ?? `/${action.id}`}`;
+}
+
 export async function execute(action: ActionDefinition, ctx: ActionContext): Promise<void> {
   if (!isAllowed(action, ctx.access)) {
     await ctx.bot.sendMessage(ctx.chatId, denialText(action, ctx.access));
+    return;
+  }
+  // A command always arrives with its arguments matched; a button may not.
+  // Until the input flows exist, such a tap answers with the usage line
+  // instead of running on an empty argument.
+  if (ctx.source !== "command" && action.command && ctx.args.length < requiredArgCount(action.command.usage)) {
+    await ctx.bot.sendMessage(ctx.chatId, usageText(action));
     return;
   }
   await action.run(ctx);
@@ -54,6 +70,45 @@ export async function runCommand(
     source: "command",
     message: msg,
   });
+}
+
+/**
+ * A reply-keyboard tap. The message handler has already deduplicated the
+ * update, so this must not claim it again.
+ */
+export async function runFromButton(
+  bot: TelegramBot,
+  actionId: string,
+  msg: TelegramBot.Message,
+  args: string[] = [],
+): Promise<void> {
+  const action = getAction(actionId);
+  const telegramUserId = String(msg.from!.id);
+  const access = await resolveAccess(telegramUserId);
+  await execute(action, {
+    bot,
+    chatId: msg.chat.id,
+    userId: msg.from!.id,
+    telegramUserId,
+    access,
+    args,
+    source: "button",
+    message: msg,
+  });
+}
+
+export interface CallbackRunParams {
+  chatId: number;
+  userId: number;
+  telegramUserId: string;
+  access: Access;
+  args: string[];
+  message?: TelegramBot.Message;
+}
+
+/** An inline-button tap. Access is resolved by the caller, which also answers the query. */
+export async function runFromCallback(bot: TelegramBot, actionId: string, params: CallbackRunParams): Promise<void> {
+  await execute(getAction(actionId), { bot, source: "callback", ...params });
 }
 
 /** Registers the command pattern of each listed action on the bot. */

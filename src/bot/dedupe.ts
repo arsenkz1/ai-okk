@@ -18,10 +18,20 @@ export async function claimCallback(queryId: string): Promise<boolean> {
   return claimKey(`bot:cbq:${queryId}`);
 }
 
-async function claimKey(key: string): Promise<boolean> {
+export const CALLBACK_ACTION_LOCK_SECONDS = 5;
+
+/**
+ * The same button on the same message, tapped again within a few seconds, is
+ * a double tap: the first run is still going. Later taps are a new request.
+ */
+export async function claimCallbackAction(chatId: number, messageId: number, data: string): Promise<boolean> {
+  return claimKey(`bot:cbq:act:${chatId}:${messageId}:${data}`, CALLBACK_ACTION_LOCK_SECONDS);
+}
+
+async function claimKey(key: string, ttlSeconds = DEDUPE_TTL_SECONDS): Promise<boolean> {
   try {
     const { redisConnection } = await import("../config/queue");
-    const result = await redisConnection.set(key, "1", "EX", DEDUPE_TTL_SECONDS, "NX");
+    const result = await redisConnection.set(key, "1", "EX", ttlSeconds, "NX");
     return result === "OK";
   } catch {
     // Without Redis the bot keeps answering; a rare duplicate beats silence.

@@ -1,0 +1,181 @@
+import type TelegramBot from "node-telegram-bot-api";
+import { summarizeError } from "../../services/errorSummary";
+import { bold } from "../../services/performanceReport";
+import { resolveAccess as resolveAccessFromDb, type Access } from "../access";
+import { runFromCallback } from "../actions/dispatch";
+import { getAction, SECTIONS, visibleActions, type SectionDefinition } from "../actions/registry";
+import type { ActionDefinition, SectionId } from "../actions/types";
+import { claimCallback as claimCallbackInRedis, claimCallbackAction as claimCallbackActionInRedis } from "../dedupe";
+
+/**
+ * Inline buttons of the menu: `m:<action>[:<arg>]`, `m:sec:<section>`,
+ * `m:<action>:yes[:<arg>]`, `m:<action>:no`.
+ *
+ * Other callback handlers in the bot own other prefixes (`tl_`, `rop_`,
+ * `phx:`, `admin_delete_team_`, call-task tokens); this one ignores
+ * everything that is not `m:`, and they ignore `m:`.
+ */
+
+export const MENU_CALLBACK_PREFIX = "m:";
+const MAX_CALLBACK_BYTES = 64;
+const PART = /^[A-Za-z0-9_-]+$/;
+
+export type MenuCallback =
+  | { kind: "section"; sectionId: SectionId }
+  | { kind: "action"; actionId: string; arg: string | null; decision: "yes" | "no" | null };
+
+export function parseMenuCallback(data: string | undefined): MenuCallback | null {
+  if (!data || !data.startsWith(MENU_CALLBACK_PREFIX) || Buffer.byteLength(data) > MAX_CALLBACK_BYTES) return null;
+  const parts = data.slice(MENU_CALLBACK_PREFIX.length).split(":");
+  if (parts.length === 0 || parts.length > 3 || !parts.every((part) => PART.test(part))) return null;
+
+  if (parts[0] === "sec") {
+    const section = SECTIONS.find((candidate) => candidate.id === parts[1]);
+    return section && parts.length === 2 ? { kind: "section", sectionId: section.id } : null;
+  }
+
+  const [actionId, second, third] = parts;
+  if (second === "yes") return { kind: "action", actionId, arg: third ?? null, decision: "yes" };
+  if (second === "no") return parts.length === 2 ? { kind: "action", actionId, arg: null, decision: "no" } : null;
+  if (parts.length === 3) return null;
+  return { kind: "action", actionId, arg: second ?? null, decision: null };
+}
+
+function encode(...parts: string[]): string {
+  const data = MENU_CALLBACK_PREFIX + parts.join(":");
+  if (!parts.every((part) => PART.test(part)) || Buffer.byteLength(data) > MAX_CALLBACK_BYTES) {
+    throw new Error(`menu callback "${data}" is not a valid callback_data`);
+  }
+  return data;
+}
+
+export const sectionCallback = (sectionId: SectionId): string => encode("sec", sectionId);
+export const actionCallback = (actionId: string, arg?: string): string => (arg === undefined ? encode(actionId) : encode(actionId, arg));
+export const confirmCallback = (actionId: string, decision: "yes" | "no", arg?: string): string => (
+  decision === "no" || arg === undefined ? encode(actionId, decision) : encode(actionId, decision, arg)
+);
+
+const BUTTONS_PER_ROW = 2;
+
+export function sectionKeyboard(access: Access, section: SectionDefinition): TelegramBot.InlineKeyboardMarkup {
+  const buttons = visibleActions(access, section.id).map((action) => ({ text: action.label, callback_data: actionCallback(action.id) }));
+  const rows: TelegramBot.InlineKeyboardButton[][] = [];
+  for (let index = 0; index < buttons.length; index += BUTTONS_PER_ROW) rows.push(buttons.slice(index, index + BUTTONS_PER_ROW));
+  return { inline_keyboard: rows };
+}
+
+export function sectionTitle(section: SectionDefinition): string {
+  return bold(section.label);
+}
+
+export const EMPTY_SECTION_TEXT = "Bu bo'limda siz uchun buyruqlar yo'q.";
+
+export function confirmKeyboard(action: ActionDefinition, arg?: string): TelegramBot.InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [[
+      { text: "Ha", callback_data: confirmCallback(action.id, "yes", arg) },
+      { text: "Yo'q", callback_data: confirmCallback(action.id, "no") },
+    ]],
+  };
+}
+
+export function confirmText(action: ActionDefinition): string {
+  return `${bold(action.label)}\nTasdiqlaysizmi?`;
+}
+
+export const CONFIRM_DECLINED_TEXT = "Bekor qilindi.";
+export const IN_PROGRESS_TEXT = "Bajarilmoqda…";
+export const UNKNOWN_BUTTON_TEXT = "Bu tugma eskirgan.";
+export const FAILED_TEXT = "Xatolik yuz berdi. Qaytadan urinib ko'ring.";
+
+export interface MenuCallbackDependencies {
+  claimCallback: (queryId: string) => Promise<boolean>;
+  claimCallbackAction: (chatId: number, messageId: number, data: string) => Promise<boolean>;
+  resolveAccess: (telegramUserId: string) => Promise<Access>;
+}
+
+const defaultDependencies: MenuCallbackDependencies = {
+  claimCallback: claimCallbackInRedis,
+  claimCallbackAction: claimCallbackActionInRedis,
+  resolveAccess: resolveAccessFromDb,
+};
+
+type MenuBot = Pick<TelegramBot, "on" | "answerCallbackQuery" | "sendMessage" | "editMessageText" | "editMessageReplyMarkup">;
+
+export function registerMenuCallbackHandler(bot: MenuBot, dependencies: Partial<MenuCallbackDependencies> = {}): void {
+  const deps = { ...defaultDependencies, ...dependencies };
+
+  bot.on("callback_query", async (query) => {
+    const parsed = parseMenuCallback(query.data);
+    if (!parsed) return;
+
+    // Exactly one answer per tap, whatever happens below.
+    let answered = false;
+    const answer = async (options?: Partial<TelegramBot.AnswerCallbackQueryOptions>): Promise<void> => {
+      if (answered) return;
+      answered = true;
+      await bot.answerCallbackQuery(query.id, options).catch(() => {});
+    };
+
+    try {
+      if (!(await deps.claimCallback(query.id))) return await answer();
+      const message = query.message;
+      if (!message) return await answer({ text: UNKNOWN_BUTTON_TEXT });
+      const chatId = message.chat.id;
+      const telegramUserId = String(query.from.id);
+      const access = await deps.resolveAccess(telegramUserId);
+
+      if (parsed.kind === "section") {
+        const section = SECTIONS.find((candidate) => candidate.id === parsed.sectionId)!;
+        const keyboard = sectionKeyboard(access, section);
+        await answer();
+        await bot.editMessageText(keyboard.inline_keyboard.length ? sectionTitle(section) : `${sectionTitle(section)}\n${EMPTY_SECTION_TEXT}`, {
+          chat_id: chatId, message_id: message.message_id, parse_mode: "HTML", reply_markup: keyboard,
+        });
+        return;
+      }
+
+      let action: ActionDefinition;
+      try {
+        action = getAction(parsed.actionId);
+      } catch {
+        return await answer({ text: UNKNOWN_BUTTON_TEXT });
+      }
+
+      if (parsed.decision === "no") {
+        await answer();
+        await bot.editMessageText(CONFIRM_DECLINED_TEXT, { chat_id: chatId, message_id: message.message_id });
+        return;
+      }
+
+      if (action.dangerous && parsed.decision !== "yes") {
+        await answer();
+        await bot.sendMessage(chatId, confirmText(action), { parse_mode: "HTML", reply_markup: confirmKeyboard(action, parsed.arg ?? undefined) });
+        return;
+      }
+
+      if (!(await deps.claimCallbackAction(chatId, message.message_id, query.data ?? ""))) {
+        return await answer({ text: IN_PROGRESS_TEXT });
+      }
+
+      await answer();
+      if (parsed.decision === "yes") {
+        // The confirmation is spent: no second "yes" from the same card.
+        await bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: message.message_id }).catch(() => {});
+      }
+      await runFromCallback(bot as TelegramBot, action.id, {
+        chatId,
+        userId: query.from.id,
+        telegramUserId,
+        access,
+        args: parsed.arg === null ? [] : [parsed.arg],
+        message,
+      });
+    } catch (error) {
+      console.error("[MenuCallback] failed:", summarizeError(error));
+      await answer({ text: FAILED_TEXT, show_alert: true });
+    } finally {
+      await answer();
+    }
+  });
+}

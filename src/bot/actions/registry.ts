@@ -27,6 +27,9 @@ const SECTION_LIST: SectionDefinition[] = [
 
 export const SECTIONS: readonly SectionDefinition[] = Object.freeze(SECTION_LIST.map((section) => Object.freeze(section)));
 
+/** Reserved button: drops a pending input or the date dialog. */
+export const CANCEL_LABEL = "Bekor qilish";
+
 const actions = new Map<string, ActionDefinition>();
 
 export function defineAction(definition: ActionDefinition): ActionDefinition {
