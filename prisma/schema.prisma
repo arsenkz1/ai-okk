@@ -47,6 +47,9 @@ model Manager {
   excludeFromReports         Boolean      @default(false)
   isAmoCrmRestricted         Boolean      @default(false)
   amoRightsBeforeRestriction Json?
+  /// Monthly fixed salary rate in UZS for the salary calculator; set by an
+  /// administrator or the manager's team lead. Null until someone sets it.
+  fixedMonthlyRate           BigInt?
 
   telegramLinks  TelegramLink[]
   calls          Call[]

@@ -268,6 +268,7 @@ registerCommandActions(bot, [
   "start", "help", "report", "week", "month", "period", "errors", "deal", "deal_usage", "ask", "stop_ai",
   "sync_managers", "sync_history", "managers", "manager_ids", "admins", "add_admin", "remove_admin", "reset_code",
   "analyze_deal", "check_tg", "test_restrict", "test_restore",
+  "salary", "set_rate", "team_rate",
 ]);
 registerAdminRoleHandlers(bot);
 registerTeamLeadHandlers(bot);

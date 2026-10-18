@@ -16,7 +16,11 @@ export type PendingInputKind =
   | "plan_amount"
   | "task_due"
   | "period_from"
-  | "period_to";
+  | "period_to"
+  | "salary_days"
+  | "salary_plan"
+  | "salary_fact"
+  | "rate_amount";
 
 export type PendingPayload = Record<string, unknown>;
 

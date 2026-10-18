@@ -119,7 +119,7 @@ test("the users and sync sections list the admin tools in a stable order", async
   const labels = async (id, a = admin) => (await sectionKeyboard(a, section(id), 7)).inline_keyboard.flat().map((b) => b.callback_data).filter((d) => !d.startsWith("m:test_"));
   assert.deepEqual(await labels("users"), [
     "m:managers", "m:manager_ids", "m:admins", "m:teams_list",
-    "m:reset_code", "m:add_admin", "m:remove_admin",
+    "m:reset_code", "m:add_admin", "m:remove_admin", "m:set_rate",
     "m:set_role", "m:set_teamlead", "m:add_to_team", "m:remove_from_team", "m:delete_team",
     "m:analyze_deal",
   ]);

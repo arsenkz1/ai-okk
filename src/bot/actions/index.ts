@@ -10,3 +10,4 @@ import "./help";
 import "./admin";
 import "./inputFlows";
 import "./pickerFlows";
+import "./salary";

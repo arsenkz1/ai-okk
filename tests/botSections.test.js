@@ -28,6 +28,7 @@ test("the team section is the team lead's seven actions, in command order, each 
     ["Jamoadan chiqarish", "m:team_remove"],
     ["Jamoa menejeri kartasi", "m:team_manager"],
     ["Jamoa menejeri haqida AI-savol", "m:ask_manager"],
+    ["Jamoa: stavka belgilash", "m:team_rate"],
   ]);
 });
 
@@ -47,6 +48,7 @@ test("team actions need no typed argument, so a tap runs them directly", async (
     assert.equal(action.input, undefined, id);
     assert.equal(/<[^>]+>/.test(action.command.usage), false, id);
   }
+  assert.equal(typeof registry.getAction("team_rate").collect, "function", "the rate needs a manager and an amount, gathered with buttons");
 });
 
 test("the company section shows the ROP analytics first, then plans and ratings, for ROP and admin alike", async () => {

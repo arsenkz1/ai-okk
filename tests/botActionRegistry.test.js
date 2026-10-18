@@ -11,7 +11,7 @@ const path = require("node:path");
  * handler's register function. The count below is the number of commands the
  * bot had before the migration began; a new command changes it on purpose.
  */
-const EXPECTED_COMMAND_COUNT = 59;
+const EXPECTED_COMMAND_COUNT = 62; // 59 migrated + /salary, /set_rate, /team_rate (salary calculator, 2026-10-18)
 
 const registry = require("../dist/bot/actions/registry");
 require("../dist/bot/actions");

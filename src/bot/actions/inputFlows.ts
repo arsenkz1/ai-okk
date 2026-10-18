@@ -25,9 +25,13 @@ export async function dispatchAnswer(ctx: InputContext, value: string): Promise<
   const actionId = String(ctx.input.payload.action ?? "");
   const action = getAction(actionId);
   const access = await flowDeps.resolveAccess(ctx.telegramUserId);
+  // Arguments gathered before the question (a picked manager, for example)
+  // travel in the payload and precede the typed value.
+  const prefix = Array.isArray(ctx.input.payload.args) ? ctx.input.payload.args.map(String) : [];
+  const args = [...prefix, value];
   if (action.dangerous) {
-    const label = action.confirmLabel ? action.confirmLabel([value]) : value;
-    await ctx.bot.sendMessage(ctx.chatId, confirmText(action, label), { parse_mode: "HTML", reply_markup: confirmKeyboard(action, value) });
+    const label = action.confirmLabel ? action.confirmLabel(args) : value;
+    await ctx.bot.sendMessage(ctx.chatId, confirmText(action, label), { parse_mode: "HTML", reply_markup: confirmKeyboard(action, args.join("_")) });
     return;
   }
   await runFromInput(ctx.bot as TelegramBot, action.id, {
@@ -35,7 +39,7 @@ export async function dispatchAnswer(ctx: InputContext, value: string): Promise<
     userId: ctx.userId,
     telegramUserId: ctx.telegramUserId,
     access,
-    args: [value],
+    args,
     message: ctx.msg,
   });
 }

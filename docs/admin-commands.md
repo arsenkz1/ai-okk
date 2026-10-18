@@ -139,6 +139,7 @@ EXODE: 3
 | Hisobotlar | админ, все привязанные | Bitim | `/deal <id>` |
 | Hisobotlar | админ, все привязанные | Mening statistikam | `/my_stats` |
 | Hisobotlar | админ, все привязанные | Jamoa hisoboti | `/team_stats` |
+| Hisobotlar | админ, все привязанные | Maosh kalkulyatori | `/salary` |
 | AI-murabbiy | все привязанные | Boshlash (30 kun) / Kun / Hafta / Oy | `/ask`, `/ask_kun`, `/ask_hafta`, `/ask_oy` |
 | AI-murabbiy | все привязанные | AI-murabbiyni to'xtatish | `/stop_ai` |
 | Jamoa | тимлид | Jamoam | `/team` |
@@ -148,6 +149,7 @@ EXODE: 3
 | Jamoa | тимлид | Jamoadan chiqarish | `/team_remove` |
 | Jamoa | тимлид | Jamoa menejeri kartasi | `/team_manager` |
 | Jamoa | тимлид | Jamoa menejeri haqida AI-savol | `/ask_manager` |
+| Jamoa | тимлид | Jamoa: stavka belgilash | `/team_rate <amo_id> <summa>` |
 | Kompaniya | админ, РОП | Jamoalar | `/teams` |
 | Kompaniya | админ, РОП | Umumiy reyting | `/all_rating` |
 | Kompaniya | админ, РОП | Kompaniya xatolari | `/all_mistakes` |
@@ -174,6 +176,7 @@ EXODE: 3
 | Foydalanuvchilar | админ | Kod qayta berish | `/reset_code <amo_id>` |
 | Foydalanuvchilar | админ | Admin qo'shish | `/add_admin <telegram_id>` |
 | Foydalanuvchilar | админ | Adminni olib tashlash | `/remove_admin <telegram_id>` |
+| Foydalanuvchilar | админ | Stavka belgilash | `/set_rate <amo_id> <summa>` |
 | Foydalanuvchilar | админ | Rol berish | `/set_role <tg_id> <manager|teamlead|rop>` |
 | Foydalanuvchilar | админ | Tim-lid tayinlash | `/set_teamlead <amo_id>` |
 | Foydalanuvchilar | админ | Jamoaga qo'shish | `/add_to_team <mgr_amo_id> <tl_amo_id>` |
@@ -184,7 +187,31 @@ EXODE: 3
 | Sinxronizatsiya | админ | Qo'ng'iroqlar tarixi | `/sync_history` |
 | Yordam | все | Buyruqlar ro'yxati | `/help` |
 
-Только командой, без кнопки: `/start`, `/check_tg <tg_id>`, `/test_restrict <tg_id>`, `/test_restore <tg_id>`.
+Только командой, без кнопки: `/check_tg <tg_id>`, `/test_restrict <tg_id>`, `/test_restore <tg_id>`.
+---
+
+## 2б. Калькулятор зарплаты
+
+Кнопка «Maosh kalkulyatori» в разделе «Hisobotlar» (команда `/salary`) доступна только менеджерам с ролью MOP; тимлидам и РОПу бот отвечает, что их оплата считается иначе. Бот задаёт три вопроса подряд: рабочие дни, план на период, факт продаж по amoCRM, и считает по формулам платёжной таблицы (лист «октябрь 2026», блок МОПЫ):
+
+| Величина | Правило |
+|---|---|
+| Процент плана | факт ÷ план, округление до сотых |
+| Стоимость смены | ставка ÷ 26 × коэффициент: 60% при <30% плана, 75% при <50%, 85% при <70%, иначе 100% |
+| Оклад | стоимость смены × рабочие дни |
+| Бонус | от факта: 0 при <30%, 1% при <70%, 2% при <80%, 3% при <90%, 4% при <100%, 5% при <120%, иначе 6% |
+| Итого | оклад + бонус, округление до тысяч |
+
+Ручные «Бонус М» и «Штраф» из таблицы не учитываются, в ответе об этом сказано. Расчёт покрыт тестами на строках самой таблицы.
+
+**Фикс-ставка** хранится у менеджера (`Manager.fixedMonthlyRate`, миграция `20261018120000`). Пока ставка не задана, калькулятор просит обратиться к админу или тимлиду.
+
+| Команда | Кто может | Что делает |
+|---|---|---|
+| `/set_rate <amo_id> <сумма>` | админ | ставка любому менеджеру; кнопка «Stavka belgilash» в разделе «Foydalanuvchilar»: выбор менеджера, затем ввод суммы |
+| `/team_rate <amo_id> <сумма>` | тимлид | ставка менеджеру своей команды; кнопка «Jamoa: stavka belgilash» в разделе «Jamoa» |
+
+Период расчёта бот не фиксирует: менеджер вводит цифры за тот отрезок, за который хочет посчитать, как в таблице с недельными блоками.
 
 ---
 
