@@ -1,9 +1,9 @@
 import type TelegramBot from "node-telegram-bot-api";
 import { summarizeError } from "../../services/errorSummary";
-import { bold } from "../../services/performanceReport";
+import { bold, escapeHtml } from "../../services/performanceReport";
 import { resolveAccess as resolveAccessFromDb, type Access } from "../access";
 import { runFromCallback } from "../actions/dispatch";
-import { CANCEL_LABEL, getAction, SECTIONS, visibleActions, type SectionDefinition } from "../actions/registry";
+import { getAction, SECTIONS, visibleActions, type SectionDefinition } from "../actions/registry";
 import type { ActionDefinition, SectionId } from "../actions/types";
 import { claimCallback as claimCallbackInRedis, claimCallbackAction as claimCallbackActionInRedis } from "../dedupe";
 import { pendingInput } from "../pendingInput";
@@ -54,12 +54,7 @@ function encode(...parts: string[]): string {
 }
 
 export const sectionCallback = (sectionId: SectionId): string => encode("sec", sectionId);
-export const cancelCallback = (): string => encode("cancel");
-
-/** Under every question the bot asks: one button that drops the question. */
-export function cancelKeyboard(): TelegramBot.InlineKeyboardMarkup {
-  return { inline_keyboard: [[{ text: CANCEL_LABEL, callback_data: cancelCallback() }]] };
-}
+export { cancelCallback, cancelKeyboard } from "./cancel";
 export const actionCallback = (actionId: string, arg?: string): string => (arg === undefined ? encode(actionId) : encode(actionId, arg));
 export const confirmCallback = (actionId: string, decision: "yes" | "no", arg?: string): string => (
   decision === "no" || arg === undefined ? encode(actionId, decision) : encode(actionId, decision, arg)
@@ -67,8 +62,17 @@ export const confirmCallback = (actionId: string, decision: "yes" | "no", arg?: 
 
 const BUTTONS_PER_ROW = 2;
 
-export function sectionKeyboard(access: Access, section: SectionDefinition): TelegramBot.InlineKeyboardMarkup {
-  const buttons = visibleActions(access, section.id).map((action) => ({ text: action.label, callback_data: actionCallback(action.id) }));
+export function sectionKeyboard(access: Access, section: SectionDefinition, userId?: number): TelegramBot.InlineKeyboardMarkup {
+  const buttons: TelegramBot.InlineKeyboardButton[] = [];
+  for (const action of visibleActions(access, section.id)) {
+    // A conditional button needs to know who is looking; without a user it stays hidden.
+    if (action.showWhen && (userId === undefined || !action.showWhen({ userId, access }))) continue;
+    if (action.variants) {
+      for (const variant of action.variants) buttons.push({ text: variant.label, callback_data: actionCallback(action.id, variant.arg) });
+    } else {
+      buttons.push({ text: action.label, callback_data: actionCallback(action.id) });
+    }
+  }
   const rows: TelegramBot.InlineKeyboardButton[][] = [];
   for (let index = 0; index < buttons.length; index += BUTTONS_PER_ROW) rows.push(buttons.slice(index, index + BUTTONS_PER_ROW));
   return { inline_keyboard: rows };
@@ -89,8 +93,8 @@ export function confirmKeyboard(action: ActionDefinition, arg?: string): Telegra
   };
 }
 
-export function confirmText(action: ActionDefinition): string {
-  return `${bold(action.label)}\nTasdiqlaysizmi?`;
+export function confirmText(action: ActionDefinition, value?: string): string {
+  return `${bold(action.label)}${value ? `: ${escapeHtml(value)}` : ""}\nTasdiqlaysizmi?`;
 }
 
 export const CONFIRM_DECLINED_TEXT = "Bekor qilindi.";
@@ -147,7 +151,7 @@ export function registerMenuCallbackHandler(bot: MenuBot, dependencies: Partial<
 
       if (parsed.kind === "section") {
         const section = SECTIONS.find((candidate) => candidate.id === parsed.sectionId)!;
-        const keyboard = sectionKeyboard(access, section);
+        const keyboard = sectionKeyboard(access, section, query.from.id);
         await answer();
         await bot.editMessageText(keyboard.inline_keyboard.length ? sectionTitle(section) : `${sectionTitle(section)}\n${EMPTY_SECTION_TEXT}`, {
           chat_id: chatId, message_id: message.message_id, parse_mode: "HTML", reply_markup: keyboard,
@@ -168,9 +172,12 @@ export function registerMenuCallbackHandler(bot: MenuBot, dependencies: Partial<
         return;
       }
 
-      if (action.dangerous && parsed.decision !== "yes") {
+      // An action that still has to ask for its value is confirmed after the
+      // answer, with the value in the question; see inputFlows.
+      const willAskFirst = action.input !== undefined && parsed.arg === null;
+      if (action.dangerous && parsed.decision !== "yes" && !willAskFirst) {
         await answer();
-        await bot.sendMessage(chatId, confirmText(action), { parse_mode: "HTML", reply_markup: confirmKeyboard(action, parsed.arg ?? undefined) });
+        await bot.sendMessage(chatId, confirmText(action, parsed.arg ?? undefined), { parse_mode: "HTML", reply_markup: confirmKeyboard(action, parsed.arg ?? undefined) });
         return;
       }
 

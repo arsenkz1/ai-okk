@@ -1,5 +1,6 @@
 import type TelegramBot from "node-telegram-bot-api";
 import type { Access, BotRole } from "../access";
+import type { PendingInputKind, PendingInputService } from "../pendingInput";
 
 /**
  * One bot action, whatever triggers it.
@@ -11,7 +12,7 @@ import type { Access, BotRole } from "../access";
 
 export type SectionId = "reports" | "ai" | "team" | "company" | "phoenix" | "users" | "sync" | "help";
 
-export type ActionSource = "command" | "button" | "callback";
+export type ActionSource = "command" | "button" | "callback" | "input";
 
 export interface ActionContext {
   bot: TelegramBot;
@@ -24,6 +25,20 @@ export interface ActionContext {
   source: ActionSource;
   /** The triggering message; absent for callbacks whose message is gone. */
   message?: TelegramBot.Message;
+  /** Where a question to the user is remembered. */
+  pending: PendingInputService;
+}
+
+/** The one value an action asks for when a button starts it without arguments. */
+export interface ActionInput {
+  kind: PendingInputKind;
+  prompt: string;
+}
+
+/** Several buttons for one action, each passing its own argument. */
+export interface ActionVariant {
+  label: string;
+  arg?: string;
 }
 
 export interface MenuCommand {
@@ -66,5 +81,11 @@ export interface ActionDefinition {
    * the caller's state. Otherwise the text is chosen by link state.
    */
   denyText?: string | ((access: Access) => string);
+  /** Asked when a button triggers the action without its argument. */
+  input?: ActionInput;
+  /** Rendered instead of the single label inside a section keyboard. */
+  variants?: ActionVariant[];
+  /** Hides the button inside a section keyboard when false; commands are unaffected. */
+  showWhen?: (ctx: { userId: number; access: Access }) => boolean;
   run(ctx: ActionContext): Promise<void>;
 }

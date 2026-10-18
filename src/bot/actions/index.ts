@@ -8,3 +8,4 @@ import "./deal";
 import "./aiCoach";
 import "./help";
 import "./admin";
+import "./inputFlows";

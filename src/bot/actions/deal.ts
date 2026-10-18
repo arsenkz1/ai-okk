@@ -70,6 +70,7 @@ defineAction({
   // Inactive managers always got the "not authorized" text here, not the
   // "deactivated" one; kept so the reply does not change.
   denyText: NOT_LINKED_TEXT,
+  input: { kind: "deal_id", prompt: "Bitim ID raqamini yuboring:" },
   command: { pattern: /^\/deal(?:@\w+)?\s+(\d{4,12})$/, usage: "/deal <id>", description: "bitim bo'yicha ma'lumotnoma" },
   run: (ctx) => sendDealDossier(ctx.bot, ctx.chatId, ctx.telegramUserId, parseInt(ctx.args[0], 10)),
 });

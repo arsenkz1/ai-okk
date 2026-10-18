@@ -1,6 +1,8 @@
 import type TelegramBot from "node-telegram-bot-api";
 import { resolveAccess, type Access } from "../access";
 import { claimUpdate } from "../dedupe";
+import { cancelKeyboard } from "../keyboards/cancel";
+import { pendingInput as defaultPendingInput, type PendingInputService } from "../pendingInput";
 import { summarizeError } from "../../services/errorSummary";
 import { getAction, isAllowed } from "./registry";
 import type { ActionContext, ActionDefinition } from "./types";
@@ -9,6 +11,16 @@ import type { ActionContext, ActionDefinition } from "./types";
  * Runs an action for a Telegram update: deduplicates, resolves who is asking,
  * checks the role once, then calls `run`. Every trigger goes through here.
  */
+
+const dispatchDeps: {
+  pendingInput: PendingInputService;
+  resolveAccess: (telegramUserId: string) => Promise<Access>;
+} = { pendingInput: defaultPendingInput, resolveAccess };
+
+/** Tests swap the Redis-backed question store and the database lookup for fakes. */
+export function configureDispatch(overrides: Partial<typeof dispatchDeps>): void {
+  Object.assign(dispatchDeps, overrides);
+}
 
 export const NOT_LINKED_TEXT = "❌ Siz avtorizatsiya qilinmagansiz.\n/start kiriting va 6 xonali kodingizni yuboring.";
 export const DEACTIVATED_TEXT = "❌ Hisobingiz deaktivlashtirilgan. Administratorga murojaat qiling.";
@@ -37,9 +49,14 @@ export async function execute(action: ActionDefinition, ctx: ActionContext): Pro
     return;
   }
   // A command always arrives with its arguments matched; a button may not.
-  // Until the input flows exist, such a tap answers with the usage line
-  // instead of running on an empty argument.
+  // An action that knows what to ask for asks; any other answers with the
+  // usage line instead of running on an empty argument.
   if (ctx.source !== "command" && action.command && ctx.args.length < requiredArgCount(action.command.usage)) {
+    if (action.input) {
+      await ctx.pending.expect(ctx.userId, action.input.kind, { action: action.id });
+      await ctx.bot.sendMessage(ctx.chatId, action.input.prompt, { reply_markup: cancelKeyboard() });
+      return;
+    }
     await ctx.bot.sendMessage(ctx.chatId, usageText(action));
     return;
   }
@@ -59,7 +76,7 @@ export async function runCommand(
   if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
   const action = getAction(actionId);
   const telegramUserId = String(msg.from!.id);
-  const access = await resolveAccess(telegramUserId);
+  const access = await dispatchDeps.resolveAccess(telegramUserId);
   await execute(action, {
     bot,
     chatId: msg.chat.id,
@@ -69,6 +86,7 @@ export async function runCommand(
     args: commandArgs(match),
     source: "command",
     message: msg,
+    pending: dispatchDeps.pendingInput,
   });
 }
 
@@ -84,7 +102,7 @@ export async function runFromButton(
 ): Promise<void> {
   const action = getAction(actionId);
   const telegramUserId = String(msg.from!.id);
-  const access = await resolveAccess(telegramUserId);
+  const access = await dispatchDeps.resolveAccess(telegramUserId);
   await execute(action, {
     bot,
     chatId: msg.chat.id,
@@ -94,6 +112,7 @@ export async function runFromButton(
     args,
     source: "button",
     message: msg,
+    pending: dispatchDeps.pendingInput,
   });
 }
 
@@ -108,7 +127,12 @@ export interface CallbackRunParams {
 
 /** An inline-button tap. Access is resolved by the caller, which also answers the query. */
 export async function runFromCallback(bot: TelegramBot, actionId: string, params: CallbackRunParams): Promise<void> {
-  await execute(getAction(actionId), { bot, source: "callback", ...params });
+  await execute(getAction(actionId), { bot, source: "callback", pending: dispatchDeps.pendingInput, ...params });
+}
+
+/** The typed answer to a question an action asked. */
+export async function runFromInput(bot: TelegramBot, actionId: string, params: CallbackRunParams): Promise<void> {
+  await execute(getAction(actionId), { bot, source: "input", pending: dispatchDeps.pendingInput, ...params });
 }
 
 /** Registers the command pattern of each listed action on the bot. */

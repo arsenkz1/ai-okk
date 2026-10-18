@@ -169,3 +169,25 @@ test("the cancel button drops the pending question and rewrites the prompt", asy
   assert.equal(calls.edits.at(-1).text, menu.CONFIRM_DECLINED_TEXT);
   assert.equal(calls.answers.length, 1);
 });
+
+test("a dangerous action that still has to ask is not confirmed up front", async () => {
+  const asked = [];
+  const dispatchModule = require("../dist/bot/actions/dispatch");
+  const pendingModule = require("../dist/bot/pendingInput");
+  const rows = new Map();
+  const fakePending = pendingModule.createPendingInputService({
+    async get(key) { return rows.get(key) ?? null; }, async set(key, value) { rows.set(key, value); asked.push(key); }, async del(key) { rows.delete(key); },
+  });
+  dispatchModule.configureDispatch({ pendingInput: fakePending });
+  registry.defineAction({
+    id: "test_cb_danger_input", section: "users", roles: [], label: "t-danger-input", dangerous: true,
+    input: { kind: "telegram_id", prompt: "Kimni?" },
+    command: { pattern: /\/x (\d+)/, usage: "/x <tg_id>", description: "t" },
+    async run() { runs.push({ id: "test_cb_danger_input" }); },
+  });
+  const { calls, tap } = registerWith();
+  await tap("m:test_cb_danger_input");
+  assert.equal(calls.sent.at(-1).text, "Kimni?", "the question comes first");
+  assert.deepEqual(asked, ["bot:pending:7"]);
+  assert.equal(runs.some((r) => r.id === "test_cb_danger_input"), false);
+});

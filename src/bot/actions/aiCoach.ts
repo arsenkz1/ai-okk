@@ -148,10 +148,17 @@ Barcha javob va tavsiyalaring uchun shu ma'lumotlardan foydalan.`;
 
 defineAction({
   id: "ask", section: "ai", roles: ["manager"], label: "AI-murabbiyni boshlash",
-  // The unanchored pattern is historical: it also carries /ask_kun, /ask_hafta
-  // and /ask_oy, whose tails are parsed as the period.
+  variants: [
+    { label: "Boshlash (30 kun)" },
+    { label: "Kun", arg: "kun" },
+    { label: "Hafta", arg: "hafta" },
+    { label: "Oy", arg: "oy" },
+  ],
+  // One pattern carries /ask, /ask_kun, /ask_hafta and /ask_oy; the tail is
+  // parsed as the period. Anchored, so /ask_manager (a team-lead command)
+  // and "/askanything" no longer start a session.
   command: {
-    pattern: /\/ask(.*)/, usage: "/ask [savol]", description: "AI-murabbiy bilan suhbat (30 kun)",
+    pattern: /^\/ask((?:_(?:kun|hafta|oy))?(?:\s[\s\S]*)?)$/, usage: "/ask [savol]", description: "AI-murabbiy bilan suhbat (30 kun)",
     menu: [
       { command: "ask", description: "AI-murabbiy: so'nggi 30 kun" },
       { command: "ask_kun", description: "AI-murabbiy: faqat bugun" },
@@ -205,6 +212,8 @@ defineAction({
 
 defineAction({
   id: "stop_ai", section: "ai", roles: [], label: "AI-murabbiyni to'xtatish",
+  // On the keyboard only while there is something to stop.
+  showWhen: ({ userId }) => aiSessions.get(userId)?.active === true || supervisorAiSessions.get(userId)?.active === true,
   command: { pattern: /\/stop_ai$/, usage: "/stop_ai", description: "AI-murabbiy rejimidan chiqish" },
   async run(ctx) {
     const userId = ctx.userId;

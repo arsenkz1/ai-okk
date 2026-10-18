@@ -197,6 +197,7 @@ defineAction({
 
 defineAction({
   id: "add_admin", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Admin qo'shish",
+  input: { kind: "telegram_id", prompt: "Yangi administratorning Telegram ID raqamini yuboring:" },
   command: { pattern: /\/add_admin (\d+)/, usage: "/add_admin <telegram_id>", description: "foydalanuvchini administrator qilish" },
   async run(ctx) {
     const newId = ctx.args[0];
@@ -216,6 +217,7 @@ defineAction({
 
 defineAction({
   id: "remove_admin", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Adminni olib tashlash", dangerous: true,
+  input: { kind: "telegram_id", prompt: "Olib tashlanadigan administratorning Telegram ID raqamini yuboring:" },
   command: { pattern: /\/remove_admin (\d+)/, usage: "/remove_admin <telegram_id>", description: "administrator huquqlarini olish" },
   async run(ctx) {
     const targetId = ctx.args[0];
@@ -259,6 +261,7 @@ defineAction({
 
 defineAction({
   id: "analyze_deal", section: "users", roles: [...ADMIN.roles], denyText: ADMIN.denyText, label: "Bitimni tahlil qilish",
+  input: { kind: "deal_id", prompt: "Tahlil uchun bitim ID raqamini yuboring:" },
   command: { pattern: /\/analyze_deal (\d+)/, usage: "/analyze_deal <deal_id>", description: "bitim bo'yicha so'nggi qo'ng'iroqni tahlil qilish" },
   async run(ctx) {
     const [{ fetchDealCallNotes, fetchDealContactPhones, fetchDealSummary }, { findPbxRecordByDateAndPhone }, { callProcessingQueue }] = await Promise.all([

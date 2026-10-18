@@ -91,6 +91,10 @@ test("/start, /help, /ask and /stop_ai keep their command patterns", () => {
   assert.equal(ask.exec("/ask")[1], "");
   assert.equal(ask.exec("/ask_kun nega sotolmadim?")[1], "_kun nega sotolmadim?");
   assert.equal(ask.exec("/ask savol")[1], " savol");
+  assert.equal(ask.exec("/ask_oy")[1], "_oy");
+  assert.equal(ask.exec("/ask ikki\nqator")[1], " ikki\nqator");
+  // Anchored: the team-lead command and random prefixes are no longer caught.
+  for (const text of ["/ask_manager", "/askanything", "hello /ask", "/ask_kunduz"]) assert.equal(ask.test(text), false, text);
 });
 
 test("/ask is for linked active managers only; /start, /help and /stop_ai answer anyone", () => {

@@ -62,7 +62,7 @@ export async function handleLabelHit(
     await bot.sendMessage(chatId, helpTextFor(access), { reply_markup: mainMenuMarkup(access) });
     return;
   }
-  const keyboard = sectionKeyboard(access, hit.section);
+  const keyboard = sectionKeyboard(access, hit.section, userId);
   if (keyboard.inline_keyboard.length === 0) {
     await bot.sendMessage(chatId, `${sectionTitle(hit.section)}\n${EMPTY_SECTION_TEXT}`, { parse_mode: "HTML" });
     return;

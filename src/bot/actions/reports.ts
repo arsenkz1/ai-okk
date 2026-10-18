@@ -16,7 +16,7 @@ import { formatManagerDisplayName } from "../../services/managerDisplayName";
 import { findLinkedManager, type Access, type LinkedManager } from "../access";
 import { pendingInput } from "../pendingInput";
 import { defineInputHandler } from "../inputHandlers";
-import { cancelKeyboard } from "../keyboards/menuCallbacks";
+import { cancelKeyboard } from "../keyboards/cancel";
 import { formatDuration, getWeakAreas, parseDate, UZ_MONTHS, UZ_MONTHS_CAP } from "../reportText";
 import { DEACTIVATED_TEXT, NOT_LINKED_TEXT } from "./dispatch";
 import { defineAction } from "./registry";

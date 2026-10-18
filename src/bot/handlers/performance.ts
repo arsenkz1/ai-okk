@@ -186,6 +186,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
   // /inactivity_lead <id> — why this one deal has not been moved to Phoenix.
   defineAction({
     id: "inactivity_lead", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks: bitim bo'yicha",
+    input: { kind: "lead_id", prompt: "Bitim ID raqamini yuboring (Feniks tekshiruvi):" },
     command: { pattern: /^\/inactivity_lead\s+(\d{4,12})$/, usage: "/inactivity_lead <id>", description: "aniq bitim nega Feniksga o'tmagan" },
     async run(ctx) {
       const msg = ctx.message!;
