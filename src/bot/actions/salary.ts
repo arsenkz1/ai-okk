@@ -1,3 +1,4 @@
+import type TelegramBot from "node-telegram-bot-api";
 import { bold, escapeHtml, formatMoney } from "../../services/performanceReport";
 import {
   findRateTargetByAmoId,
@@ -26,7 +27,10 @@ import type { ActionContext, ActionDefinition } from "./types";
  * for members of their own team.
  */
 
-export const RATE_MISSING_TEXT = "Sizning fikslangan stavkangiz hali belgilanmagan. Administrator yoki tim-lid uni /set_rate orqali belgilashi kerak.";
+export const RATE_SELF_PROMPT = "Sizning fikslangan stavkangiz hali belgilanmagan (uni administrator yoki tim-lid belgilaydi). Hisoblash uchun oylik stavkani o'zingiz kiriting (so'mda), masalan: 2500000";
+export const RATE_SELF_ERROR_TEXT = "Stavka noto'g'ri. Faqat raqamlar, masalan: 2500000. Qaytadan yuboring.";
+export const AGAIN_FACT_LABEL = "Boshqa fakt bilan";
+export const RESTART_LABEL = "Boshidan";
 export const CALCULATOR_FOR_MANAGERS_TEXT = "Kalkulyator hozircha faqat menejerlar (MOP) uchun: tim-lid va ROP maoshi boshqa qoidalar bilan hisoblanadi.";
 export const DAYS_PROMPT = "Davr ichida necha kun ishladingiz? Raqam yuboring, masalan: 5";
 export const DAYS_ERROR_TEXT = "Kunlar soni 1 dan 31 gacha bo'lgan butun son bo'lishi kerak. Qaytadan yuboring.";
@@ -56,11 +60,20 @@ export function parseFactAmount(text: string): number | null {
 
 const percent = (ratio: number): string => `${Math.round(ratio * 100)}%`;
 
-export function formatSalaryResult(input: { fixedMonthlyRate: number; workedDays: number; plan: number; fact: number }): string {
+export interface SalaryScenario {
+  fixedMonthlyRate: number;
+  workedDays: number;
+  plan: number;
+  fact: number;
+  /** True when the rate came from the database rather than the manager's own guess. */
+  storedRate: boolean;
+}
+
+export function formatSalaryResult(input: SalaryScenario): string {
   const result = calculateSalary(input);
   return [
     bold("Maosh hisob-kitobi (dastlabki)"),
-    `Stavka: ${formatMoney(input.fixedMonthlyRate)} · Kunlar: ${input.workedDays}`,
+    `Stavka: ${formatMoney(input.fixedMonthlyRate)} (${input.storedRate ? "saqlangan" : "siz kiritgan"}) · Kunlar: ${input.workedDays}`,
     `Reja: ${formatMoney(input.plan)} · Fakt: ${formatMoney(input.fact)} (${percent(result.planRatio)})`,
     `Smena narxi: ${formatMoney(result.shiftCost)} (koeffitsient ${percent(result.shiftCoefficient)})`,
     `Oklad: ${formatMoney(result.baseSalary)}`,
@@ -71,6 +84,29 @@ export function formatSalaryResult(input: { fixedMonthlyRate: number; workedDays
   ].join("\n");
 }
 
+/** Under a result: try another fact with the same rate, days and plan, or start over. */
+export function salaryAgainKeyboard(scenario: Pick<SalaryScenario, "fixedMonthlyRate" | "workedDays" | "plan">): TelegramBot.InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [[
+      { text: AGAIN_FACT_LABEL, callback_data: actionCallback("salary", [scenario.fixedMonthlyRate, scenario.workedDays, scenario.plan].map(String).join("_")) },
+      { text: RESTART_LABEL, callback_data: actionCallback("salary") },
+    ]],
+  };
+}
+
+const salaryDeps: { getRate: (managerId: number) => Promise<number | null> } = { getRate: getManagerFixedRate };
+
+/** Tests replace the database read. */
+export function configureSalary(overrides: Partial<typeof salaryDeps>): void {
+  Object.assign(salaryDeps, overrides);
+}
+
+/** Works from an action or from a typed answer: both carry these four fields. */
+async function askDays(target: Pick<ActionContext, "bot" | "chatId" | "userId" | "pending">, rate: number, storedRate: boolean): Promise<void> {
+  await target.pending.expect(target.userId, "salary_days", { rate, storedRate });
+  await target.bot.sendMessage(target.chatId, DAYS_PROMPT, { reply_markup: cancelKeyboard() });
+}
+
 // ---------------------------------------------------------------------------
 // /salary — three typed answers, then the figure
 // ---------------------------------------------------------------------------
@@ -78,20 +114,46 @@ export function formatSalaryResult(input: { fixedMonthlyRate: number; workedDays
 defineAction({
   id: "salary", section: "reports", order: 110, roles: ["manager"], label: "Maosh kalkulyatori",
   showWhen: ({ access }) => isSalesManager(access),
-  command: { pattern: /^\/salary$/, usage: "/salary", description: "haftalik maoshni hisoblash (kunlar, reja, fakt)" },
+  decodeArg: (arg) => arg.split("_"),
+  command: { pattern: /^\/salary$/, usage: "/salary", description: "maoshni hisoblash: kunlar, reja va fakt bo'yicha (taxminiy fakt ham mumkin)" },
   async run(ctx) {
     if (!isSalesManager(ctx.access)) {
       await ctx.bot.sendMessage(ctx.chatId, CALCULATOR_FOR_MANAGERS_TEXT);
       return;
     }
-    const rate = await getManagerFixedRate(ctx.access.manager!.id);
-    if (rate === null) {
-      await ctx.bot.sendMessage(ctx.chatId, RATE_MISSING_TEXT);
+    const stored = await salaryDeps.getRate(ctx.access.manager!.id);
+
+    // "Boshqa fakt bilan": rate, days and plan come packed in the button.
+    const [rateArg, daysArg, planArg] = ctx.args;
+    if (ctx.args.length === 3) {
+      const rate = parsePlanAmount(rateArg ?? "");
+      const days = parseWorkedDays(daysArg ?? "");
+      const plan = parsePlanAmount(planArg ?? "");
+      if (rate !== null && days !== null && plan !== null) {
+        await ctx.pending.expect(ctx.userId, "salary_fact", { rate, days, plan, storedRate: stored === rate });
+        await ctx.bot.sendMessage(ctx.chatId, FACT_PROMPT, { reply_markup: cancelKeyboard() });
+        return;
+      }
+    }
+
+    if (stored !== null) {
+      await askDays(ctx, stored, true);
       return;
     }
-    await ctx.pending.expect(ctx.userId, "salary_days", { rate });
-    await ctx.bot.sendMessage(ctx.chatId, DAYS_PROMPT, { reply_markup: cancelKeyboard() });
+    // No official rate yet: the manager may still run the numbers with a rate
+    // of their own.
+    await ctx.pending.expect(ctx.userId, "salary_rate", {});
+    await ctx.bot.sendMessage(ctx.chatId, RATE_SELF_PROMPT, { reply_markup: cancelKeyboard() });
   },
+});
+
+defineInputHandler("salary_rate", async (ctx) => {
+  const rate = parsePlanAmount(ctx.text);
+  if (rate === null) {
+    await ctx.bot.sendMessage(ctx.chatId, RATE_SELF_ERROR_TEXT, { reply_markup: cancelKeyboard() });
+    return;
+  }
+  await askDays(ctx, rate, false);
 });
 
 defineInputHandler("salary_days", async ({ bot, chatId, userId, text, input, pending }) => {
@@ -121,8 +183,9 @@ defineInputHandler("salary_fact", async ({ bot, chatId, userId, text, input, pen
     return;
   }
   await pending.cancel(userId);
-  const { rate, days, plan } = input.payload as { rate: number; days: number; plan: number };
-  await bot.sendMessage(chatId, formatSalaryResult({ fixedMonthlyRate: Number(rate), workedDays: Number(days), plan: Number(plan), fact }), { parse_mode: "HTML" });
+  const { rate, days, plan, storedRate } = input.payload as { rate: number; days: number; plan: number; storedRate?: boolean };
+  const scenario: SalaryScenario = { fixedMonthlyRate: Number(rate), workedDays: Number(days), plan: Number(plan), fact, storedRate: storedRate === true };
+  await bot.sendMessage(chatId, formatSalaryResult(scenario), { parse_mode: "HTML", reply_markup: salaryAgainKeyboard(scenario) });
 });
 
 // ---------------------------------------------------------------------------

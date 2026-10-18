@@ -17,6 +17,7 @@ export type PendingInputKind =
   | "task_due"
   | "period_from"
   | "period_to"
+  | "salary_rate"
   | "salary_days"
   | "salary_plan"
   | "salary_fact"

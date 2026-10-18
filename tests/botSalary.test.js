@@ -43,10 +43,41 @@ test("the calculator is offered to sales managers only; leads and ROPs are told 
   assert.equal(sent.at(-1).text, salary.CALCULATOR_FOR_MANAGERS_TEXT);
 });
 
+test("with a stored rate the chain starts at the days; without one the manager types a rate first", async () => {
+  const run = async (rate, args = []) => {
+    salary.configureSalary({ getRate: async () => rate });
+    const { sent, bot } = fakeBot();
+    await registry.getAction("salary").run({ bot, chatId: 5, userId: 7, telegramUserId: "7", access: access(false, active("MANAGER")), args, source: "callback", pending });
+    return sent;
+  };
+  assert.equal((await run(2500000)).at(-1).text, salary.DAYS_PROMPT);
+  assert.deepEqual((await pending.lookup(7)).input.payload, { rate: 2500000, storedRate: true });
+
+  const sent = await run(null);
+  assert.equal(sent.at(-1).text, salary.RATE_SELF_PROMPT);
+  assert.equal((await pending.lookup(7)).input.kind, "salary_rate");
+  const { sent: typedSent, bot } = fakeBot();
+  await inputs.handlePendingInput(bot, msgOf("abc"), await pending.lookup(7), pending);
+  assert.equal(typedSent.at(-1).text, salary.RATE_SELF_ERROR_TEXT);
+  await inputs.handlePendingInput(bot, msgOf("3 000 000"), await pending.lookup(7), pending);
+  assert.equal(typedSent.at(-1).text, salary.DAYS_PROMPT);
+  assert.deepEqual((await pending.lookup(7)).input.payload, { rate: 3000000, storedRate: false });
+  await pending.cancel(7);
+});
+
+test("'another fact' re-asks only the fact with the packed rate, days and plan", async () => {
+  salary.configureSalary({ getRate: async () => 2500000 });
+  const { sent, bot } = fakeBot();
+  await registry.getAction("salary").run({ bot, chatId: 5, userId: 7, telegramUserId: "7", access: access(false, active("MANAGER")), args: registry.getAction("salary").decodeArg("2500000_4_30000000"), source: "callback", pending });
+  assert.equal(sent.at(-1).text, salary.FACT_PROMPT);
+  assert.deepEqual((await pending.lookup(7)).input.payload, { rate: 2500000, days: 4, plan: 30000000, storedRate: true });
+  await pending.cancel(7);
+});
+
 test("three typed answers lead to the sheet's figure; wrong answers keep the question open", async () => {
   const { sent, bot } = fakeBot();
   // Start the chain the way the action does once the rate is known.
-  await pending.expect(7, "salary_days", { rate: 2500000 });
+  await pending.expect(7, "salary_days", { rate: 2500000, storedRate: true });
   const typed = async (text) => inputs.handlePendingInput(bot, msgOf(text), await pending.lookup(7), pending);
 
   await typed("40");
@@ -68,15 +99,18 @@ test("three typed answers lead to the sheet's figure; wrong answers keep the que
   assert.ok(result.text.includes("<b>Jami: 1 136 000</b>"), result.text);
   assert.ok(result.text.includes("Fakt: 25 041 000 (83%)"));
   assert.ok(result.text.includes("Bonus: 3% = 751 230"));
+  assert.ok(result.text.includes("Stavka: 2 500 000 (saqlangan)"));
+  assert.deepEqual(result.options.reply_markup.inline_keyboard[0].map((b) => b.callback_data), ["m:salary:2500000_4_30000000", "m:salary"]);
   assert.deepEqual(await pending.lookup(7), { state: "none" });
 });
 
 test("a zero fact is accepted and gives the base salary only", async () => {
   const { sent, bot } = fakeBot();
-  await pending.expect(8, "salary_fact", { rate: 2500000, days: 1, plan: 15000000 });
+  await pending.expect(8, "salary_fact", { rate: 2500000, days: 1, plan: 15000000, storedRate: false });
   await inputs.handlePendingInput(bot, { chat: { id: 5 }, from: { id: 8 }, text: "0" }, await pending.lookup(8), pending);
   assert.ok(sent.at(-1).text.includes("<b>Jami: 58 000</b>"));
   assert.ok(sent.at(-1).text.includes("Bonus: 0% = 0"));
+  assert.ok(sent.at(-1).text.includes("(siz kiritgan)"));
 });
 
 test("the rate commands exist for admins and team leads with the right scope", () => {
