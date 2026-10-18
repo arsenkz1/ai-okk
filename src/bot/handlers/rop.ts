@@ -68,7 +68,7 @@ async function sendInChunks(
 
 export function registerRopHandlers(bot: TelegramBot) {
   defineAction({
-    id: "teams", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Jamoalar",
+    id: "teams", section: "company", order: 10, roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Jamoalar",
     command: { pattern: /\/teams$/, usage: "/teams", description: "barcha jamoalar" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -100,7 +100,7 @@ export function registerRopHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "all_rating", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Umumiy reyting",
+    id: "all_rating", section: "company", order: 10, roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Umumiy reyting",
     command: { pattern: /\/all_rating$/, usage: "/all_rating", description: "menejerlarning umumiy reytingi (7 kun)" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -119,7 +119,7 @@ export function registerRopHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "all_mistakes", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Kompaniya xatolari",
+    id: "all_mistakes", section: "company", order: 10, roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Kompaniya xatolari",
     command: { pattern: /\/all_mistakes$/, usage: "/all_mistakes", description: "kompaniya bo'yicha xatolar" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -142,7 +142,7 @@ export function registerRopHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "rop_team_rating", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Jamoa reytingi (tanlash)",
+    id: "rop_team_rating", section: "company", order: 10, roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Jamoa bo'yicha reyting",
     command: { pattern: /\/rop_team_rating$/, usage: "/rop_team_rating", description: "aniq jamoa reytingi" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -162,7 +162,7 @@ export function registerRopHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "rop_team_mistakes", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Jamoa xatolari (tanlash)",
+    id: "rop_team_mistakes", section: "company", order: 10, roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Jamoa bo'yicha xatolar",
     command: { pattern: /\/rop_team_mistakes$/, usage: "/rop_team_mistakes", description: "aniq jamoa xatolari" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -182,7 +182,7 @@ export function registerRopHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "rop_manager", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Menejer kartasi",
+    id: "rop_manager", section: "company", order: 10, roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Menejer kartasi",
     command: { pattern: /\/rop_manager$/, usage: "/rop_manager", description: "menejer kartasi" },
     async run(ctx) {
       const msg = ctx.message!;
@@ -202,7 +202,7 @@ export function registerRopHandlers(bot: TelegramBot) {
   });
 
   defineAction({
-    id: "rop_ask", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Menejer haqida AI-savol",
+    id: "rop_ask", section: "company", order: 10, roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Menejer haqida AI-savol",
     command: { pattern: /\/rop_ask$/, usage: "/rop_ask", description: "menejer haqida AI-savol" },
     async run(ctx) {
       const msg = ctx.message!;

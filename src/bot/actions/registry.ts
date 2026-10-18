@@ -57,10 +57,16 @@ export function isAllowed(action: ActionDefinition, access: Access): boolean {
 }
 
 /** Actions a user may see on a keyboard, optionally within one section. */
+const DEFAULT_ORDER = 100;
+
 export function visibleActions(access: Access, section?: SectionId): ActionDefinition[] {
-  return allActions().filter((action) => (
-    !action.commandOnly
-    && (section === undefined || action.section === section)
-    && isAllowed(action, access)
-  ));
+  // Definition order depends on which module registered first; `order` makes
+  // a section's layout the same in every process and in tests.
+  return allActions()
+    .filter((action) => (
+      !action.commandOnly
+      && (section === undefined || action.section === section)
+      && isAllowed(action, access)
+    ))
+    .sort((left, right) => (left.order ?? DEFAULT_ORDER) - (right.order ?? DEFAULT_ORDER));
 }

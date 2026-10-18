@@ -48,3 +48,37 @@ test("team actions need no typed argument, so a tap runs them directly", () => {
     assert.equal(/<[^>]+>/.test(action.command.usage), false, id);
   }
 });
+
+test("the company section shows the ROP analytics first, then plans and ratings, for ROP and admin alike", () => {
+  const expected = [
+    ["Jamoalar", "m:teams"],
+    ["Umumiy reyting", "m:all_rating"],
+    ["Kompaniya xatolari", "m:all_mistakes"],
+    ["Jamoa bo'yicha reyting", "m:rop_team_rating"],
+    ["Jamoa bo'yicha xatolar", "m:rop_team_mistakes"],
+    ["Menejer kartasi", "m:rop_manager"],
+    ["Menejer haqida AI-savol", "m:rop_ask"],
+    ["Bosqichlarni sinxronlash", "m:sync_stages"],
+    ["Reyting: chiqarish/qaytarish", "m:rating_toggle"],
+    ["Reyting ro'yxati", "m:rating_list"],
+    ["Qo'ng'iroqlar holati", "m:call_status"],
+    ["Reja belgilash", "m:set_plan"],
+    ["Rejalar", "m:plans"],
+  ];
+  assert.deepEqual(buttons(access(false, active("ROP")), "company"), expected);
+  assert.deepEqual(buttons(access(true, null), "company"), expected);
+  for (const a of [access(false, active("MANAGER")), access(false, active("TEAMLEAD"))]) {
+    assert.deepEqual(buttons(a, "company"), []);
+    assert.equal(mainMenuSections(a).some((s) => s.id === "company"), false);
+  }
+});
+
+test("company buttons that take no argument run on tap; the two that do still wait for S11", () => {
+  for (const id of ["teams", "all_rating", "all_mistakes", "rop_team_rating", "rop_team_mistakes", "rop_manager", "rop_ask", "sync_stages", "rating_list", "call_status", "plans"]) {
+    assert.equal(/<[^>]+>/.test(registry.getAction(id).command.usage), false, id);
+  }
+  for (const id of ["set_plan", "rating_toggle"]) {
+    assert.equal(/<[^>]+>/.test(registry.getAction(id).command.usage), true, id);
+    assert.equal(registry.getAction(id).input, undefined, id);
+  }
+});

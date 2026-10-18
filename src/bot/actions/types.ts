@@ -87,5 +87,7 @@ export interface ActionDefinition {
   variants?: ActionVariant[];
   /** Hides the button inside a section keyboard when false; commands are unaffected. */
   showWhen?: (ctx: { userId: number; access: Access }) => boolean;
+  /** Position inside the section keyboard; lower first, ties keep definition order. Default 100. */
+  order?: number;
   run(ctx: ActionContext): Promise<void>;
 }
