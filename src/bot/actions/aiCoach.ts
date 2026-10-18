@@ -196,7 +196,7 @@ defineAction({
       const answer = await askGeminiWithHistory(history, systemContext);
       history.push({ role: "model", parts: [{ text: answer }] });
 
-      aiSessions.set(userId, { active: true, history, systemContext, managerId: manager.id, period });
+      await aiSessions.set(userId, { active: true, history, systemContext, managerId: manager.id, period });
 
       await ctx.bot.sendMessage(
         ctx.chatId,
@@ -204,7 +204,7 @@ defineAction({
         { parse_mode: "Markdown" }
       );
     } else {
-      aiSessions.set(userId, { active: true, history, systemContext, managerId: manager.id, period });
+      await aiSessions.set(userId, { active: true, history, systemContext, managerId: manager.id, period });
       await ctx.bot.sendMessage(ctx.chatId, activationText, { parse_mode: "Markdown" });
     }
   },
@@ -213,13 +213,13 @@ defineAction({
 defineAction({
   id: "stop_ai", section: "ai", roles: [], label: "AI-murabbiyni to'xtatish",
   // On the keyboard only while there is something to stop.
-  showWhen: ({ userId }) => aiSessions.get(userId)?.active === true || supervisorAiSessions.get(userId)?.active === true,
+  showWhen: async ({ userId }) => (await aiSessions.get(userId))?.active === true || (await supervisorAiSessions.get(userId))?.active === true,
   command: { pattern: /\/stop_ai$/, usage: "/stop_ai", description: "AI-murabbiy rejimidan chiqish" },
   async run(ctx) {
     const userId = ctx.userId;
-    const session = aiSessions.get(userId);
-    const supSession = supervisorAiSessions.get(userId);
-    const flow = roleFlowState.get(userId);
+    const session = await aiSessions.get(userId);
+    const supSession = await supervisorAiSessions.get(userId);
+    const flow = await roleFlowState.get(userId);
 
     if (!session?.active && !supSession?.active && !flow) {
       await ctx.bot.sendMessage(ctx.chatId, "ℹ️ AI-murabbiy allaqachon aktiv emas.");
@@ -229,13 +229,13 @@ defineAction({
     let msgCount = 0;
     if (supSession?.active) {
       msgCount = Math.floor(supSession.history.length / 2);
-      supervisorAiSessions.delete(userId);
+      await supervisorAiSessions.delete(userId);
     }
     if (session?.active) {
       msgCount = Math.floor(session.history.length / 2);
-      aiSessions.delete(userId);
+      await aiSessions.delete(userId);
     }
-    if (flow) roleFlowState.delete(userId);
+    if (flow) await roleFlowState.delete(userId);
 
     await ctx.bot.sendMessage(
       ctx.chatId,

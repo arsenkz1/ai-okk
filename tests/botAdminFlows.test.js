@@ -113,18 +113,18 @@ test("the real admin actions are wired: pickers, confirmations, and delete_team 
   assert.deepEqual(registry.getAction("add_to_team").decodeArg("1_2"), ["1", "2"]);
 });
 
-test("the users and sync sections list the admin tools in a stable order", () => {
+test("the users and sync sections list the admin tools in a stable order", async () => {
   const { sectionKeyboard } = require("../dist/bot/keyboards/menuCallbacks");
   const section = (id) => registry.SECTIONS.find((s) => s.id === id);
-  const labels = (id, a = admin) => sectionKeyboard(a, section(id), 7).inline_keyboard.flat().map((b) => b.callback_data).filter((d) => !d.startsWith("m:test_"));
-  assert.deepEqual(labels("users"), [
+  const labels = async (id, a = admin) => (await sectionKeyboard(a, section(id), 7)).inline_keyboard.flat().map((b) => b.callback_data).filter((d) => !d.startsWith("m:test_"));
+  assert.deepEqual(await labels("users"), [
     "m:managers", "m:manager_ids", "m:admins", "m:teams_list",
     "m:reset_code", "m:add_admin", "m:remove_admin",
     "m:set_role", "m:set_teamlead", "m:add_to_team", "m:remove_from_team", "m:delete_team",
     "m:analyze_deal",
   ]);
-  assert.deepEqual(labels("sync"), ["m:sync_managers", "m:sync_history"]);
-  assert.deepEqual(labels("users", access(false, active("ROP"))), [], "nothing administrative for a ROP");
+  assert.deepEqual(await labels("sync"), ["m:sync_managers", "m:sync_history"]);
+  assert.deepEqual(await labels("users", access(false, active("ROP"))), [], "nothing administrative for a ROP");
 });
 
 test("a typed deadline for an AI task is validated before anything is approved", async () => {

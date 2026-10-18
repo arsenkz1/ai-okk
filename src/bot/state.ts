@@ -1,4 +1,5 @@
-import { GeminiMessage } from "../services/aiAnalysis";
+import type { GeminiMessage } from "../services/aiAnalysis";
+import { createStateMap } from "./stateStore";
 
 export interface SupervisorAiSession {
   active: boolean;
@@ -24,9 +25,14 @@ export interface TeamLeadManageFlowState {
   sourceTeamLeadManagerId: number;
 }
 
-export const supervisorAiSessions = new Map<number, SupervisorAiSession>();
-export const roleFlowState = new Map<number, RoleFlowState>();
-export const teamLeadManageFlowState = new Map<number, TeamLeadManageFlowState>();
+/** A conversation with the AI stays open for two hours after the last message. */
+export const AI_SESSION_TTL_SECONDS = 2 * 60 * 60;
+/** A button-driven flow (pick managers, ask about a manager) waits ten minutes. */
+export const FLOW_TTL_SECONDS = 10 * 60;
+
+export const supervisorAiSessions = createStateMap<SupervisorAiSession>("bot:supai:", AI_SESSION_TTL_SECONDS);
+export const roleFlowState = createStateMap<RoleFlowState>("bot:roleflow:", FLOW_TTL_SECONDS);
+export const teamLeadManageFlowState = createStateMap<TeamLeadManageFlowState>("bot:tlflow:", FLOW_TTL_SECONDS);
 
 /** Users who typed /start and still owe the bot their 6-digit code. */
 export const awaitingCode = new Set<number>();
@@ -39,4 +45,4 @@ export interface AiSession {
   managerId: number;
   period: string;
 }
-export const aiSessions = new Map<number, AiSession>();
+export const aiSessions = createStateMap<AiSession>("bot:ai:", AI_SESSION_TTL_SECONDS);

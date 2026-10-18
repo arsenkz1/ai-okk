@@ -270,6 +270,7 @@ AMO_FIELD_OPTION_ROLLBACK_CONFIRM=remove_ai_added_options \
 | `AMOCRM_CALL_STAGE_AUTOFILL_ENABLED` | автозаполнение обязательных полей | `false` |
 | `AMOCRM_PAYMENT_AMOUNT_FIELD_ID` | ID поля с фактической суммой оплаты | не задано |
 | `AMO_FIELD_OPTION_ROLLBACK_CONFIRM` | подтверждение отката вариантов | не задано |
+| `ADMIN_DASHBOARD_URL` | адрес Mini App «Dashboard», первая кнопка главного меню у админов; только `https` | `https://qadam-dogovor.uz/reports/tg/` |
 | `BOT_KEYBOARDS_ENABLED` | клавиатуры бота (главное меню по ролям); включается значением `true`, `1`, `yes` или `on`; пока выключено, сообщения `/start` и привязки снимают старую клавиатуру | выключено |
 
 Без `AMOCRM_PAYMENT_AMOUNT_FIELD_ID` частично оплаченные сделки записываются, но **без суммы**: в отчёте видно количество, а в деньгах ноль и предупреждение. Бюджет сделки вместо фактического платежа не подставляется — это завысило бы выручку.

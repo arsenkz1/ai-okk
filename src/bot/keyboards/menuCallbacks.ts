@@ -62,11 +62,11 @@ export const confirmCallback = (actionId: string, decision: "yes" | "no", arg?: 
 
 const BUTTONS_PER_ROW = 2;
 
-export function sectionKeyboard(access: Access, section: SectionDefinition, userId?: number): TelegramBot.InlineKeyboardMarkup {
+export async function sectionKeyboard(access: Access, section: SectionDefinition, userId?: number): Promise<TelegramBot.InlineKeyboardMarkup> {
   const buttons: TelegramBot.InlineKeyboardButton[] = [];
   for (const action of visibleActions(access, section.id)) {
     // A conditional button needs to know who is looking; without a user it stays hidden.
-    if (action.showWhen && (userId === undefined || !action.showWhen({ userId, access }))) continue;
+    if (action.showWhen && (userId === undefined || !(await action.showWhen({ userId, access })))) continue;
     if (action.variants) {
       for (const variant of action.variants) buttons.push({ text: variant.label, callback_data: actionCallback(action.id, variant.arg) });
     } else {
@@ -151,7 +151,7 @@ export function registerMenuCallbackHandler(bot: MenuBot, dependencies: Partial<
 
       if (parsed.kind === "section") {
         const section = SECTIONS.find((candidate) => candidate.id === parsed.sectionId)!;
-        const keyboard = sectionKeyboard(access, section, query.from.id);
+        const keyboard = await sectionKeyboard(access, section, query.from.id);
         await answer();
         await bot.editMessageText(keyboard.inline_keyboard.length ? sectionTitle(section) : `${sectionTitle(section)}\n${EMPTY_SECTION_TEXT}`, {
           chat_id: chatId, message_id: message.message_id, parse_mode: "HTML", reply_markup: keyboard,

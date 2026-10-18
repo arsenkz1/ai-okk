@@ -342,7 +342,7 @@ export function registerRopHandlers(bot: TelegramBot) {
       }
 
       await bot.answerCallbackQuery(query.id);
-      roleFlowState.set(userId, {
+      await roleFlowState.set(userId, {
         step: "awaiting_sup_question",
         data: { targetManagerId: managerId, targetManagerName: mgr.name, supervisorRole: "ROP" },
       });

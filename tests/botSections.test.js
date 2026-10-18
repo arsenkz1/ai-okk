@@ -17,10 +17,10 @@ const { rolesOf } = require("../dist/bot/access");
 const access = (isAdmin, manager) => ({ telegramUserId: "7", isAdmin, manager, roles: rolesOf(isAdmin, manager) });
 const active = (role) => ({ role, isActive: true, id: 7, teamId: null });
 const section = (id) => registry.SECTIONS.find((s) => s.id === id);
-const buttons = (a, id) => sectionKeyboard(a, section(id), 7).inline_keyboard.flat().map((b) => [b.text, b.callback_data]);
+const buttons = async (a, id) => (await sectionKeyboard(a, section(id), 7)).inline_keyboard.flat().map((b) => [b.text, b.callback_data]);
 
-test("the team section is the team lead's seven actions, in command order, each wired to its action", () => {
-  assert.deepEqual(buttons(access(false, active("TEAMLEAD")), "team"), [
+test("the team section is the team lead's seven actions, in command order, each wired to its action", async () => {
+  assert.deepEqual(await buttons(access(false, active("TEAMLEAD")), "team"), [
     ["Jamoam", "m:team"],
     ["Jamoa reytingi", "m:team_rating"],
     ["Jamoa xatolari", "m:team_mistakes"],
@@ -31,17 +31,17 @@ test("the team section is the team lead's seven actions, in command order, each 
   ]);
 });
 
-test("only team leads see the team section; a lead who is also admin keeps it", () => {
+test("only team leads see the team section; a lead who is also admin keeps it", async () => {
   const ids = (a) => mainMenuSections(a).map((s) => s.id);
   assert.ok(ids(access(false, active("TEAMLEAD"))).includes("team"));
   assert.ok(ids(access(true, active("TEAMLEAD"))).includes("team"));
   for (const a of [access(false, active("MANAGER")), access(false, active("ROP")), access(true, null)]) {
     assert.equal(ids(a).includes("team"), false);
-    assert.deepEqual(buttons(a, "team"), []);
+    assert.deepEqual(await buttons(a, "team"), []);
   }
 });
 
-test("team actions need no typed argument, so a tap runs them directly", () => {
+test("team actions need no typed argument, so a tap runs them directly", async () => {
   for (const id of ["team", "team_rating", "team_mistakes", "team_add", "team_remove", "team_manager", "ask_manager"]) {
     const action = registry.getAction(id);
     assert.equal(action.input, undefined, id);
@@ -49,7 +49,7 @@ test("team actions need no typed argument, so a tap runs them directly", () => {
   }
 });
 
-test("the company section shows the ROP analytics first, then plans and ratings, for ROP and admin alike", () => {
+test("the company section shows the ROP analytics first, then plans and ratings, for ROP and admin alike", async () => {
   const expected = [
     ["Jamoalar", "m:teams"],
     ["Umumiy reyting", "m:all_rating"],
@@ -66,15 +66,15 @@ test("the company section shows the ROP analytics first, then plans and ratings,
     ["Reja belgilash", "m:set_plan"],
     ["Rejalar", "m:plans"],
   ];
-  assert.deepEqual(buttons(access(false, active("ROP")), "company"), expected);
-  assert.deepEqual(buttons(access(true, null), "company"), expected);
+  assert.deepEqual(await buttons(access(false, active("ROP")), "company"), expected);
+  assert.deepEqual(await buttons(access(true, null), "company"), expected);
   for (const a of [access(false, active("MANAGER")), access(false, active("TEAMLEAD"))]) {
-    assert.deepEqual(buttons(a, "company"), []);
+    assert.deepEqual(await buttons(a, "company"), []);
     assert.equal(mainMenuSections(a).some((s) => s.id === "company"), false);
   }
 });
 
-test("company buttons either run on tap or collect their arguments with buttons", () => {
+test("company buttons either run on tap or collect their arguments with buttons", async () => {
   for (const id of ["teams", "all_rating", "all_mistakes", "rop_team_rating", "rop_team_mistakes", "rop_manager", "rop_ask", "sync_stages", "rating_list"]) {
     assert.equal(/<[^>]+>/.test(registry.getAction(id).command.usage), false, id);
     assert.equal(registry.getAction(id).collect, undefined, id);
@@ -84,7 +84,7 @@ test("company buttons either run on tap or collect their arguments with buttons"
   }
 });
 
-test("the Phoenix section reads status, switch, limit, on, off, deal check, for ROP and admin only", () => {
+test("the Phoenix section reads status, switch, limit, on, off, deal check, for ROP and admin only", async () => {
   const expected = [
     ["Feniks holati", "m:inactivity_status"],
     ["Feniks kaliti", "m:inactivity_switch"],
@@ -93,15 +93,15 @@ test("the Phoenix section reads status, switch, limit, on, off, deal check, for 
     ["Feniksni to'xtatish", "m:inactivity_off"],
     ["Feniks: bitim bo'yicha", "m:inactivity_lead"],
   ];
-  assert.deepEqual(buttons(access(false, active("ROP")), "phoenix"), expected);
-  assert.deepEqual(buttons(access(true, null), "phoenix"), expected);
+  assert.deepEqual(await buttons(access(false, active("ROP")), "phoenix"), expected);
+  assert.deepEqual(await buttons(access(true, null), "phoenix"), expected);
   for (const a of [access(false, active("MANAGER")), access(false, active("TEAMLEAD"))]) {
-    assert.deepEqual(buttons(a, "phoenix"), []);
+    assert.deepEqual(await buttons(a, "phoenix"), []);
     assert.equal(mainMenuSections(a).some((s) => s.id === "phoenix"), false);
   }
 });
 
-test("the users and sync sections exist for admins only", () => {
+test("the users and sync sections exist for admins only", async () => {
   const ids = (a) => mainMenuSections(a).map((s) => s.id);
   assert.ok(ids(access(true, null)).includes("users") && ids(access(true, null)).includes("sync"));
   for (const a of [access(false, active("MANAGER")), access(false, active("TEAMLEAD")), access(false, active("ROP"))]) {
@@ -109,7 +109,7 @@ test("the users and sync sections exist for admins only", () => {
   }
 });
 
-test("stopping Phoenix is dangerous and asks for a deal id where needed; the limit screen carries its switches", () => {
+test("stopping Phoenix is dangerous and asks for a deal id where needed; the limit screen carries its switches", async () => {
   const { parseMenuCallback } = require("../dist/bot/keyboards/menuCallbacks");
   const { inactivityLimitKeyboard } = require("../dist/bot/handlers/performance");
   assert.equal(registry.getAction("inactivity_off").dangerous, true);

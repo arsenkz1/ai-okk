@@ -51,15 +51,15 @@ test("a section tap opens an inline keyboard with only what the user may run", a
   const bot = { sendMessage: async (chatId, text, options) => { sent.push({ text, options }); } };
   const reports = registry.SECTIONS.find((s) => s.id === "reports");
   const { sectionKeyboard } = require("../dist/bot/keyboards/menuCallbacks");
-  const keyboard = sectionKeyboard(access(false, active("MANAGER")), reports);
+  const keyboard = await sectionKeyboard(access(false, active("MANAGER")), reports);
   const labels = keyboard.inline_keyboard.flat().map((b) => b.text);
   assert.deepEqual(labels, ["Bugun", "Hafta", "Oy", "Davr", "Xatolar", "Bitim", "Mening statistikam"]);
   assert.equal(keyboard.inline_keyboard[0][0].callback_data, "m:report");
   assert.ok(keyboard.inline_keyboard.every((row) => row.length <= 2));
 
   const company = registry.SECTIONS.find((s) => s.id === "company");
-  assert.equal(sectionKeyboard(access(false, active("MANAGER")), company).inline_keyboard.length, 0);
-  assert.ok(sectionKeyboard(access(false, active("ROP")), company).inline_keyboard.flat().some((b) => b.callback_data === "m:set_plan"));
+  assert.equal((await sectionKeyboard(access(false, active("MANAGER")), company)).inline_keyboard.length, 0);
+  assert.ok((await sectionKeyboard(access(false, active("ROP")), company)).inline_keyboard.flat().some((b) => b.callback_data === "m:set_plan"));
 });
 
 test("required arguments are counted from the usage line", () => {

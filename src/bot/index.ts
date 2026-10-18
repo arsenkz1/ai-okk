@@ -140,7 +140,7 @@ bot.on("message", async (msg) => {
   }
 
   // ── State 3: Supervisor AI dialog (TeamLead/ROP asking about a manager) ──
-  const supSession = supervisorAiSessions.get(userId);
+  const supSession = await supervisorAiSessions.get(userId);
   if (supSession?.active) {
     const question = msg.text.trim();
     await bot.sendChatAction(msg.chat.id, "typing");
@@ -148,12 +148,13 @@ bot.on("message", async (msg) => {
     const answer = await askGeminiWithHistory(supSession.history, supSession.systemContext);
     supSession.history.push({ role: "model", parts: [{ text: answer }] });
     if (supSession.history.length > 40) supSession.history = supSession.history.slice(-40);
+    await supervisorAiSessions.set(userId, supSession);
     await bot.sendMessage(msg.chat.id, answer);
     return;
   }
 
   // ── State 3.5: Awaiting supervisor question (after manager picker) ────────
-  const flow = roleFlowState.get(userId);
+  const flow = await roleFlowState.get(userId);
   if (flow?.step === "awaiting_sup_question") {
     const question = msg.text.trim();
     const words = question.split(/\s+/).filter(Boolean);
@@ -171,7 +172,7 @@ bot.on("message", async (msg) => {
       supervisorRole: "TEAMLEAD" | "ROP";
     };
 
-    roleFlowState.delete(userId);
+    await roleFlowState.delete(userId);
     await bot.sendChatAction(msg.chat.id, "typing");
 
     const systemContext = await buildSupervisorAiPrompt(
@@ -183,7 +184,7 @@ bot.on("message", async (msg) => {
     const answer = await askGeminiWithHistory(history, systemContext);
     history.push({ role: "model", parts: [{ text: answer }] });
 
-    supervisorAiSessions.set(userId, {
+    await supervisorAiSessions.set(userId, {
       active: true,
       targetManagerId,
       targetManagerName: targetManagerName as string,
@@ -200,7 +201,7 @@ bot.on("message", async (msg) => {
   }
 
   // ── State 4: AI-coach dialog (manager talking about themselves) ───────────
-  const session = aiSessions.get(userId);
+  const session = await aiSessions.get(userId);
   if (session?.active) {
     const question = msg.text.trim();
     const wordCount = question.split(/\s+/).filter(Boolean).length;
@@ -215,6 +216,7 @@ bot.on("message", async (msg) => {
     if (session.history.length > 40) {
       session.history = session.history.slice(-40);
     }
+    await aiSessions.set(userId, session);
 
     await bot.sendMessage(msg.chat.id, answer);
 

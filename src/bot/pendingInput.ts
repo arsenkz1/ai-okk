@@ -7,6 +7,8 @@
  * instead of being misread as something else.
  */
 
+import { createRedisKeyValueStore } from "./stateStore";
+
 export type PendingInputKind =
   | "deal_id"
   | "lead_id"
@@ -89,17 +91,9 @@ export function createPendingInputService(store: PendingInputStore, now: () => n
   };
 }
 
-/**
- * Redis-backed store. The connection lives in the queue module, which also
- * instantiates BullMQ, so it is imported on first use rather than at load.
- */
+/** Redis-backed store, shared with the other per-user state. */
 export function createRedisPendingInputStore(): PendingInputStore {
-  const redis = async () => (await import("../config/queue")).redisConnection;
-  return {
-    async get(key) { return (await redis()).get(key); },
-    async set(key, value, ttlSeconds) { await (await redis()).set(key, value, "EX", ttlSeconds); },
-    async del(key) { await (await redis()).del(key); },
-  };
+  return createRedisKeyValueStore();
 }
 
 export const pendingInput: PendingInputService = createPendingInputService(createRedisPendingInputStore());

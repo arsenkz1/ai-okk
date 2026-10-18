@@ -16,6 +16,8 @@ const inputs = require("../dist/bot/inputHandlers");
 const pendingModule = require("../dist/bot/pendingInput");
 const { sectionKeyboard } = require("../dist/bot/keyboards/menuCallbacks");
 const state = require("../dist/bot/state");
+const stateStore = require("../dist/bot/stateStore");
+stateStore.configureStateStore(stateStore.createMemoryKeyValueStore());
 const { rolesOf } = require("../dist/bot/access");
 
 const access = (isAdmin, manager) => ({ telegramUserId: "7", isAdmin, manager, roles: rolesOf(isAdmin, manager) });
@@ -99,28 +101,28 @@ test("the real actions declare their questions", () => {
   for (const kind of ["deal_id", "lead_id", "telegram_id"]) assert.equal(inputs.hasInputHandler(kind), true, kind);
 });
 
-test("the AI section offers the periods, and the stop button only during a session", () => {
+test("the AI section offers the periods, and the stop button only during a session", async () => {
   const ai = registry.SECTIONS.find((s) => s.id === "ai");
   const manager = access(false, active("MANAGER"));
-  const idle = sectionKeyboard(manager, ai, 77).inline_keyboard.flat();
+  const idle = (await sectionKeyboard(manager, ai, 77)).inline_keyboard.flat();
   assert.deepEqual(idle.map((b) => [b.text, b.callback_data]), [
     ["Boshlash (30 kun)", "m:ask"], ["Kun", "m:ask:kun"], ["Hafta", "m:ask:hafta"], ["Oy", "m:ask:oy"],
   ]);
-  state.aiSessions.set(77, { active: true, history: [], systemContext: "", managerId: 1, period: "day" });
+  await state.aiSessions.set(77, { active: true, history: [], systemContext: "", managerId: 1, period: "day" });
   try {
-    const busy = sectionKeyboard(manager, ai, 77).inline_keyboard.flat().map((b) => b.callback_data);
+    const busy = (await sectionKeyboard(manager, ai, 77)).inline_keyboard.flat().map((b) => b.callback_data);
     assert.ok(busy.includes("m:stop_ai"));
   } finally {
-    state.aiSessions.delete(77);
+    await state.aiSessions.delete(77);
   }
   // Without knowing who is looking, a conditional button stays hidden.
-  assert.equal(sectionKeyboard(manager, ai).inline_keyboard.flat().some((b) => b.callback_data === "m:stop_ai"), false);
+  assert.equal((await sectionKeyboard(manager, ai)).inline_keyboard.flat().some((b) => b.callback_data === "m:stop_ai"), false);
 });
 
-test("the reports section lists the report buttons in order, with the deal question and own stats", () => {
+test("the reports section lists the report buttons in order, with the deal question and own stats", async () => {
   const reports = registry.SECTIONS.find((s) => s.id === "reports");
   // Actions defined by this test file live in the same section; leave them out.
   const real = (markup) => markup.inline_keyboard.flat().map((b) => b.callback_data).filter((d) => !d.startsWith("m:test_"));
-  assert.deepEqual(real(sectionKeyboard(access(false, active("MANAGER")), reports, 1)), ["m:report", "m:week", "m:month", "m:period", "m:errors", "m:deal", "m:my_stats"]);
-  assert.deepEqual(real(sectionKeyboard(access(true, null), reports, 1)), ["m:report", "m:week", "m:month", "m:period", "m:errors", "m:deal", "m:team_stats"]);
+  assert.deepEqual(real(await sectionKeyboard(access(false, active("MANAGER")), reports, 1)), ["m:report", "m:week", "m:month", "m:period", "m:errors", "m:deal", "m:my_stats"]);
+  assert.deepEqual(real(await sectionKeyboard(access(true, null), reports, 1)), ["m:report", "m:week", "m:month", "m:period", "m:errors", "m:deal", "m:team_stats"]);
 });

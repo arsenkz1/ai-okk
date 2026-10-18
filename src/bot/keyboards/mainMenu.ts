@@ -27,20 +27,31 @@ export function mainMenuSections(access: Access): SectionDefinition[] {
   ));
 }
 
-export function buildMainMenu(access: Access): TelegramBot.ReplyKeyboardMarkup {
+export const DASHBOARD_LABEL = "Dashboard";
+export const DEFAULT_DASHBOARD_URL = "https://qadam-dogovor.uz/reports/tg/";
+
+/** The admin dashboard, opened as a Telegram Mini App from the keyboard. */
+export function dashboardUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.ADMIN_DASHBOARD_URL?.trim();
+  return configured && /^https:\/\//.test(configured) ? configured : DEFAULT_DASHBOARD_URL;
+}
+
+export function buildMainMenu(access: Access, env: NodeJS.ProcessEnv = process.env): TelegramBot.ReplyKeyboardMarkup {
   const sections = mainMenuSections(access);
   const body = sections.filter((section) => section.id !== "help");
   const help = sections.find((section) => section.id === "help");
 
-  const rows: SectionDefinition[][] = [];
-  for (let index = 0; index < body.length; index += 2) rows.push(body.slice(index, index + 2));
-  if (help) rows.push([help]);
+  const keyboard: TelegramBot.KeyboardButton[][] = [];
+  // Administrators get the dashboard first, on its own row: a Mini App button
+  // opens the page inside Telegram and sends no text, so the router never
+  // sees it.
+  if (access.isAdmin) keyboard.push([{ text: DASHBOARD_LABEL, web_app: { url: dashboardUrl(env) } }]);
+  for (let index = 0; index < body.length; index += 2) {
+    keyboard.push(body.slice(index, index + 2).map((section) => ({ text: section.label })));
+  }
+  if (help) keyboard.push([{ text: help.label }]);
 
-  return {
-    keyboard: rows.map((row) => row.map((section) => ({ text: section.label }))),
-    resize_keyboard: true,
-    is_persistent: true,
-  };
+  return { keyboard, resize_keyboard: true, is_persistent: true };
 }
 
 export type MainMenuMarkup = TelegramBot.ReplyKeyboardMarkup | TelegramBot.ReplyKeyboardRemove;

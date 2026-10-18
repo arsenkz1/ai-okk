@@ -269,7 +269,7 @@ async function renderManageSelection(
   mode: TeamLeadManageMode
 ) {
   const userId = Number(message.from?.id ?? 0);
-  const state = teamLeadManageFlowState.get(userId);
+  const state = await teamLeadManageFlowState.get(userId);
   const flow = state && state.mode === mode ? state : {
     mode,
     stage: "selecting" as const,
@@ -277,11 +277,12 @@ async function renderManageSelection(
     selectedManagerIds: [],
     sourceTeamLeadManagerId: tl.id,
   };
-  teamLeadManageFlowState.set(userId, flow);
 
   const candidates = await getCandidatesForMode(mode, tl);
   const totalPages = Math.max(1, Math.ceil(candidates.length / PAGE_SIZE));
   flow.page = Math.min(Math.max(flow.page, 0), totalPages - 1);
+  // The state lives in Redis: every change is written back explicitly.
+  await teamLeadManageFlowState.set(userId, flow);
 
   const totalFree = candidates.filter((candidate) => candidate.selectable).length;
   const selectedCount = flow.selectedManagerIds.length;
@@ -310,12 +311,13 @@ async function editSelectionMessage(
   tl: TeamLeadManager,
   mode: TeamLeadManageMode
 ) {
-  const state = teamLeadManageFlowState.get(query.from.id);
+  const state = await teamLeadManageFlowState.get(query.from.id);
   if (!query.message || !state) return;
 
   const candidates = await getCandidatesForMode(mode, tl);
   const totalPages = Math.max(1, Math.ceil(candidates.length / PAGE_SIZE));
   state.page = Math.min(Math.max(state.page, 0), totalPages - 1);
+  await teamLeadManageFlowState.set(query.from.id, state);
 
   const totalFree = candidates.filter((candidate) => candidate.selectable).length;
   const title = mode === "add" ? "Jamoaga menejer qo'shish" : "Jamoangizdan menejer chiqarish";
@@ -348,7 +350,7 @@ async function editConfirmationMessage(
   tl: TeamLeadManager,
   mode: TeamLeadManageMode
 ) {
-  const state = teamLeadManageFlowState.get(query.from.id);
+  const state = await teamLeadManageFlowState.get(query.from.id);
   if (!query.message || !state) return;
 
   const candidates = await getCandidatesForMode(mode, tl);
@@ -377,7 +379,7 @@ async function finishManageFlow(
   tl: TeamLeadManager,
   mode: TeamLeadManageMode
 ) {
-  const state = teamLeadManageFlowState.get(query.from.id);
+  const state = await teamLeadManageFlowState.get(query.from.id);
   if (!query.message || !state) return;
 
   const where =
@@ -402,7 +404,7 @@ async function finishManageFlow(
   });
 
   if (!affectedManagers.length) {
-    teamLeadManageFlowState.delete(query.from.id);
+    await teamLeadManageFlowState.delete(query.from.id);
     await bot.editMessageText("ℹ️ O'zgartirish uchun mos menejer topilmadi.", {
       chat_id: query.message.chat.id,
       message_id: query.message.message_id,
@@ -415,7 +417,7 @@ async function finishManageFlow(
     data: { teamId: mode === "add" ? tl.teamId : null },
   });
 
-  teamLeadManageFlowState.delete(query.from.id);
+  await teamLeadManageFlowState.delete(query.from.id);
   const header =
     mode === "add"
       ? "✅ Quyidagi menejerlar jamoangizga biriktirildi:"
@@ -508,7 +510,7 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
       return;
     }
 
-    teamLeadManageFlowState.set(msg.from!.id, {
+    await teamLeadManageFlowState.set(msg.from!.id, {
       mode: "add",
       stage: "selecting",
       page: 0,
@@ -534,7 +536,7 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
       return;
     }
 
-    teamLeadManageFlowState.set(msg.from!.id, {
+    await teamLeadManageFlowState.set(msg.from!.id, {
       mode: "remove",
       stage: "selecting",
       page: 0,
@@ -610,7 +612,7 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
         return;
       }
 
-      const flow = teamLeadManageFlowState.get(userId);
+      const flow = await teamLeadManageFlowState.get(userId);
       const [, mode, action, value] = data.split(":") as [
         string,
         TeamLeadManageMode,
@@ -647,6 +649,7 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
           ? removeSelectedId(flow.selectedManagerIds, managerId)
           : [...flow.selectedManagerIds, managerId];
         flow.stage = "selecting";
+        await teamLeadManageFlowState.set(userId, flow);
         await bot.answerCallbackQuery(query.id);
         await editSelectionMessage(bot, query, assignedTl, mode);
         return;
@@ -655,6 +658,7 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
       if (action === "page") {
         flow.page = Number(value) || 0;
         flow.stage = "selecting";
+        await teamLeadManageFlowState.set(userId, flow);
         await bot.answerCallbackQuery(query.id);
         await editSelectionMessage(bot, query, assignedTl, mode);
         return;
@@ -669,6 +673,7 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
         }
 
         flow.stage = "confirming";
+        await teamLeadManageFlowState.set(userId, flow);
         await bot.answerCallbackQuery(query.id);
         await editConfirmationMessage(bot, query, assignedTl, mode);
         return;
@@ -676,13 +681,14 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
 
       if (action === "back") {
         flow.stage = "selecting";
+        await teamLeadManageFlowState.set(userId, flow);
         await bot.answerCallbackQuery(query.id);
         await editSelectionMessage(bot, query, assignedTl, mode);
         return;
       }
 
       if (action === "cancel") {
-        teamLeadManageFlowState.delete(userId);
+        await teamLeadManageFlowState.delete(userId);
         await bot.answerCallbackQuery(query.id);
         await bot.editMessageText("❌ Amal bekor qilindi.", {
           chat_id: chatId,
@@ -753,7 +759,7 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
       }
 
       await bot.answerCallbackQuery(query.id);
-      roleFlowState.set(userId, {
+      await roleFlowState.set(userId, {
         step: "awaiting_sup_question",
         data: {
           targetManagerId: managerId,
