@@ -30,17 +30,27 @@ function fakeBot() {
 }
 const msgOf = (text) => ({ chat: { id: 5 }, from: { id: 7 }, text });
 
-test("the calculator is offered to sales managers only; leads and ROPs are told why", async () => {
+test("the calculator is offered to sales managers and administrators; leads and ROPs are told why", async () => {
   const reports = registry.SECTIONS.find((s) => s.id === "reports");
   const has = async (a) => (await sectionKeyboard(a, reports, 7)).inline_keyboard.flat().some((b) => b.callback_data === "m:salary");
   assert.equal(await has(access(false, active("MANAGER"))), true);
+  assert.equal(await has(access(true, null)), true);
+  assert.equal(await has(access(true, active("ROP"))), true, "an admin keeps the simulator whatever their link says");
   assert.equal(await has(access(false, active("TEAMLEAD"))), false);
   assert.equal(await has(access(false, active("ROP"))), false);
-  assert.equal(await has(access(true, null)), false);
 
   const { sent, bot } = fakeBot();
   await registry.getAction("salary").run({ bot, chatId: 5, userId: 7, telegramUserId: "7", access: access(false, active("ROP")), args: [], source: "command", pending });
   assert.equal(sent.at(-1).text, salary.CALCULATOR_FOR_MANAGERS_TEXT);
+
+  // An administrator never reads a stored rate: the simulator asks for one.
+  let rateReads = 0;
+  salary.configureSalary({ getRate: async () => { rateReads += 1; return 2500000; } });
+  const admin = fakeBot();
+  await registry.getAction("salary").run({ bot: admin.bot, chatId: 5, userId: 9, telegramUserId: "9", access: access(true, null), args: [], source: "button", pending });
+  assert.equal(admin.sent.at(-1).text, salary.RATE_SELF_PROMPT);
+  assert.equal(rateReads, 0);
+  await pending.cancel(9);
 });
 
 test("with a stored rate the chain starts at the days; without one the manager types a rate first", async () => {

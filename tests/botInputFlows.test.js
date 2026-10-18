@@ -124,7 +124,7 @@ test("the reports section lists the report buttons in order, with the deal quest
   // Actions defined by this test file live in the same section; leave them out.
   const real = (markup) => markup.inline_keyboard.flat().map((b) => b.callback_data).filter((d) => d && !d.startsWith("m:test_"));
   assert.deepEqual(real(await sectionKeyboard(access(false, active("MANAGER")), reports, 1)), ["m:report", "m:week", "m:month", "m:period", "m:errors", "m:deal", "m:my_stats", "m:salary"]);
-  assert.deepEqual(real(await sectionKeyboard(access(true, null), reports, 1)), ["m:report", "m:week", "m:month", "m:period", "m:errors", "m:deal", "m:team_stats"]);
+  assert.deepEqual(real(await sectionKeyboard(access(true, null), reports, 1)), ["m:report", "m:week", "m:month", "m:period", "m:errors", "m:deal", "m:team_stats", "m:salary"]);
 });
 
 test("the admin's reports section opens with the dashboard Mini App; nobody else sees it", async () => {

@@ -42,6 +42,8 @@ export const RATE_PROMPT = "Oylik fikslangan stavkani so'mda yuboring, masalan: 
 export const RATE_ERROR_TEXT = "Stavka noto'g'ri. Faqat raqamlar, masalan: 2500000. Qaytadan yuboring.";
 
 const isSalesManager = (access: Access): boolean => access.manager !== null && isLinkedAs(access.manager, "manager");
+/** Sales managers for themselves; administrators as a plain simulator with a typed rate. */
+const canUseCalculator = (access: Access): boolean => access.isAdmin || isSalesManager(access);
 
 export function parseWorkedDays(text: string): number | null {
   const value = text.trim();
@@ -112,16 +114,17 @@ async function askDays(target: Pick<ActionContext, "bot" | "chatId" | "userId" |
 // ---------------------------------------------------------------------------
 
 defineAction({
-  id: "salary", section: "reports", order: 110, roles: ["manager"], label: "Maosh kalkulyatori",
-  showWhen: ({ access }) => isSalesManager(access),
+  id: "salary", section: "reports", order: 110, roles: ["admin", "manager"], label: "Maosh kalkulyatori",
+  showWhen: ({ access }) => canUseCalculator(access),
   decodeArg: (arg) => arg.split("_"),
   command: { pattern: /^\/salary$/, usage: "/salary", description: "maoshni hisoblash: kunlar, reja va fakt bo'yicha (taxminiy fakt ham mumkin)" },
   async run(ctx) {
-    if (!isSalesManager(ctx.access)) {
+    if (!canUseCalculator(ctx.access)) {
       await ctx.bot.sendMessage(ctx.chatId, CALCULATOR_FOR_MANAGERS_TEXT);
       return;
     }
-    const stored = await salaryDeps.getRate(ctx.access.manager!.id);
+    // Only a sales manager's own rate is taken from the database.
+    const stored = isSalesManager(ctx.access) ? await salaryDeps.getRate(ctx.access.manager!.id) : null;
 
     // "Boshqa fakt bilan": rate, days and plan come packed in the button.
     const [rateArg, daysArg, planArg] = ctx.args;
