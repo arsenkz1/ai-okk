@@ -124,17 +124,49 @@ test("ask arguments resolve to the period and the inline question as before", ()
   assert.equal(range.from.getMonth(), 8);
 });
 
-test("help and start pick the same block the commands always picked", () => {
-  assert.equal(help.helpTextFor(access(true, null)), help.ADMIN_HELP_TEXT);
-  assert.equal(help.helpTextFor(access(true, active("TEAMLEAD"))), help.ADMIN_HELP_TEXT, "admin wins over team lead");
-  assert.equal(help.helpTextFor(access(false, active("TEAMLEAD"))), help.TEAMLEAD_HELP_TEXT);
-  assert.equal(help.helpTextFor(access(false, inactive("TEAMLEAD"))), help.TEAMLEAD_HELP_TEXT, "help never checked activity");
-  assert.equal(help.helpTextFor(access(false, active("ROP"))), help.MANAGER_HELP_TEXT);
-  assert.equal(help.helpTextFor(access(false, null)), help.UNLINKED_HELP_TEXT);
+test("help is generated from the registry: every command the role may run, nothing it may not", () => {
+  const fakeRegistrar = { onText: () => {}, on: () => {} };
+  require("../dist/bot/handlers/performance").registerPerformanceHandlers(fakeRegistrar);
+  require("../dist/bot/handlers/adminRoles").registerAdminRoleHandlers(fakeRegistrar);
+  require("../dist/bot/handlers/rop").registerRopHandlers(fakeRegistrar);
+  require("../dist/bot/handlers/teamlead").registerTeamLeadHandlers(fakeRegistrar);
+  require("../dist/bot/handlers/callTaskReview").registerCallTaskReviewHandlers(fakeRegistrar);
 
-  const manager = { ...active("MANAGER"), name: "Aziza" };
-  assert.deepEqual(help.startReply(access(false, manager)), { text: help.startManagerText("Aziza"), awaitCode: false });
-  assert.deepEqual(help.startReply(access(true, manager)), { text: help.startManagerText("Aziza"), awaitCode: false }, "a linked admin is greeted as a manager");
+  const manager = help.helpTextFor(access(false, active("MANAGER")), false);
+  assert.ok(manager.startsWith("📋 Mavjud buyruqlar\n"));
+  for (const line of ["/report - bugungi hisobot", "/ask_kun - AI-murabbiy: faqat bugun", "/deal <id> - bitim bo'yicha ma'lumotnoma", "/my_stats -", "/stop_ai -", "/help -"]) assert.ok(manager.includes(line), line);
+  for (const text of ["/set_plan", "/managers", "/team_add", "/check_tg", "/deal - ", "Faqat buyruq bilan"]) assert.equal(manager.includes(text), false, text);
+
+  const teamLead = help.helpTextFor(access(false, active("TEAMLEAD")), false);
+  assert.ok(teamLead.startsWith("👥 TeamLead buyruqlari\n"));
+  assert.ok(teamLead.includes("Jamoa:\n/team - o'z jamoangizni ko'rish"));
+  assert.ok(teamLead.includes("/team_stats -"));
+
+  const rop = help.helpTextFor(access(false, active("ROP")), false);
+  assert.ok(rop.startsWith("📈 ROP buyruqlari\n"));
+  for (const line of ["/set_plan <amo_id> <summa> [YYYY-MM] - oylik reja belgilash", "/rating_off - ", "/inactivity_limit_on - ", "/teams -"]) assert.ok(rop.includes(line), line);
+  assert.equal(rop.includes("/managers"), false);
+
+  const admin = help.helpTextFor(access(true, null), false);
+  assert.ok(admin.startsWith("🔑 Administrator buyruqlari\n"));
+  for (const line of ["Foydalanuvchilar:", "/managers -", "/set_role <tg_id> <manager|teamlead|rop> -", "Sinxronizatsiya:", "/sync_history -", "Faqat buyruq bilan:\n/check_tg <tg_id> -", "/test_restrict <tg_id> -"]) assert.ok(admin.includes(line), line);
+  for (const text of ["/set_plan - foydalanish", "/call_task_time", "/start -", "/ask -"]) assert.equal(admin.includes(text), false, text);
+
+  assert.equal(help.helpTextFor(access(false, null), false), help.UNLINKED_HELP_TEXT);
+  assert.equal(help.helpTextFor(access(false, { role: "ROP", isActive: false, id: 1, teamId: null }), false), help.UNLINKED_HELP_TEXT, "an inactive account is told to start over");
+});
+
+test("with keyboards on, help names the button next to each command and the greeting points at the menu", () => {
+  const manager = help.helpTextFor(access(false, active("MANAGER")), true);
+  assert.ok(manager.includes(help.KEYBOARD_HINT));
+  assert.ok(manager.includes("/report - bugungi hisobot (tugma: Bugun)"));
+  assert.ok(manager.includes("/ask - AI-murabbiy: so'nggi 30 kun (tugma: Boshlash (30 kun), Kun, Hafta, Oy)"));
+  assert.equal(manager.includes("/ask_kun - AI-murabbiy: faqat bugun (tugma"), false, "only the first line of a multi-command action carries the button");
+
+  const named = { ...active("MANAGER"), name: "Aziza" };
+  assert.ok(help.startManagerText("Aziza", true).includes("Pastdagi menyudan"));
+  assert.ok(help.startManagerText("Aziza", false).includes("/report — bugun"));
+  assert.deepEqual(help.startReply(access(false, named)), { text: help.startManagerText("Aziza"), awaitCode: false });
   assert.deepEqual(help.startReply(access(true, null)), { text: help.START_ADMIN_TEXT, awaitCode: false });
   assert.deepEqual(help.startReply(access(false, null)), { text: help.START_CODE_PROMPT_TEXT, awaitCode: true });
 });

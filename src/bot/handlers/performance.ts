@@ -523,7 +523,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
   });
 
   defineAction({
-    id: "set_plan_usage", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Reja belgilash (foydalanish)", commandOnly: true,
+    id: "set_plan_usage", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Reja belgilash (foydalanish)", commandOnly: true, helpHidden: true,
     command: { pattern: /^\/set_plan$/, usage: "/set_plan", description: "foydalanish bo'yicha eslatma" },
     async run(ctx) {
       const msg = ctx.message!;

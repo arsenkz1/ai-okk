@@ -74,6 +74,8 @@ export interface ActionDefinition {
   command?: ActionCommand;
   /** Stays a command; never placed on a keyboard. */
   commandOnly?: boolean;
+  /** Left out of `/help`: usage hints and entry points reached from elsewhere. */
+  helpHidden?: boolean;
   /** Needs a yes/no confirmation before `run` when triggered from a button. */
   dangerous?: boolean;
   /**

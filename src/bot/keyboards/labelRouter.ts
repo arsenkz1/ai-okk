@@ -34,13 +34,14 @@ export const CANCELLED_TEXT = "Bekor qilindi.";
 
 export interface LabelRouterDependencies {
   pendingInput: Pick<PendingInputService, "cancel">;
+  resolveAccess: (telegramUserId: string) => Promise<Access>;
 }
 
 export async function handleLabelHit(
   bot: TelegramBot,
   msg: TelegramBot.Message,
   hit: LabelHit,
-  deps: LabelRouterDependencies = { pendingInput },
+  deps: LabelRouterDependencies = { pendingInput, resolveAccess },
 ): Promise<void> {
   const chatId = msg.chat.id;
   const userId = msg.from!.id;
@@ -56,7 +57,7 @@ export async function handleLabelHit(
     return;
   }
 
-  const access = await resolveAccess(String(userId));
+  const access = await deps.resolveAccess(String(userId));
   if (hit.section.id === "help") {
     // "Yordam" doubles as the way to get the keyboard back.
     await bot.sendMessage(chatId, helpTextFor(access), { reply_markup: mainMenuMarkup(access) });

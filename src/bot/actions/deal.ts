@@ -76,7 +76,7 @@ defineAction({
 });
 
 defineAction({
-  id: "deal_usage", section: "reports", roles: [], label: "Bitim (foydalanish)", commandOnly: true,
+  id: "deal_usage", section: "reports", roles: [], label: "Bitim (foydalanish)", commandOnly: true, helpHidden: true,
   command: { pattern: /^\/deal(?:@\w+)?$/, usage: "/deal", description: "foydalanish bo'yicha eslatma" },
   async run(ctx) {
     await ctx.bot.sendMessage(ctx.chatId, DEAL_USAGE_TEXT);

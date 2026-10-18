@@ -116,6 +116,69 @@ EXODE: 3
 
 ---
 
+## 2а. Кнопки и разделы
+
+При `BOT_KEYBOARDS_ENABLED` у каждого пользователя внизу чата постоянное меню из разделов по роли; у админов первой строкой кнопка Mini App «Dashboard» (`ADMIN_DASHBOARD_URL`). Нажатие раздела открывает inline-кнопки действий. Каждая кнопка вызывает ту же функцию, что и команда; команды продолжают работать. Действия с аргументами спрашивают их кнопками или вопросом с кнопкой «Bekor qilish»; опасные действия подтверждаются «Ha / Yo'q». Справка `/help` строится из того же реестра и называет кнопку рядом с каждой командой.
+
+| Раздел | Кто видит | Кнопка | Команда |
+|---|---|---|---|
+| Hisobotlar | админ, все привязанные | Bugun | `/report` |
+| Hisobotlar | админ, все привязанные | Hafta | `/week` |
+| Hisobotlar | админ, все привязанные | Oy | `/month` |
+| Hisobotlar | админ, все привязанные | Davr | `/period` |
+| Hisobotlar | админ, все привязанные | Xatolar | `/errors` |
+| Hisobotlar | админ, все привязанные | Bitim | `/deal <id>` |
+| Hisobotlar | админ, все привязанные | Mening statistikam | `/my_stats` |
+| Hisobotlar | админ, все привязанные | Jamoa hisoboti | `/team_stats` |
+| AI-murabbiy | все привязанные | Boshlash (30 kun) / Kun / Hafta / Oy | `/ask`, `/ask_kun`, `/ask_hafta`, `/ask_oy` |
+| AI-murabbiy | все привязанные | AI-murabbiyni to'xtatish | `/stop_ai` |
+| Jamoa | тимлид | Jamoam | `/team` |
+| Jamoa | тимлид | Jamoa reytingi | `/team_rating` |
+| Jamoa | тимлид | Jamoa xatolari | `/team_mistakes` |
+| Jamoa | тимлид | Jamoaga biriktirish | `/team_add` |
+| Jamoa | тимлид | Jamoadan chiqarish | `/team_remove` |
+| Jamoa | тимлид | Jamoa menejeri kartasi | `/team_manager` |
+| Jamoa | тимлид | Jamoa menejeri haqida AI-savol | `/ask_manager` |
+| Kompaniya | админ, РОП | Jamoalar | `/teams` |
+| Kompaniya | админ, РОП | Umumiy reyting | `/all_rating` |
+| Kompaniya | админ, РОП | Kompaniya xatolari | `/all_mistakes` |
+| Kompaniya | админ, РОП | Jamoa bo'yicha reyting | `/rop_team_rating` |
+| Kompaniya | админ, РОП | Jamoa bo'yicha xatolar | `/rop_team_mistakes` |
+| Kompaniya | админ, РОП | Menejer kartasi | `/rop_manager` |
+| Kompaniya | админ, РОП | Menejer haqida AI-savol | `/rop_ask` |
+| Kompaniya | админ, РОП | Bosqichlarni sinxronlash | `/sync_stages` |
+| Kompaniya | админ, РОП | Reytingdan chiqarish / Reytingga qaytarish | `/rating_off`, `/rating_on` |
+| Kompaniya | админ, РОП | Reyting ro'yxati | `/rating_list` |
+| Kompaniya | админ, РОП | Qo'ng'iroqlar holati | `/call_status [kun]` |
+| Kompaniya | админ, РОП | Reja belgilash | `/set_plan <amo_id> <summa> [YYYY-MM]` |
+| Kompaniya | админ, РОП | Rejalar | `/plans [YYYY-MM]` |
+| Feniks | админ, РОП | Feniks holati | `/inactivity_status` |
+| Feniks | админ, РОП | Feniks kaliti | `/inactivity_switch` |
+| Feniks | админ, РОП | Feniks limiti | `/inactivity_limit`, `/inactivity_limit_on`, `/inactivity_limit_off` |
+| Feniks | админ, РОП | Feniksni yoqish | `/inactivity_on` |
+| Feniks | админ, РОП | Feniksni to'xtatish | `/inactivity_off` |
+| Feniks | админ, РОП | Feniks: bitim bo'yicha | `/inactivity_lead <id>` |
+| Foydalanuvchilar | админ | Menejerlar | `/managers` |
+| Foydalanuvchilar | админ | amoID ro'yxati | `/manager_ids` |
+| Foydalanuvchilar | админ | Adminlar | `/admins` |
+| Foydalanuvchilar | админ | Jamoalar ro'yxati | `/teams_list` |
+| Foydalanuvchilar | админ | Kod qayta berish | `/reset_code <amo_id>` |
+| Foydalanuvchilar | админ | Admin qo'shish | `/add_admin <telegram_id>` |
+| Foydalanuvchilar | админ | Adminni olib tashlash | `/remove_admin <telegram_id>` |
+| Foydalanuvchilar | админ | Rol berish | `/set_role <tg_id> <manager|teamlead|rop>` |
+| Foydalanuvchilar | админ | Tim-lid tayinlash | `/set_teamlead <amo_id>` |
+| Foydalanuvchilar | админ | Jamoaga qo'shish | `/add_to_team <mgr_amo_id> <tl_amo_id>` |
+| Foydalanuvchilar | админ | Jamoadan olib tashlash | `/remove_from_team <amo_id>` |
+| Foydalanuvchilar | админ | Jamoani o'chirish | `/delete_team <team_id>` |
+| Foydalanuvchilar | админ | Bitimni tahlil qilish | `/analyze_deal <deal_id>` |
+| Sinxronizatsiya | админ | PBX menejerlar | `/sync_managers` |
+| Sinxronizatsiya | админ | Qo'ng'iroqlar tarixi | `/sync_history` |
+| Yordam | все | Buyruqlar ro'yxati | `/help` |
+
+Только командой, без кнопки: `/start`, `/check_tg <tg_id>`, `/test_restrict <tg_id>`, `/test_restore <tg_id>`.
+
+---
+
 ## 3. Планы продаж
 
 | Команда | Кому |

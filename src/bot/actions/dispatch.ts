@@ -15,7 +15,8 @@ import type { ActionContext, ActionDefinition } from "./types";
 const dispatchDeps: {
   pendingInput: PendingInputService;
   resolveAccess: (telegramUserId: string) => Promise<Access>;
-} = { pendingInput: defaultPendingInput, resolveAccess };
+  claimUpdate: (chatId: number, messageId: number) => Promise<boolean>;
+} = { pendingInput: defaultPendingInput, resolveAccess, claimUpdate };
 
 /** Tests swap the Redis-backed question store and the database lookup for fakes. */
 export function configureDispatch(overrides: Partial<typeof dispatchDeps>): void {
@@ -83,7 +84,7 @@ export async function runCommand(
   msg: TelegramBot.Message,
   match: RegExpExecArray | null | undefined,
 ): Promise<void> {
-  if (!(await claimUpdate(msg.chat.id, msg.message_id))) return;
+  if (!(await dispatchDeps.claimUpdate(msg.chat.id, msg.message_id))) return;
   const action = getAction(actionId);
   const telegramUserId = String(msg.from!.id);
   const access = await dispatchDeps.resolveAccess(telegramUserId);

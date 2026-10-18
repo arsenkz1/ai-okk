@@ -129,7 +129,7 @@ export function registerCallTaskReviewHandlers(bot: TelegramBot): void {
   });
 
   defineAction({
-    id: "call_task_time", section: "users", roles: [], denyText: undefined, label: "AI-vazifa muddati", commandOnly: true,
+    id: "call_task_time", section: "users", roles: [], denyText: undefined, label: "AI-vazifa muddati", commandOnly: true, helpHidden: true,
     command: { pattern: /^\/call_task_time\s+([A-Za-z0-9_-]{12,48})\s+(.+)$/, usage: "/call_task_time <token> <YYYY-MM-DD ЧЧ:ММ>", description: "срок AI-задачи с карточки" },
     async run(ctx) {
       const msg = ctx.message!;
