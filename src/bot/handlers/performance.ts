@@ -10,7 +10,6 @@ import {
   formatCallProcessingBreakdown,
   loadCallProcessingBreakdown,
 } from "../../services/callProcessingStats";
-import { fetchAllPipelines } from "../../services/amocrm";
 import { formatRevenueStageSync, syncRevenueStages } from "../../services/revenueStageSync";
 import { formatInactivityStatus, loadInactivityStatus } from "../../services/inactivityStatus";
 import {
@@ -42,35 +41,28 @@ import {
   setManagerPlan,
   type PlanMonth,
 } from "../../services/salesPlan";
+import { findLinkedManager, hasRole, resolveAccess } from "../access";
+import { defineAction } from "../actions/registry";
+import { registerCommandActions } from "../actions/dispatch";
 
 /**
  * Plan management and the call/revenue/plan report for a manager, a team lead's
  * team, and the whole company.
  */
 
-const ADMIN_TELEGRAM_ID = process.env.ADMIN_TELEGRAM_ID;
-
-async function isAdmin(telegramUserId: string): Promise<boolean> {
-  if (telegramUserId === ADMIN_TELEGRAM_ID) return true;
-  return (await prisma.botAdmin.findUnique({ where: { telegramUserId } })) !== null;
-}
-
+/** The caller's manager row, only while the account is active. */
 async function linkedManager(telegramUserId: string) {
-  const link = await prisma.telegramLink.findFirst({
-    where: { telegramUserId, status: "used" },
-    include: { manager: true },
-  });
-  const manager = link?.manager;
+  const manager = await findLinkedManager(telegramUserId);
   return manager && manager.isActive ? manager : null;
 }
 
+export const PLAN_EDITOR_DENY_TEXT = "❌ Reja belgilash faqat ROP va administrator uchun.";
+
 /** Setting a plan is a ROP/admin action; team leads may only read one. */
 async function requirePlanEditor(bot: TelegramBot, msg: TelegramBot.Message): Promise<boolean> {
-  const telegramUserId = String(msg.from!.id);
-  if (await isAdmin(telegramUserId)) return true;
-  const manager = await linkedManager(telegramUserId);
-  if (manager?.role === "ROP") return true;
-  await bot.sendMessage(msg.chat.id, "❌ Reja belgilash faqat ROP va administrator uchun.");
+  const access = await resolveAccess(String(msg.from!.id));
+  if (hasRole(access, "admin", "rop")) return true;
+  await bot.sendMessage(msg.chat.id, PLAN_EDITOR_DENY_TEXT);
   return false;
 }
 
@@ -95,17 +87,17 @@ async function teamManagerIdsOf(managerId: number, ownTeamId: number | null): Pr
 
 async function sendPerformance(
   bot: TelegramBot,
-  msg: TelegramBot.Message,
+  chatId: number,
   managerIds: number[],
   title: string | null,
 ): Promise<void> {
   if (managerIds.length === 0) {
-    await bot.sendMessage(msg.chat.id, "ℹ️ Hisobot uchun menejer topilmadi.");
+    await bot.sendMessage(chatId, "ℹ️ Hisobot uchun menejer topilmadi.");
     return;
   }
 
   const { from, to, label } = yesterdayRange();
-  await bot.sendChatAction(msg.chat.id, "typing");
+  await bot.sendChatAction(chatId, "typing");
   const performance = await loadManagerPerformance({ managerIds, range: { from, to } });
 
   if (title === null) {
@@ -115,10 +107,10 @@ async function sendPerformance(
     }
     const single = performance.get(managerIds[0]);
     if (!single) {
-      await bot.sendMessage(msg.chat.id, "ℹ️ Ma'lumot topilmadi.");
+      await bot.sendMessage(chatId, "ℹ️ Ma'lumot topilmadi.");
       return;
     }
-    await bot.sendMessage(msg.chat.id, formatManagerPerformance(single, label), { parse_mode: "HTML" });
+    await bot.sendMessage(chatId, formatManagerPerformance(single, label), { parse_mode: "HTML" });
     return;
   }
 
@@ -136,9 +128,9 @@ async function sendPerformance(
 
   await deliverTeamPerformance({
     team,
-    sendText: (text) => bot.sendMessage(msg.chat.id, text, { parse_mode: "HTML" }).then(() => undefined),
+    sendText: (text) => bot.sendMessage(chatId, text, { parse_mode: "HTML" }).then(() => undefined),
     sendFile: (file) => bot.sendDocument(
-      msg.chat.id,
+      chatId,
       file.buffer,
       { caption: file.caption },
       { filename: file.filename, contentType: file.contentType },
@@ -147,38 +139,38 @@ async function sendPerformance(
   });
 }
 
-export function registerPerformanceHandlers(bot: TelegramBot): void {
-  // /my_stats — the caller's own call/revenue/plan report.
-  bot.onText(/^\/my_stats$/, async (msg) => {
-    const manager = await linkedManager(String(msg.from!.id));
-    if (!manager) {
-      await bot.sendMessage(msg.chat.id, "❌ Siz avtorizatsiya qilinmagansiz. /start kiriting.");
-      return;
-    }
-    await sendPerformance(bot, msg, [manager.id], null);
-  });
+// /my_stats — the caller's own call/revenue/plan report.
+defineAction({
+  id: "my_stats", section: "reports", roles: ["manager"], label: "Mening statistikam",
+  denyText: "❌ Siz avtorizatsiya qilinmagansiz. /start kiriting.",
+  command: { pattern: /^\/my_stats$/, usage: "/my_stats", description: "qo'ng'iroq/tushum/reja hisobotim" },
+  async run(ctx) {
+    // The manager role is only granted to an active linked manager.
+    await sendPerformance(ctx.bot, ctx.chatId, [ctx.access.manager!.id], null);
+  },
+});
 
-  // /team_stats — a team lead's team, or the whole company for ROP/admin.
-  bot.onText(/^\/team_stats$/, async (msg) => {
-    const telegramUserId = String(msg.from!.id);
-    const manager = await linkedManager(telegramUserId);
-
-    if (await isAdmin(telegramUserId) || manager?.role === "ROP") {
+// /team_stats — a team lead's team, or the whole company for ROP/admin.
+defineAction({
+  id: "team_stats", section: "reports", roles: ["admin", "rop", "teamlead"], label: "Jamoa hisoboti",
+  denyText: "❌ Bu buyruq TeamLead va ROP uchun.",
+  command: { pattern: /^\/team_stats$/, usage: "/team_stats", description: "qo'ng'iroq/tushum/reja hisoboti" },
+  async run(ctx) {
+    if (hasRole(ctx.access, "admin", "rop")) {
       const all = await prisma.manager.findMany({
         where: { isActive: true, excludeFromReports: false },
         select: { id: true },
       });
-      await sendPerformance(bot, msg, all.map((item) => item.id), "Kompaniya");
+      await sendPerformance(ctx.bot, ctx.chatId, all.map((item) => item.id), "Kompaniya");
       return;
     }
+    const manager = ctx.access.manager!;
+    await sendPerformance(ctx.bot, ctx.chatId, await teamManagerIdsOf(manager.id, manager.teamId), "Jamoa");
+  },
+});
 
-    if (manager?.role !== "TEAMLEAD") {
-      await bot.sendMessage(msg.chat.id, "❌ Bu buyruq TeamLead va ROP uchun.");
-      return;
-    }
-
-    await sendPerformance(bot, msg, await teamManagerIdsOf(manager.id, manager.teamId), "Jamoa");
-  });
+export function registerPerformanceHandlers(bot: TelegramBot): void {
+  registerCommandActions(bot, ["my_stats", "team_stats"]);
 
   // The amoCRM client is only needed for the sweep and only when the worker is
   // configured; built lazily so a bot without those credentials still starts.
@@ -192,7 +184,11 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
   };
 
   // /inactivity_lead <id> — why this one deal has not been moved to Phoenix.
-  bot.onText(/^\/inactivity_lead\s+(\d{4,12})$/, async (msg, match) => {
+  defineAction({
+    id: "inactivity_lead", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks: bitim bo'yicha",
+    command: { pattern: /^\/inactivity_lead\s+(\d{4,12})$/, usage: "/inactivity_lead <id>", description: "aniq bitim nega Feniksga o'tmagan" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
     const baseUrl = process.env.AMOCRM_BASE_URL?.trim();
     const accessToken = process.env.AMOCRM_ACCESS_TOKEN?.trim();
@@ -203,24 +199,34 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     await bot.sendChatAction(msg.chat.id, "typing");
     try {
       const amo = createLeadInactivityAmoClient({ baseUrl, accessToken });
-      const input = await loadLeadDiagnosisInput(Number(match![1]), { readLead: (id) => amo.readLead(id) });
+      const input = await loadLeadDiagnosisInput(Number(ctx.args[0]), { readLead: (id) => amo.readLead(id) });
       await bot.sendMessage(msg.chat.id, formatLeadDiagnosis(input, diagnoseLead(input)));
     } catch (error) {
       await bot.sendMessage(msg.chat.id, `❌ Не удалось проверить сделку: ${error instanceof Error ? error.message : "ошибка"}`);
     }
+    },
   });
 
   // /inactivity_off — full stop: clears the queue, webhooks record nothing.
-  bot.onText(/^\/inactivity_off$/, async (msg) => {
+  defineAction({
+    id: "inactivity_off", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniksni to'xtatish", dangerous: true,
+    command: { pattern: /^\/inactivity_off$/, usage: "/inactivity_off", description: "Feniksga ko'chirishni to'liq to'xtatish (navbat tozalanadi)" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
     const state = await setInactivityMovementPaused(true, String(msg.from!.id));
     await bot.sendMessage(msg.chat.id, formatInactivityMovementSwitch(state));
+    },
   });
 
   // /inactivity_on — switch on, then offer to sweep every lead idle for 3+
   // days. The sweep waits for an explicit yes from this operator; afterwards
   // the worker runs on its 72-hour rule and the nightly sweep reconciles.
-  bot.onText(/^\/inactivity_on$/, async (msg) => {
+  defineAction({
+    id: "inactivity_on", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniksni yoqish",
+    command: { pattern: /^\/inactivity_on$/, usage: "/inactivity_on", description: "yoqish va 3+ kun tegilmagan lidlarni ko'chirishni taklif qilish" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
     const requestedBy = String(msg.from!.id);
     const state = await setInactivityMovementPaused(false, requestedBy);
@@ -250,6 +256,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
         `${formatInactivityMovementSwitch(state)}\n\n❌ Не удалось получить список лидов из amoCRM: ${error instanceof Error ? error.message : "ошибка"}`,
       );
     }
+    },
   });
 
   bot.on("callback_query", async (query) => {
@@ -283,9 +290,20 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
 
   // /inactivity_limit_on | /inactivity_limit_off — the 100-per-day cap alone,
   // independent of whether moves run. /inactivity_limit shows the current one.
-  bot.onText(/^\/inactivity_limit(?:_(on|off))?$/, async (msg, match) => {
+  defineAction({
+    id: "inactivity_limit", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks limiti",
+    command: {
+      pattern: /^\/inactivity_limit(?:_(on|off))?$/, usage: "/inactivity_limit[_on|_off]", description: "kunlik limit holati va o'zgartirish",
+      menu: [
+        { command: "inactivity_limit", description: "limit holatini ko'rish" },
+        { command: "inactivity_limit_on", description: "kuniga 100 ta ko'chirish limitini yoqish" },
+        { command: "inactivity_limit_off", description: "kunlik limitni o'chirish (cheklovsiz)" },
+      ],
+    },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
-    const action = match?.[1];
+    const action = ctx.args[0];
     try {
       const state = action
         ? await setInactivityDailyCap(action === "on", String(msg.from!.id))
@@ -301,16 +319,26 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     } catch (error) {
       await bot.sendMessage(msg.chat.id, `Не удалось изменить лимит: ${error instanceof Error ? error.message : "ошибка"}`);
     }
+    },
   });
 
   // /inactivity_switch — current state of the pause switch alone.
-  bot.onText(/^\/inactivity_switch$/, async (msg) => {
+  defineAction({
+    id: "inactivity_switch", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks kaliti",
+    command: { pattern: /^\/inactivity_switch$/, usage: "/inactivity_switch", description: "ko'chirish kaliti holati" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
     await bot.sendMessage(msg.chat.id, formatInactivityMovementSwitch(await getInactivityMovementSwitch()));
+    },
   });
 
   // /inactivity_status — why the Phoenix worker is or is not moving leads.
-  bot.onText(/^\/inactivity_status$/, async (msg) => {
+  defineAction({
+    id: "inactivity_status", section: "phoenix", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks holati",
+    command: { pattern: /^\/inactivity_status$/, usage: "/inactivity_status", description: "Feniks vorkeri nega ishlamayapti" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
     await bot.sendChatAction(msg.chat.id, "typing");
     try {
@@ -318,15 +346,23 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     } catch (error) {
       await bot.sendMessage(msg.chat.id, `❌ Не удалось прочитать состояние: ${error instanceof Error ? error.message : "ошибка"}`);
     }
+    },
   });
 
   // /sync_stages — discover the revenue stages of every amoCRM pipeline.
-  bot.onText(/^\/sync_stages$/, async (msg) => {
+  defineAction({
+    id: "sync_stages", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Bosqichlarni sinxronlash",
+    command: { pattern: /^\/sync_stages$/, usage: "/sync_stages", description: "amoCRM voronkalaridan tushum bosqichlarini sinxronlash" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
 
     await bot.sendMessage(msg.chat.id, "⏳ Читаю воронки amoCRM...");
     try {
-      const result = await syncRevenueStages({ fetchPipelines: fetchAllPipelines });
+      // amoCRM is imported here, not at the top: it pulls the BullMQ queue, and
+    // this module is loaded in tests.
+    const { fetchAllPipelines } = await import("../../services/amocrm");
+    const result = await syncRevenueStages({ fetchPipelines: fetchAllPipelines });
       await bot.sendMessage(msg.chat.id, formatRevenueStageSync(result));
     } catch (error) {
       console.error("[RevenueStageSync] failed:", error instanceof Error ? error.message : error);
@@ -335,15 +371,26 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
         `❌ Не удалось синхронизировать этапы: ${error instanceof Error ? error.message : "неизвестная ошибка"}`,
       );
     }
+    },
   });
 
   // /rating_off <amo_id> | /rating_on <amo_id> — keep non-selling accounts
   // (teams, ROP and service logins) out of the rankings.
-  bot.onText(/^\/rating_(off|on)\s+(\d+)$/, async (msg, match) => {
+  defineAction({
+    id: "rating_toggle", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Reyting: chiqarish/qaytarish", dangerous: true,
+    command: {
+      pattern: /^\/rating_(off|on)\s+(\d+)$/, usage: "/rating_off <amo_id>, /rating_on <amo_id>", description: "reytingdan chiqarish yoki qaytarish",
+      menu: [
+        { command: "rating_off", description: "reytingdan chiqarish (jamoa, HR, xizmat hisoblari)" },
+        { command: "rating_on", description: "reytingga qaytarish" },
+      ],
+    },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
 
-    const exclude = match![1] === "off";
-    const amoUserId = Number(match![2]);
+    const exclude = ctx.args[0] === "off";
+    const amoUserId = Number(ctx.args[1]);
     const manager = await prisma.manager.findUnique({ where: { amoUserId } });
     if (!manager) {
       await bot.sendMessage(msg.chat.id, `❌ amoCRM ID ${amoUserId} bo'yicha menejer topilmadi.`);
@@ -357,10 +404,15 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
         ? `✅ ${formatManagerDisplayName(manager.name)} hisobotlardan chiqarildi.`
         : `✅ ${formatManagerDisplayName(manager.name)} hisobotlarga qaytarildi.`,
     );
+    },
   });
 
   // /rating_list — who counts as a seller and who is excluded.
-  bot.onText(/^\/rating_list$/, async (msg) => {
+  defineAction({
+    id: "rating_list", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Reyting ro'yxati",
+    command: { pattern: /^\/rating_list$/, usage: "/rating_list", description: "kim reytingda, kim chiqarilgan" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
 
     const managers = await prisma.manager.findMany({
@@ -384,13 +436,18 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
       "ℹ️ Chiqarish: /rating_off <amoCRM ID>, qaytarish: /rating_on <amoCRM ID>",
     ];
     await bot.sendMessage(msg.chat.id, lines.join("\n"));
+    },
   });
 
   // /call_status [N] — why calls over the last N days were or were not analyzed.
-  bot.onText(/^\/call_status(?:\s+(\d{1,2}))?$/, async (msg, match) => {
+  defineAction({
+    id: "call_status", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Qo'ng'iroqlar holati",
+    command: { pattern: /^\/call_status(?:\s+(\d{1,2}))?$/, usage: "/call_status [kun]", description: "qo'ng'iroqlar nega tahlil qilinmadi" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
 
-    const days = Math.min(Math.max(Number(match![1] ?? 1), 1), 30);
+    const days = Math.min(Math.max(Number(ctx.args[0] ?? 1), 1), 30);
     const to = new Date();
     to.setHours(24, 0, 0, 0);
     const from = new Date(to);
@@ -400,15 +457,20 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     const breakdown = await loadCallProcessingBreakdown({ from, to });
     const label = days === 1 ? "сегодня" : `последние ${days} дн.`;
     await bot.sendMessage(msg.chat.id, formatCallProcessingBreakdown(breakdown, label));
+    },
   });
 
   // /set_plan <amo_user_id> <amount> [YYYY-MM]
-  bot.onText(/^\/set_plan\s+(\d+)\s+([\d\s']+?)(?:\s+(\d{4}-\d{2}))?$/, async (msg, match) => {
+  defineAction({
+    id: "set_plan", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Reja belgilash",
+    command: { pattern: /^\/set_plan\s+(\d+)\s+([\d\s']+?)(?:\s+(\d{4}-\d{2}))?$/, usage: "/set_plan <amo_id> <summa> [YYYY-MM]", description: "oylik reja belgilash" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
 
-    const amoUserId = Number(match![1]);
-    const amountTarget = parsePlanAmount(match![2]);
-    const month: PlanMonth | null = match![3] ? parsePlanMonth(match![3]) : almatyPlanMonth(new Date());
+    const amoUserId = Number(ctx.args[0]);
+    const amountTarget = parsePlanAmount(ctx.args[1]);
+    const month: PlanMonth | null = ctx.args[2] ? parsePlanMonth(ctx.args[2]) : almatyPlanMonth(new Date());
 
     if (amountTarget === null) {
       await bot.sendMessage(msg.chat.id, "❌ Summa noto'g'ri. Masalan: /set_plan 12695650 50000000");
@@ -436,21 +498,31 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
       msg.chat.id,
       `✅ Reja belgilandi.\n👤 ${manager.name}\n📅 ${formatPlanMonth(month)}\n🎯 ${amountTarget.toLocaleString("ru-RU")}`,
     );
+    },
   });
 
-  bot.onText(/^\/set_plan$/, async (msg) => {
+  defineAction({
+    id: "set_plan_usage", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Reja belgilash (foydalanish)", commandOnly: true,
+    command: { pattern: /^\/set_plan$/, usage: "/set_plan", description: "foydalanish bo'yicha eslatma" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
     await bot.sendMessage(
       msg.chat.id,
       "ℹ️ Foydalanish: /set_plan <amoCRM ID> <summa> [YYYY-MM]\nMasalan: /set_plan 12695650 50000000 2026-09\nOy ko'rsatilmasa — joriy oy.",
     );
+    },
   });
 
   // /plans [YYYY-MM] — every active manager's target for the month.
-  bot.onText(/^\/plans(?:\s+(\d{4}-\d{2}))?$/, async (msg, match) => {
+  defineAction({
+    id: "plans", section: "company", roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Rejalar",
+    command: { pattern: /^\/plans(?:\s+(\d{4}-\d{2}))?$/, usage: "/plans [YYYY-MM]", description: "barcha rejalar" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
 
-    const month = match![1] ? parsePlanMonth(match![1]) : almatyPlanMonth(new Date());
+    const month = ctx.args[0] ? parsePlanMonth(ctx.args[0]) : almatyPlanMonth(new Date());
     if (month === null) {
       await bot.sendMessage(msg.chat.id, "❌ Oy noto'g'ri. Format: YYYY-MM.");
       return;
@@ -477,5 +549,10 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     lines.push("", `Jami: ${total.toLocaleString("ru-RU")}`);
 
     await bot.sendMessage(msg.chat.id, lines.join("\n"));
+    },
   });
+
+  registerCommandActions(bot, [
+    "inactivity_lead", "inactivity_off", "inactivity_on", "inactivity_limit", "inactivity_switch", "inactivity_status", "sync_stages", "rating_toggle", "rating_list", "call_status", "set_plan", "set_plan_usage", "plans",
+  ]);
 }

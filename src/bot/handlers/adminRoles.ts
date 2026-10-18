@@ -1,30 +1,34 @@
 import TelegramBot from "node-telegram-bot-api";
 import { prisma } from "../../config/database";
+import { isBotAdmin } from "../access";
+import { defineAction } from "../actions/registry";
+import { registerCommandActions } from "../actions/dispatch";
+import { syncCommandMenuForManager, syncCommandMenuForTelegramUser } from "../commandMenu";
+import { refreshMainMenuForManager, refreshMainMenuForTelegramUser } from "../keyboards/mainMenu";
 
 type ManagerRole = "MANAGER" | "TEAMLEAD" | "ROP";
 
-const ADMIN_TELEGRAM_ID = process.env.ADMIN_TELEGRAM_ID;
 const pendingTeamDeleteConfirmations = new Map<number, number>();
 
-async function isAdmin(telegramUserId: string): Promise<boolean> {
-  if (telegramUserId === ADMIN_TELEGRAM_ID) return true;
-  const admin = await prisma.botAdmin.findUnique({ where: { telegramUserId } });
-  return !!admin;
-}
+export const ADMIN_ROLES_DENY_TEXT = "❌ Sizda bu buyruq uchun huquq yo'q.";
 
 async function requireAdmin(bot: TelegramBot, msg: TelegramBot.Message): Promise<boolean> {
   const tgId = String(msg.from!.id);
-  if (await isAdmin(tgId)) return true;
-  await bot.sendMessage(msg.chat.id, "❌ Sizda bu buyruq uchun huquq yo'q.");
+  if (await isBotAdmin(tgId)) return true;
+  await bot.sendMessage(msg.chat.id, ADMIN_ROLES_DENY_TEXT);
   return false;
 }
 
 export function registerAdminRoleHandlers(bot: TelegramBot) {
-  bot.onText(/\/set_role (\S+) (\S+)/, async (msg, match) => {
+  defineAction({
+    id: "set_role", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Rol berish", dangerous: true,
+    command: { pattern: /\/set_role (\S+) (\S+)/, usage: "/set_role <tg_id> <manager|teamlead|rop>", description: "rol tayinlash" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireAdmin(bot, msg))) return;
 
-    const targetTgId = match![1];
-    const roleStr = match![2].toLowerCase();
+    const targetTgId = ctx.args[0];
+    const roleStr = ctx.args[1].toLowerCase();
 
     const roleMap: Record<string, ManagerRole> = {
       manager: "MANAGER",
@@ -44,7 +48,7 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
     });
 
     if (!link) {
-      if (await isAdmin(targetTgId)) {
+      if (await isBotAdmin(targetTgId)) {
         await bot.sendMessage(
           msg.chat.id,
           `ℹ️ Telegram ID ${targetTgId} allaqachon admin huquqiga ega. ROP buyruqlari uchun unga /set_role orqali alohida rol kerak emas.`
@@ -57,17 +61,24 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
     }
 
     await prisma.manager.update({ where: { id: link.managerId }, data: { role } });
+    await syncCommandMenuForTelegramUser(bot, targetTgId);
+    await refreshMainMenuForTelegramUser(bot, targetTgId);
     await bot.sendMessage(
       msg.chat.id,
       `✅ *${link.manager.name}* foydalanuvchisining roli *${role}* ga o'zgartirildi.`,
       { parse_mode: "Markdown" }
     );
+    },
   });
 
-  bot.onText(/\/set_teamlead (\d+)/, async (msg, match) => {
+  defineAction({
+    id: "set_teamlead", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Tim-lid tayinlash",
+    command: { pattern: /\/set_teamlead (\d+)/, usage: "/set_teamlead <amo_id>", description: "jamoa yaratish va TL tayinlash" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireAdmin(bot, msg))) return;
 
-    const amoUserId = parseInt(match![1]);
+    const amoUserId = parseInt(ctx.args[0]);
     const manager = await prisma.manager.findUnique({ where: { amoUserId } });
 
     if (!manager) {
@@ -86,19 +97,26 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
       where: { id: manager.id },
       data: { role: "TEAMLEAD", teamId: team.id },
     });
+    await syncCommandMenuForManager(bot, manager.id);
+    await refreshMainMenuForManager(bot, manager.id);
 
     await bot.sendMessage(
       msg.chat.id,
       `✅ *${manager.name}* TeamLead etib belgilandi.\nJamoa: *${team.name}* (ID: ${team.id})`,
       { parse_mode: "Markdown" }
     );
+    },
   });
 
-  bot.onText(/\/add_to_team (\d+) (\d+)/, async (msg, match) => {
+  defineAction({
+    id: "add_to_team", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoaga qo'shish",
+    command: { pattern: /\/add_to_team (\d+) (\d+)/, usage: "/add_to_team <mgr_amo_id> <tl_amo_id>", description: "jamoaga qo'shish" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireAdmin(bot, msg))) return;
 
-    const mgrAmoId = parseInt(match![1]);
-    const tlAmoId = parseInt(match![2]);
+    const mgrAmoId = parseInt(ctx.args[0]);
+    const tlAmoId = parseInt(ctx.args[1]);
 
     const [mgr, tl] = await Promise.all([
       prisma.manager.findUnique({ where: { amoUserId: mgrAmoId } }),
@@ -134,12 +152,17 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
       `✅ *${mgr.name}* *${team.name}* jamoasiga qo'shildi.`,
       { parse_mode: "Markdown" }
     );
+    },
   });
 
-  bot.onText(/\/remove_from_team (\d+)/, async (msg, match) => {
+  defineAction({
+    id: "remove_from_team", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoadan olib tashlash",
+    command: { pattern: /\/remove_from_team (\d+)/, usage: "/remove_from_team <amo_id>", description: "jamoadan chiqarish" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireAdmin(bot, msg))) return;
 
-    const amoUserId = parseInt(match![1]);
+    const amoUserId = parseInt(ctx.args[0]);
     const manager = await prisma.manager.findUnique({ where: { amoUserId } });
 
     if (!manager) {
@@ -155,12 +178,17 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
     await bot.sendMessage(msg.chat.id, `✅ *${manager.name}* jamoadan chiqarildi.`, {
       parse_mode: "Markdown",
     });
+    },
   });
 
-  bot.onText(/\/delete_team (\d+)/, async (msg, match) => {
+  defineAction({
+    id: "delete_team", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoani o'chirish", dangerous: true,
+    command: { pattern: /\/delete_team (\d+)/, usage: "/delete_team <team_id>", description: "jamoani butunlay o'chirish" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireAdmin(bot, msg))) return;
 
-    const teamId = parseInt(match![1], 10);
+    const teamId = parseInt(ctx.args[0], 10);
     const team = await prisma.team.findUnique({ where: { id: teamId } });
 
     if (!team) {
@@ -193,9 +221,14 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
         },
       }
     );
+    },
   });
 
-  bot.onText(/\/teams_list$/, async (msg) => {
+  defineAction({
+    id: "teams_list", section: "users", roles: ["admin"], denyText: ADMIN_ROLES_DENY_TEXT, label: "Jamoalar ro'yxati",
+    command: { pattern: /\/teams_list$/, usage: "/teams_list", description: "barcha jamoalar ro'yxati" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireAdmin(bot, msg))) return;
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
@@ -215,6 +248,7 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
     }
 
     await bot.sendMessage(msg.chat.id, lines.join("\n"), { parse_mode: "Markdown" });
+    },
   });
 
   bot.on("callback_query", async (query) => {
@@ -222,7 +256,7 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
     if (!query.data.startsWith("admin_delete_team_")) return;
 
     const tgId = String(query.from.id);
-    if (!(await isAdmin(tgId))) {
+    if (!(await isBotAdmin(tgId))) {
       await bot.answerCallbackQuery(query.id, {
         text: "Sizda bu amal uchun huquq yo'q.",
       });
@@ -291,4 +325,8 @@ export function registerAdminRoleHandlers(bot: TelegramBot) {
       }
     );
   });
+
+  registerCommandActions(bot, [
+    "set_role", "set_teamlead", "add_to_team", "remove_from_team", "delete_team", "teams_list",
+  ]);
 }

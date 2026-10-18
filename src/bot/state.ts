@@ -27,3 +27,25 @@ export interface TeamLeadManageFlowState {
 export const supervisorAiSessions = new Map<number, SupervisorAiSession>();
 export const roleFlowState = new Map<number, RoleFlowState>();
 export const teamLeadManageFlowState = new Map<number, TeamLeadManageFlowState>();
+
+/** The two-step /period dialog: first date, then second date. */
+export interface PeriodState {
+  step: "from" | "to";
+  from?: Date;
+  /** True = company-wide report (admin without a manager link). */
+  adminMode?: boolean;
+}
+export const periodState = new Map<number, PeriodState>();
+
+/** Users who typed /start and still owe the bot their 6-digit code. */
+export const awaitingCode = new Set<number>();
+
+/** A manager's own AI-coach conversation. */
+export interface AiSession {
+  active: boolean;
+  history: GeminiMessage[];
+  systemContext: string;
+  managerId: number;
+  period: string;
+}
+export const aiSessions = new Map<number, AiSession>();

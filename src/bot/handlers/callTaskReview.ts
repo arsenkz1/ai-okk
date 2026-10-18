@@ -4,6 +4,8 @@ import { almatyPresetDueAt, parseAlmatyDateTimeInput } from "../../services/alma
 import { executeReviewedCallTaskProposal } from "../../services/callTaskAutomation";
 import { getCallTaskAutomationRuntime } from "../../services/callTaskAutomationRuntime";
 import { isCallTaskReviewer, parseCallTaskReviewCallback } from "../callTaskReviewNotifications";
+import { defineAction } from "../actions/registry";
+import { registerCommandActions } from "../actions/dispatch";
 
 function resultText(result: Awaited<ReturnType<typeof executeReviewedCallTaskProposal>>): string {
   if (result.kind === "confirmed") return `✅ Задача #${result.taskId} и примечание созданы.`;
@@ -99,23 +101,32 @@ export function registerCallTaskReviewHandlers(bot: TelegramBot): void {
     }
   });
 
-  bot.onText(/^\/call_task_time\s+([A-Za-z0-9_-]{12,48})\s+(.+)$/, async (msg, match) => {
+  defineAction({
+    id: "call_task_time", section: "users", roles: [], denyText: undefined, label: "AI-vazifa muddati", commandOnly: true,
+    command: { pattern: /^\/call_task_time\s+([A-Za-z0-9_-]{12,48})\s+(.+)$/, usage: "/call_task_time <token> <YYYY-MM-DD ЧЧ:ММ>", description: "срок AI-задачи с карточки" },
+    async run(ctx) {
+      const msg = ctx.message!;
     const reviewerTelegramUserId = await isAuthorized(msg, bot, msg.chat.id);
     if (!reviewerTelegramUserId) return;
-    const dueAt = parseAlmatyDateTimeInput(match![2]);
+    const dueAt = parseAlmatyDateTimeInput(ctx.args[1]);
     if (!dueAt || dueAt.getTime() <= Date.now()) {
       await bot.sendMessage(msg.chat.id, "❌ Нужна будущая дата в формате: /call_task_time TOKEN YYYY-MM-DD ЧЧ:ММ (Алматы).");
       return;
     }
     try {
-      const result = await approveProposal(match![1], dueAt, reviewerTelegramUserId);
+      const result = await approveProposal(ctx.args[0], dueAt, reviewerTelegramUserId);
       await bot.sendMessage(msg.chat.id, resultText(result));
     } catch (error) {
       console.error("[CallTaskAutomation] Manual proposal deadline failed", {
-        approvalToken: match![1],
+        approvalToken: ctx.args[0],
         reason: error instanceof Error ? error.message : "unknown error",
       });
       await bot.sendMessage(msg.chat.id, "⚠️ Не удалось обработать срок. Повторная задача не отправлялась.");
     }
+    },
   });
+
+  registerCommandActions(bot, [
+    "call_task_time",
+  ]);
 }

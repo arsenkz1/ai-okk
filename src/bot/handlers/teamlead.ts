@@ -7,6 +7,9 @@ import {
   ManagerWithScore,
 } from "../../services/teamStats";
 import { roleFlowState, teamLeadManageFlowState, TeamLeadManageMode } from "../state";
+import { findLinkedManager, isLinkedAs, type Access } from "../access";
+import { defineAction } from "../actions/registry";
+import { registerCommandActions } from "../actions/dispatch";
 
 type TeamLeadManager = Awaited<
   ReturnType<typeof prisma.manager.findUniqueOrThrow>
@@ -23,13 +26,18 @@ type TeamMemberOption = {
 const PAGE_SIZE = 10;
 
 async function getTeamLead(telegramUserId: string): Promise<TeamLeadManager | null> {
-  const link = await prisma.telegramLink.findFirst({
-    where: { telegramUserId, status: "used" },
-    include: { manager: { include: { team: true } } },
-  });
-  const mgr = link?.manager as TeamLeadManager | undefined;
-  if (!mgr || mgr.role !== "TEAMLEAD") return null;
-  return mgr;
+  const manager = await findLinkedManager(telegramUserId);
+  if (!manager || !isLinkedAs(manager, "teamlead")) return null;
+  return manager;
+}
+
+export const TEAMLEAD_DENY_TEXT = "❌ Sizda TeamLead huquqi yo'q.";
+export const TEAMLEAD_DEACTIVATED_TEXT = "❌ Hisobingiz deaktiv qilingan.";
+
+/** The two refusals the team-lead commands always gave, chosen by the caller's state. */
+export function teamLeadDenyText(access: Access): string {
+  const manager = access.manager;
+  return manager && isLinkedAs(manager, "teamlead") && !manager.isActive ? TEAMLEAD_DEACTIVATED_TEXT : TEAMLEAD_DENY_TEXT;
 }
 
 async function requireTeamLead(
@@ -38,11 +46,11 @@ async function requireTeamLead(
 ): Promise<TeamLeadManager | null> {
   const tl = await getTeamLead(String(msg.from!.id));
   if (!tl) {
-    await bot.sendMessage(msg.chat.id, "❌ Sizda TeamLead huquqi yo'q.");
+    await bot.sendMessage(msg.chat.id, TEAMLEAD_DENY_TEXT);
     return null;
   }
   if (!tl.isActive) {
-    await bot.sendMessage(msg.chat.id, "❌ Hisobingiz deaktiv qilingan.");
+    await bot.sendMessage(msg.chat.id, TEAMLEAD_DEACTIVATED_TEXT);
     return null;
   }
   return tl;
@@ -425,7 +433,11 @@ function removeSelectedId(ids: number[], managerId: number): number[] {
 }
 
 export function registerTeamLeadHandlers(bot: TelegramBot) {
-  bot.onText(/\/team$/, async (msg) => {
+  defineAction({
+    id: "team", section: "team", roles: ["teamlead"], denyText: teamLeadDenyText, label: "Jamoam",
+    command: { pattern: /\/team$/, usage: "/team", description: "o'z jamoangizni ko'rish" },
+    async run(ctx) {
+      const msg = ctx.message!;
     const tl = await requireTeamAssignment(bot, msg.chat.id, await requireTeamLead(bot, msg));
     if (!tl) return;
 
@@ -437,9 +449,14 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
 
     const text = `👥 *Sizning jamoangiz (7 kun):*\n\n${formatRating(rating)}`;
     await sendInChunks(bot, msg.chat.id, text);
+    },
   });
 
-  bot.onText(/\/team_rating$/, async (msg) => {
+  defineAction({
+    id: "team_rating", section: "team", roles: ["teamlead"], denyText: teamLeadDenyText, label: "Jamoa reytingi",
+    command: { pattern: /\/team_rating$/, usage: "/team_rating", description: "jamoa reytingi" },
+    async run(ctx) {
+      const msg = ctx.message!;
     const tl = await requireTeamAssignment(bot, msg.chat.id, await requireTeamLead(bot, msg));
     if (!tl) return;
 
@@ -451,9 +468,14 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
 
     const text = `📊 *Jamoa reytingi (7 kun):*\n\n${formatRating(rating)}`;
     await sendInChunks(bot, msg.chat.id, text);
+    },
   });
 
-  bot.onText(/\/team_mistakes$/, async (msg) => {
+  defineAction({
+    id: "team_mistakes", section: "team", roles: ["teamlead"], denyText: teamLeadDenyText, label: "Jamoa xatolari",
+    command: { pattern: /\/team_mistakes$/, usage: "/team_mistakes", description: "jamoa xatolari" },
+    async run(ctx) {
+      const msg = ctx.message!;
     const tl = await requireTeamAssignment(bot, msg.chat.id, await requireTeamLead(bot, msg));
     if (!tl) return;
 
@@ -469,9 +491,14 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
       msg.chat.id,
       `⚠️ *Jamoaning ko'p uchraydigan xatolari (7 kun):*\n\n${lines.join("\n")}`
     );
+    },
   });
 
-  bot.onText(/\/team_add$/, async (msg) => {
+  defineAction({
+    id: "team_add", section: "team", roles: ["teamlead"], denyText: teamLeadDenyText, label: "Jamoaga biriktirish",
+    command: { pattern: /\/team_add$/, usage: "/team_add", description: "menejerlarni jamoaga biriktirish" },
+    async run(ctx) {
+      const msg = ctx.message!;
     const tl = await requireTeamAssignment(bot, msg.chat.id, await requireTeamLead(bot, msg));
     if (!tl) return;
 
@@ -490,9 +517,14 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
     });
 
     await renderManageSelection(bot, msg, tl, "add");
+    },
   });
 
-  bot.onText(/\/team_remove$/, async (msg) => {
+  defineAction({
+    id: "team_remove", section: "team", roles: ["teamlead"], denyText: teamLeadDenyText, label: "Jamoadan chiqarish",
+    command: { pattern: /\/team_remove$/, usage: "/team_remove", description: "menejerlarni jamoadan chiqarish" },
+    async run(ctx) {
+      const msg = ctx.message!;
     const tl = await requireTeamAssignment(bot, msg.chat.id, await requireTeamLead(bot, msg));
     if (!tl) return;
 
@@ -511,9 +543,14 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
     });
 
     await renderManageSelection(bot, msg, tl, "remove");
+    },
   });
 
-  bot.onText(/\/team_manager$/, async (msg) => {
+  defineAction({
+    id: "team_manager", section: "team", roles: ["teamlead"], denyText: teamLeadDenyText, label: "Jamoa menejeri kartasi",
+    command: { pattern: /\/team_manager$/, usage: "/team_manager", description: "jamoa menejeri kartasi" },
+    async run(ctx) {
+      const msg = ctx.message!;
     const tl = await requireTeamAssignment(bot, msg.chat.id, await requireTeamLead(bot, msg));
     if (!tl) return;
 
@@ -531,9 +568,14 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
     await bot.sendMessage(msg.chat.id, "Menejerni tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
+    },
   });
 
-  bot.onText(/\/ask_manager$/, async (msg) => {
+  defineAction({
+    id: "ask_manager", section: "team", roles: ["teamlead"], denyText: teamLeadDenyText, label: "Jamoa menejeri haqida AI-savol",
+    command: { pattern: /\/ask_manager$/, usage: "/ask_manager", description: "jamoa menejeri haqida AI-savol" },
+    async run(ctx) {
+      const msg = ctx.message!;
     const tl = await requireTeamAssignment(bot, msg.chat.id, await requireTeamLead(bot, msg));
     if (!tl) return;
 
@@ -551,6 +593,7 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
     await bot.sendMessage(msg.chat.id, "AI tahlil uchun menejerni tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
+    },
   });
 
   bot.on("callback_query", async (query) => {
@@ -726,4 +769,8 @@ export function registerTeamLeadHandlers(bot: TelegramBot) {
       );
     }
   });
+
+  registerCommandActions(bot, [
+    "team", "team_rating", "team_mistakes", "team_add", "team_remove", "team_manager", "ask_manager",
+  ]);
 }

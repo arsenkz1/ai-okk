@@ -9,29 +9,20 @@ import {
   ManagerWithScore,
 } from "../../services/teamStats";
 import { roleFlowState } from "../state";
+import { hasRole, resolveAccess } from "../access";
+import { defineAction } from "../actions/registry";
+import { registerCommandActions } from "../actions/dispatch";
 
-const ADMIN_TELEGRAM_ID = process.env.ADMIN_TELEGRAM_ID;
-
-async function isAdmin(telegramUserId: string): Promise<boolean> {
-  if (telegramUserId === ADMIN_TELEGRAM_ID) return true;
-  const admin = await prisma.botAdmin.findUnique({ where: { telegramUserId } });
-  return !!admin;
-}
-
+/** ROP commands: administrators, and active managers with the ROP role. */
 async function hasRopAccess(telegramUserId: string): Promise<boolean> {
-  if (await isAdmin(telegramUserId)) return true;
-
-  const link = await prisma.telegramLink.findFirst({
-    where: { telegramUserId, status: "used" },
-    include: { manager: true },
-  });
-  const mgr = link?.manager;
-  return !!mgr && mgr.role === "ROP" && mgr.isActive;
+  return hasRole(await resolveAccess(telegramUserId), "admin", "rop");
 }
+
+export const ROP_DENY_TEXT = "❌ Sizda ROP huquqi yo'q.";
 
 async function requireRop(bot: TelegramBot, msg: TelegramBot.Message): Promise<boolean> {
   if (!(await hasRopAccess(String(msg.from!.id)))) {
-    await bot.sendMessage(msg.chat.id, "❌ Sizda ROP huquqi yo'q.");
+    await bot.sendMessage(msg.chat.id, ROP_DENY_TEXT);
     return false;
   }
   return true;
@@ -76,7 +67,11 @@ async function sendInChunks(
 }
 
 export function registerRopHandlers(bot: TelegramBot) {
-  bot.onText(/\/teams$/, async (msg) => {
+  defineAction({
+    id: "teams", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Jamoalar",
+    command: { pattern: /\/teams$/, usage: "/teams", description: "barcha jamoalar" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireRop(bot, msg))) return;
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
@@ -101,9 +96,14 @@ export function registerRopHandlers(bot: TelegramBot) {
       parse_mode: "Markdown",
       reply_markup: { inline_keyboard: keyboard },
     });
+    },
   });
 
-  bot.onText(/\/all_rating$/, async (msg) => {
+  defineAction({
+    id: "all_rating", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Umumiy reyting",
+    command: { pattern: /\/all_rating$/, usage: "/all_rating", description: "menejerlarning umumiy reytingi (7 kun)" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireRop(bot, msg))) return;
 
     await bot.sendMessage(msg.chat.id, "⏳ Reyting yuklanmoqda...");
@@ -115,9 +115,14 @@ export function registerRopHandlers(bot: TelegramBot) {
 
     const text = `📊 *Menejerlarning umumiy reytingi (7 kun):*\n\n${formatRating(rating)}`;
     await sendInChunks(bot, msg.chat.id, text, "Markdown");
+    },
   });
 
-  bot.onText(/\/all_mistakes$/, async (msg) => {
+  defineAction({
+    id: "all_mistakes", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Kompaniya xatolari",
+    command: { pattern: /\/all_mistakes$/, usage: "/all_mistakes", description: "kompaniya bo'yicha xatolar" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireRop(bot, msg))) return;
 
     const mistakes = await getAllMistakes(7, 10);
@@ -133,9 +138,14 @@ export function registerRopHandlers(bot: TelegramBot) {
       `⚠️ *Kompaniya bo'yicha ko'p uchraydigan xatolar (7 kun):*\n\n${lines.join("\n")}`,
       "Markdown"
     );
+    },
   });
 
-  bot.onText(/\/rop_team_rating$/, async (msg) => {
+  defineAction({
+    id: "rop_team_rating", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Jamoa reytingi (tanlash)",
+    command: { pattern: /\/rop_team_rating$/, usage: "/rop_team_rating", description: "aniq jamoa reytingi" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireRop(bot, msg))) return;
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
@@ -148,9 +158,14 @@ export function registerRopHandlers(bot: TelegramBot) {
     await bot.sendMessage(msg.chat.id, "Reyting uchun jamoani tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
+    },
   });
 
-  bot.onText(/\/rop_team_mistakes$/, async (msg) => {
+  defineAction({
+    id: "rop_team_mistakes", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Jamoa xatolari (tanlash)",
+    command: { pattern: /\/rop_team_mistakes$/, usage: "/rop_team_mistakes", description: "aniq jamoa xatolari" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireRop(bot, msg))) return;
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
@@ -163,9 +178,14 @@ export function registerRopHandlers(bot: TelegramBot) {
     await bot.sendMessage(msg.chat.id, "Xatolar tahlili uchun jamoani tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
+    },
   });
 
-  bot.onText(/\/rop_manager$/, async (msg) => {
+  defineAction({
+    id: "rop_manager", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Menejer kartasi",
+    command: { pattern: /\/rop_manager$/, usage: "/rop_manager", description: "menejer kartasi" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireRop(bot, msg))) return;
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
@@ -178,9 +198,14 @@ export function registerRopHandlers(bot: TelegramBot) {
     await bot.sendMessage(msg.chat.id, "Jamoani tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
+    },
   });
 
-  bot.onText(/\/rop_ask$/, async (msg) => {
+  defineAction({
+    id: "rop_ask", section: "company", roles: ["admin", "rop"], denyText: ROP_DENY_TEXT, label: "Menejer haqida AI-savol",
+    command: { pattern: /\/rop_ask$/, usage: "/rop_ask", description: "menejer haqida AI-savol" },
+    async run(ctx) {
+      const msg = ctx.message!;
     if (!(await requireRop(bot, msg))) return;
 
     const teams = await prisma.team.findMany({ orderBy: { name: "asc" } });
@@ -193,6 +218,7 @@ export function registerRopHandlers(bot: TelegramBot) {
     await bot.sendMessage(msg.chat.id, "Jamoani tanlang:", {
       reply_markup: { inline_keyboard: keyboard },
     });
+    },
   });
 
   bot.on("callback_query", async (query) => {
@@ -328,4 +354,8 @@ export function registerRopHandlers(bot: TelegramBot) {
       );
     }
   });
+
+  registerCommandActions(bot, [
+    "teams", "all_rating", "all_mistakes", "rop_team_rating", "rop_team_mistakes", "rop_manager", "rop_ask",
+  ]);
 }
