@@ -3,7 +3,7 @@ import { resolveAccess, type Access } from "../access";
 import { runFromButton } from "../actions/dispatch";
 import { helpTextFor } from "../actions/help";
 import { allActions, CANCEL_LABEL, SECTIONS, visibleActions, type SectionDefinition } from "../actions/registry";
-import { periodState } from "../state";
+import { pendingInput, type PendingInputService } from "../pendingInput";
 import { mainMenuMarkup } from "./mainMenu";
 import { EMPTY_SECTION_TEXT, sectionKeyboard, sectionTitle } from "./menuCallbacks";
 
@@ -32,12 +32,21 @@ export function resolveLabel(text: string): LabelHit | null {
 
 export const CANCELLED_TEXT = "Bekor qilindi.";
 
-export async function handleLabelHit(bot: TelegramBot, msg: TelegramBot.Message, hit: LabelHit): Promise<void> {
+export interface LabelRouterDependencies {
+  pendingInput: Pick<PendingInputService, "cancel">;
+}
+
+export async function handleLabelHit(
+  bot: TelegramBot,
+  msg: TelegramBot.Message,
+  hit: LabelHit,
+  deps: LabelRouterDependencies = { pendingInput },
+): Promise<void> {
   const chatId = msg.chat.id;
   const userId = msg.from!.id;
 
   if (hit.kind === "cancel") {
-    periodState.delete(userId);
+    await deps.pendingInput.cancel(userId);
     await bot.sendMessage(chatId, CANCELLED_TEXT);
     return;
   }

@@ -13,9 +13,11 @@ import { amoUserIdMap } from "../../services/amoDailyFacts";
 import { applyAmoRevenueForManagers, buildCompanyTeam } from "../../services/companyPerformance";
 import { buildTeamReportFile } from "../../services/teamPerformanceDelivery";
 import { formatManagerDisplayName } from "../../services/managerDisplayName";
-import type { Access, LinkedManager } from "../access";
-import { periodState } from "../state";
-import { formatDuration, getWeakAreas, UZ_MONTHS, UZ_MONTHS_CAP } from "../reportText";
+import { findLinkedManager, type Access, type LinkedManager } from "../access";
+import { pendingInput } from "../pendingInput";
+import { defineInputHandler } from "../inputHandlers";
+import { cancelKeyboard } from "../keyboards/menuCallbacks";
+import { formatDuration, getWeakAreas, parseDate, UZ_MONTHS, UZ_MONTHS_CAP } from "../reportText";
 import { DEACTIVATED_TEXT, NOT_LINKED_TEXT } from "./dispatch";
 import { defineAction } from "./registry";
 import type { ActionContext } from "./types";
@@ -342,13 +344,69 @@ defineAction({
       const manager = await requireActiveManager(ctx);
       if (!manager) return;
     }
-    periodState.set(ctx.userId, { step: "from", adminMode });
+    await pendingInput.expect(ctx.userId, "period_from", { adminMode });
     await ctx.bot.sendMessage(
       ctx.chatId,
       `📅 Davr *boshlanish sanasini* KK.OO.YYYY formatida kiriting:\n\nMasalan: \`01.03.2026\``,
-      { parse_mode: "Markdown" }
+      { parse_mode: "Markdown", reply_markup: cancelKeyboard() }
     );
   },
+});
+
+// ---------------------------------------------------------------------------
+// /period dialog: two dates, answered as plain text
+// ---------------------------------------------------------------------------
+
+export const DATE_FORMAT_ERROR_TEXT = "❌ Sanani aniqlab bo'lmadi. *KK.OO.YYYY* formatida kiriting, masalan: `10.03.2026`";
+export const PERIOD_ORDER_ERROR_TEXT = "❌ Oxirgi sana boshidan oldin bo'la olmaydi.";
+
+export function formatDmy(d: Date): string {
+  return `${d.getDate().toString().padStart(2, "0")}.${(d.getMonth() + 1).toString().padStart(2, "0")}.${d.getFullYear()}`;
+}
+
+// A wrong date leaves the question open: the user simply types again.
+defineInputHandler("period_from", async ({ bot, chatId, userId, text, input, pending }) => {
+  const date = parseDate(text.trim());
+  if (!date) {
+    await bot.sendMessage(chatId, DATE_FORMAT_ERROR_TEXT, { parse_mode: "Markdown" });
+    return;
+  }
+  await pending.expect(userId, "period_to", { adminMode: input.payload.adminMode === true, from: date.toISOString() });
+  await bot.sendMessage(
+    chatId,
+    `✅ Boshi: *${formatDmy(date)}*\n\nEndi *oxirgi sana* kiriting:`,
+    { parse_mode: "Markdown", reply_markup: cancelKeyboard() }
+  );
+});
+
+defineInputHandler("period_to", async ({ bot, chatId, userId, telegramUserId, text, input, pending }) => {
+  const to = parseDate(text.trim());
+  if (!to) {
+    await bot.sendMessage(chatId, DATE_FORMAT_ERROR_TEXT, { parse_mode: "Markdown" });
+    return;
+  }
+  const from = new Date(String(input.payload.from));
+  await pending.cancel(userId);
+
+  if (to < from) {
+    await bot.sendMessage(chatId, PERIOD_ORDER_ERROR_TEXT);
+    return;
+  }
+
+  await bot.sendMessage(chatId, "⏳ Hisobot tuzilmoqda...");
+  const label = `${formatDmy(from)} — ${formatDmy(to)}`;
+
+  if (input.payload.adminMode === true) {
+    await sendAdminReport(bot, chatId, from, to, label);
+    return;
+  }
+
+  const manager = await findLinkedManager(telegramUserId);
+  if (!manager) {
+    await bot.sendMessage(chatId, "❌ Siz avtorizatsiya qilinmagansiz.");
+    return;
+  }
+  await bot.sendMessage(chatId, await buildReport(manager.id, from, to, label), { parse_mode: "HTML" });
 });
 
 defineAction({

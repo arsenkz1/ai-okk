@@ -3,9 +3,10 @@ import { summarizeError } from "../../services/errorSummary";
 import { bold } from "../../services/performanceReport";
 import { resolveAccess as resolveAccessFromDb, type Access } from "../access";
 import { runFromCallback } from "../actions/dispatch";
-import { getAction, SECTIONS, visibleActions, type SectionDefinition } from "../actions/registry";
+import { CANCEL_LABEL, getAction, SECTIONS, visibleActions, type SectionDefinition } from "../actions/registry";
 import type { ActionDefinition, SectionId } from "../actions/types";
 import { claimCallback as claimCallbackInRedis, claimCallbackAction as claimCallbackActionInRedis } from "../dedupe";
+import { pendingInput } from "../pendingInput";
 
 /**
  * Inline buttons of the menu: `m:<action>[:<arg>]`, `m:sec:<section>`,
@@ -22,12 +23,15 @@ const PART = /^[A-Za-z0-9_-]+$/;
 
 export type MenuCallback =
   | { kind: "section"; sectionId: SectionId }
+  | { kind: "cancel" }
   | { kind: "action"; actionId: string; arg: string | null; decision: "yes" | "no" | null };
 
 export function parseMenuCallback(data: string | undefined): MenuCallback | null {
   if (!data || !data.startsWith(MENU_CALLBACK_PREFIX) || Buffer.byteLength(data) > MAX_CALLBACK_BYTES) return null;
   const parts = data.slice(MENU_CALLBACK_PREFIX.length).split(":");
   if (parts.length === 0 || parts.length > 3 || !parts.every((part) => PART.test(part))) return null;
+
+  if (parts[0] === "cancel") return parts.length === 1 ? { kind: "cancel" } : null;
 
   if (parts[0] === "sec") {
     const section = SECTIONS.find((candidate) => candidate.id === parts[1]);
@@ -50,6 +54,12 @@ function encode(...parts: string[]): string {
 }
 
 export const sectionCallback = (sectionId: SectionId): string => encode("sec", sectionId);
+export const cancelCallback = (): string => encode("cancel");
+
+/** Under every question the bot asks: one button that drops the question. */
+export function cancelKeyboard(): TelegramBot.InlineKeyboardMarkup {
+  return { inline_keyboard: [[{ text: CANCEL_LABEL, callback_data: cancelCallback() }]] };
+}
 export const actionCallback = (actionId: string, arg?: string): string => (arg === undefined ? encode(actionId) : encode(actionId, arg));
 export const confirmCallback = (actionId: string, decision: "yes" | "no", arg?: string): string => (
   decision === "no" || arg === undefined ? encode(actionId, decision) : encode(actionId, decision, arg)
@@ -92,12 +102,14 @@ export interface MenuCallbackDependencies {
   claimCallback: (queryId: string) => Promise<boolean>;
   claimCallbackAction: (chatId: number, messageId: number, data: string) => Promise<boolean>;
   resolveAccess: (telegramUserId: string) => Promise<Access>;
+  cancelPendingInput: (userId: number) => Promise<boolean>;
 }
 
 const defaultDependencies: MenuCallbackDependencies = {
   claimCallback: claimCallbackInRedis,
   claimCallbackAction: claimCallbackActionInRedis,
   resolveAccess: resolveAccessFromDb,
+  cancelPendingInput: (userId) => pendingInput.cancel(userId),
 };
 
 type MenuBot = Pick<TelegramBot, "on" | "answerCallbackQuery" | "sendMessage" | "editMessageText" | "editMessageReplyMarkup">;
@@ -122,6 +134,14 @@ export function registerMenuCallbackHandler(bot: MenuBot, dependencies: Partial<
       const message = query.message;
       if (!message) return await answer({ text: UNKNOWN_BUTTON_TEXT });
       const chatId = message.chat.id;
+
+      if (parsed.kind === "cancel") {
+        await deps.cancelPendingInput(query.from.id);
+        await answer();
+        await bot.editMessageText(CONFIRM_DECLINED_TEXT, { chat_id: chatId, message_id: message.message_id }).catch(() => {});
+        return;
+      }
+
       const telegramUserId = String(query.from.id);
       const access = await deps.resolveAccess(telegramUserId);
 

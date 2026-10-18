@@ -19,17 +19,17 @@ import { registerRopHandlers } from "./handlers/rop";
 import { registerCallTaskReviewHandlers } from "./handlers/callTaskReview";
 import { registerPerformanceHandlers } from "./handlers/performance";
 import { installSafeTelegramSender } from "./safeTelegram";
-import { findLinkedManager, resolveAccess } from "./access";
+import { resolveAccess } from "./access";
 import { claimUpdate } from "./dedupe";
 import { installDefaultCommandMenu, syncCommandMenu } from "./commandMenu";
 import { mainMenuMarkup } from "./keyboards/mainMenu";
 import { handleLabelHit, resolveLabel } from "./keyboards/labelRouter";
 import { registerMenuCallbackHandler } from "./keyboards/menuCallbacks";
-import { aiSessions, awaitingCode, periodState } from "./state";
+import { aiSessions, awaitingCode } from "./state";
+import { pendingInput } from "./pendingInput";
+import { handlePendingInput } from "./inputHandlers";
 import "./actions";
-import { parseDate } from "./reportText";
 import { registerCommandActions } from "./actions/dispatch";
-import { buildReport, sendAdminReport } from "./actions/reports";
 import { sendDealDossier } from "./actions/deal";
 
 // ---------------------------------------------------------------------------
@@ -71,6 +71,12 @@ bot.on("message", async (msg) => {
     await handleLabelHit(bot, msg, labelHit);
     return;
   }
+
+  // ── State 0b: an answer to a question the bot asked ──────────────────────
+  // Lives in Redis, so it survives a redeploy; each kind of question has its
+  // own handler next to the action that asked it.
+  const pendingLookup = await pendingInput.lookup(userId);
+  if (pendingLookup.state !== "none" && await handlePendingInput(bot, msg, pendingLookup)) return;
 
   // ── State 1: Activation code entry ───────────────────────────────────────
   if (awaitingCode.has(userId)) {
@@ -130,59 +136,6 @@ bot.on("message", async (msg) => {
       { parse_mode: "Markdown", reply_markup: mainMenuMarkup(access) }
     );
     await syncCommandMenu(bot, msg.chat.id, access);
-    return;
-  }
-
-  // ── State 2: /period date input ───────────────────────────────────────────
-  if (periodState.has(userId)) {
-    const state = periodState.get(userId)!;
-    const date = parseDate(msg.text.trim());
-
-    if (!date) {
-      await bot.sendMessage(
-        msg.chat.id,
-        "❌ Sanani aniqlab bo'lmadi. *KK.OO.YYYY* formatida kiriting, masalan: `10.03.2026`",
-        { parse_mode: "Markdown" }
-      );
-      return;
-    }
-
-    if (state.step === "from") {
-      periodState.set(userId, { step: "to", from: date });
-      const d = date;
-      const dateStr = `${d.getDate().toString().padStart(2,"0")}.${(d.getMonth()+1).toString().padStart(2,"0")}.${d.getFullYear()}`;
-      await bot.sendMessage(
-        msg.chat.id,
-        `✅ Boshi: *${dateStr}*\n\nEndi *oxirgi sana* kiriting:`,
-        { parse_mode: "Markdown" }
-      );
-      return;
-    }
-
-    const from = state.from!;
-    const to = date;
-    periodState.delete(userId);
-
-    if (to < from) {
-      await bot.sendMessage(msg.chat.id, "❌ Oxirgi sana boshidan oldin bo'la olmaydi.");
-      return;
-    }
-
-    await bot.sendMessage(msg.chat.id, "⏳ Hisobot tuzilmoqda...");
-    const fmt = (d: Date) => `${d.getDate().toString().padStart(2,"0")}.${(d.getMonth()+1).toString().padStart(2,"0")}.${d.getFullYear()}`;
-    const label = `${fmt(from)} — ${fmt(to)}`;
-
-    if (state.adminMode) {
-      await sendAdminReport(bot, msg.chat.id, from, to, label);
-      return;
-    }
-
-    const manager = await findLinkedManager(tgId);
-    if (!manager) {
-      await bot.sendMessage(msg.chat.id, "❌ Siz avtorizatsiya qilinmagansiz.");
-      return;
-    }
-    await bot.sendMessage(msg.chat.id, await buildReport(manager.id, from, to, label), { parse_mode: "HTML" });
     return;
   }
 

@@ -87,14 +87,12 @@ test("a button tap on an action that needs arguments answers with the usage inst
   assert.equal(ran, 2);
 });
 
-test("cancel clears the date dialog and says so; a plain button does not touch it", async () => {
-  const { periodState } = require("../dist/bot/state");
+test("cancel drops the pending question and says so", async () => {
   const sent = [];
+  const cancelled = [];
   const bot = { sendMessage: async (chatId, text, options) => { sent.push({ text, options }); } };
   const msg = { chat: { id: 9 }, from: { id: 9 }, text: "Bekor qilish" };
-
-  periodState.set(9, { step: "from" });
-  await router.handleLabelHit(bot, msg, { kind: "cancel" });
-  assert.equal(periodState.has(9), false);
+  await router.handleLabelHit(bot, msg, { kind: "cancel" }, { pendingInput: { cancel: async (userId) => { cancelled.push(userId); return true; } } });
+  assert.deepEqual(cancelled, [9]);
   assert.equal(sent[0].text, router.CANCELLED_TEXT);
 });

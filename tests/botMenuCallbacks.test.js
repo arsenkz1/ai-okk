@@ -24,6 +24,9 @@ test("callback data parses into sections, actions, arguments and decisions", () 
   assert.deepEqual(menu.parseMenuCallback("m:inactivity_off:yes"), { kind: "action", actionId: "inactivity_off", arg: null, decision: "yes" });
   assert.deepEqual(menu.parseMenuCallback("m:rating_toggle:yes:12695650"), { kind: "action", actionId: "rating_toggle", arg: "12695650", decision: "yes" });
   assert.deepEqual(menu.parseMenuCallback("m:delete_team:no"), { kind: "action", actionId: "delete_team", arg: null, decision: "no" });
+  assert.deepEqual(menu.parseMenuCallback("m:cancel"), { kind: "cancel" });
+  assert.equal(menu.parseMenuCallback("m:cancel:x"), null);
+  assert.deepEqual(menu.cancelKeyboard().inline_keyboard, [[{ text: "Bekor qilish", callback_data: "m:cancel" }]]);
 });
 
 test("anything that is not a well-formed menu callback is ignored", () => {
@@ -71,6 +74,7 @@ function registerWith(deps) {
     claimCallback: async () => true,
     claimCallbackAction: async (chatId, messageId, data) => { const key = `${chatId}:${messageId}:${data}`; if (actionLocks.has(key)) return false; actionLocks.add(key); return true; },
     resolveAccess: async () => access(true, null),
+    cancelPendingInput: async () => true,
     ...deps,
   });
   return fake;
@@ -154,5 +158,14 @@ test("a failing action is logged; the query was already answered exactly once", 
   const originalError = console.error;
   console.error = () => {};
   try { await tap("m:test_cb_boom"); } finally { console.error = originalError; }
+  assert.equal(calls.answers.length, 1);
+});
+
+test("the cancel button drops the pending question and rewrites the prompt", async () => {
+  const cancelled = [];
+  const { calls, tap } = registerWith({ cancelPendingInput: async (userId) => { cancelled.push(userId); return true; } });
+  await tap("m:cancel");
+  assert.deepEqual(cancelled, [7]);
+  assert.equal(calls.edits.at(-1).text, menu.CONFIRM_DECLINED_TEXT);
   assert.equal(calls.answers.length, 1);
 });
