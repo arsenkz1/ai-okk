@@ -191,3 +191,11 @@ test("a dangerous action that still has to ask is not confirmed up front", async
   assert.deepEqual(asked, ["bot:pending:7"]);
   assert.equal(runs.some((r) => r.id === "test_cb_danger_input"), false);
 });
+
+test("an action run from a button sees the tapping user as the message author, not the bot", async () => {
+  const seen = [];
+  registry.defineAction({ id: "test_cb_from", section: "reports", roles: [], label: "t-from", async run(ctx) { seen.push({ from: ctx.message.from.id, chat: ctx.message.chat.id, user: ctx.userId }); } });
+  const { tap } = registerWith();
+  await tap("m:test_cb_from", 4242);
+  assert.deepEqual(seen, [{ from: 4242, chat: 100, user: 4242 }]);
+});

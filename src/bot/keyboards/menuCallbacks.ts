@@ -196,7 +196,10 @@ export function registerMenuCallbackHandler(bot: MenuBot, dependencies: Partial<
         telegramUserId,
         access,
         args: parsed.arg === null ? [] : [parsed.arg],
-        message,
+        // The message under the button was sent by the bot, so its `from` is
+        // the bot. Action bodies written for commands read the user from
+        // `msg.from`; they get the person who tapped.
+        message: { ...message, from: query.from },
       });
     } catch (error) {
       console.error("[MenuCallback] failed:", summarizeError(error));
