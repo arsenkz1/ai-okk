@@ -1,7 +1,7 @@
 import type TelegramBot from "node-telegram-bot-api";
 import { prisma } from "../../config/database";
 import { summarizeError } from "../../services/errorSummary";
-import { hasRole, resolveAccess, type Access } from "../access";
+import { hasRole, resolveAccess, type Access, type BotRole } from "../access";
 import { SECTIONS, visibleActions, type SectionDefinition } from "../actions/registry";
 
 /**
@@ -14,9 +14,29 @@ import { SECTIONS, visibleActions, type SectionDefinition } from "../actions/reg
  */
 
 const ENABLED_VALUES = new Set(["true", "1", "yes", "on"]);
+const KNOWN_ROLES: ReadonlySet<BotRole> = new Set<BotRole>(["admin", "rop", "teamlead", "manager"]);
 
+/** The global switch: `BOT_KEYBOARDS_ENABLED`. */
 export function keyboardsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return ENABLED_VALUES.has((env.BOT_KEYBOARDS_ENABLED ?? "").trim().toLowerCase());
+}
+
+/**
+ * `BOT_KEYBOARDS_ROLES`: a staged rollout. When set, only users holding one of
+ * the listed roles get the keyboard; the rest keep commands until the list
+ * grows. Empty or unset means everyone.
+ */
+export function keyboardRolloutRoles(env: NodeJS.ProcessEnv = process.env): Set<BotRole> | null {
+  const raw = (env.BOT_KEYBOARDS_ROLES ?? "").split(",").map((part) => part.trim().toLowerCase()).filter(Boolean);
+  const roles = new Set(raw.filter((part): part is BotRole => KNOWN_ROLES.has(part as BotRole)));
+  return roles.size > 0 ? roles : null;
+}
+
+/** Whether this user gets the keyboard right now. */
+export function keyboardsEnabledFor(access: Access, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!keyboardsEnabled(env) || access.roles.size === 0) return false;
+  const rollout = keyboardRolloutRoles(env);
+  return rollout === null || hasRole(access, ...rollout);
 }
 
 /** Sections this user may open, in menu order; empty sections are hidden. */
@@ -27,25 +47,12 @@ export function mainMenuSections(access: Access): SectionDefinition[] {
   ));
 }
 
-export const DASHBOARD_LABEL = "Dashboard";
-export const DEFAULT_DASHBOARD_URL = "https://qadam-dogovor.uz/reports/tg/";
-
-/** The admin dashboard, opened as a Telegram Mini App from the keyboard. */
-export function dashboardUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const configured = env.ADMIN_DASHBOARD_URL?.trim();
-  return configured && /^https:\/\//.test(configured) ? configured : DEFAULT_DASHBOARD_URL;
-}
-
-export function buildMainMenu(access: Access, env: NodeJS.ProcessEnv = process.env): TelegramBot.ReplyKeyboardMarkup {
+export function buildMainMenu(access: Access): TelegramBot.ReplyKeyboardMarkup {
   const sections = mainMenuSections(access);
   const body = sections.filter((section) => section.id !== "help");
   const help = sections.find((section) => section.id === "help");
 
   const keyboard: TelegramBot.KeyboardButton[][] = [];
-  // Administrators get the dashboard first, on its own row: a Mini App button
-  // opens the page inside Telegram and sends no text, so the router never
-  // sees it.
-  if (access.isAdmin) keyboard.push([{ text: DASHBOARD_LABEL, web_app: { url: dashboardUrl(env) } }]);
   for (let index = 0; index < body.length; index += 2) {
     keyboard.push(body.slice(index, index + 2).map((section) => ({ text: section.label })));
   }
@@ -57,7 +64,7 @@ export function buildMainMenu(access: Access, env: NodeJS.ProcessEnv = process.e
 export type MainMenuMarkup = TelegramBot.ReplyKeyboardMarkup | TelegramBot.ReplyKeyboardRemove;
 
 /** What to attach to a message: the menu, or an order to drop any old keyboard. */
-export function mainMenuMarkup(access: Access, enabled: boolean = keyboardsEnabled()): MainMenuMarkup {
+export function mainMenuMarkup(access: Access, enabled: boolean = keyboardsEnabledFor(access)): MainMenuMarkup {
   if (!enabled || access.roles.size === 0) return { remove_keyboard: true };
   return buildMainMenu(access);
 }
@@ -85,7 +92,10 @@ export async function refreshMainMenuForTelegramUser(bot: MenuBot, telegramUserI
   if (!keyboardsEnabled()) return false;
   const chatId = Number(telegramUserId);
   if (!Number.isSafeInteger(chatId)) return false;
-  return sendMainMenu(bot, chatId, await resolveAccess(telegramUserId), text);
+  const access = await resolveAccess(telegramUserId);
+  // A role change may move the user into or out of the rollout; either way
+  // the message carries the right markup (menu or removal).
+  return sendMainMenu(bot, chatId, access, text);
 }
 
 export async function refreshMainMenuForManager(bot: MenuBot, managerId: number, text = ROLE_CHANGED_TEXT): Promise<boolean> {

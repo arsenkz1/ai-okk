@@ -70,3 +70,23 @@ test("a section tap sends that section's keyboard; the help tap sends help with 
   await router.handleLabelHit(bot, { ...msg, text: "Kompaniya" }, router.resolveLabel("Kompaniya"), deps);
   assert.ok(sent.at(-1).text.includes("buyruqlar yo'q"), "a manager has nothing in the company section");
 });
+
+test("every execution and refusal leaves one log line naming the action, source and roles, never the text", async () => {
+  const lines = [];
+  const originalLog = console.log;
+  console.log = (line) => { lines.push(String(line)); };
+  try {
+    const bot = { sendMessage: async () => {} };
+    const action = registry.getAction("test_cmd");
+    await dispatch.execute(action, { bot, chatId: 1, userId: 7, telegramUserId: "7", access: access(false, active("MANAGER")), args: ["1"], source: "button", pending, message: { text: "secret words" } });
+    await dispatch.execute(action, { bot, chatId: 1, userId: 7, telegramUserId: "7", access: access(true, null), args: ["1"], source: "callback", pending });
+  } finally {
+    console.log = originalLog;
+  }
+  const menuLines = lines.filter((l) => l.startsWith("[BotMenu]"));
+  assert.deepEqual(menuLines, [
+    "[BotMenu] action=test_cmd source=button roles=manager args=1",
+    "[BotMenu] denied action=test_cmd source=callback roles=admin",
+  ]);
+  assert.equal(lines.some((l) => l.includes("secret words")), false);
+});

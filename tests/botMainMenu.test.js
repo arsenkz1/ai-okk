@@ -16,26 +16,23 @@ const access = (isAdmin, manager) => ({ telegramUserId: "7", isAdmin, manager, r
 const active = (role) => ({ role, isActive: true, id: 7, teamId: null });
 const rows = (markup) => markup.keyboard.map((row) => row.map((button) => button.text));
 
-test("each role gets its own sections, two per row, help last; admins get the dashboard first", () => {
+test("each role gets its own sections, two per row, help last; the main menu carries no links", () => {
   assert.deepEqual(rows(menu.buildMainMenu(access(false, active("MANAGER")))), [["Hisobotlar", "AI-murabbiy"], ["Yordam"]]);
   assert.deepEqual(rows(menu.buildMainMenu(access(false, active("TEAMLEAD")))), [["Hisobotlar", "AI-murabbiy"], ["Jamoa"], ["Yordam"]]);
   assert.deepEqual(rows(menu.buildMainMenu(access(false, active("ROP")))), [["Hisobotlar", "AI-murabbiy"], ["Kompaniya", "Feniks"], ["Yordam"]]);
-  assert.deepEqual(rows(menu.buildMainMenu(access(true, null))), [["Dashboard"], ["Hisobotlar", "Kompaniya"], ["Feniks", "Foydalanuvchilar"], ["Sinxronizatsiya"], ["Yordam"]]);
+  assert.deepEqual(rows(menu.buildMainMenu(access(true, null))), [["Hisobotlar", "Kompaniya"], ["Feniks", "Foydalanuvchilar"], ["Sinxronizatsiya"], ["Yordam"]]);
   assert.deepEqual(
     rows(menu.buildMainMenu(access(true, active("TEAMLEAD")))),
-    [["Dashboard"], ["Hisobotlar", "AI-murabbiy"], ["Jamoa", "Kompaniya"], ["Feniks", "Foydalanuvchilar"], ["Sinxronizatsiya"], ["Yordam"]],
+    [["Hisobotlar", "AI-murabbiy"], ["Jamoa", "Kompaniya"], ["Feniks", "Foydalanuvchilar"], ["Sinxronizatsiya"], ["Yordam"]],
   );
+  assert.equal(menu.buildMainMenu(access(true, null)).keyboard.flat().some((b) => b.web_app), false);
 });
 
-test("the dashboard button is a Mini App link, for admins only, with a configurable https address", () => {
-  const admin = menu.buildMainMenu(access(true, null), {});
-  assert.deepEqual(admin.keyboard[0], [{ text: "Dashboard", web_app: { url: "https://qadam-dogovor.uz/reports/tg/" } }]);
-  const custom = menu.buildMainMenu(access(true, null), { ADMIN_DASHBOARD_URL: "https://example.com/x " });
-  assert.equal(custom.keyboard[0][0].web_app.url, "https://example.com/x");
-  const insecure = menu.buildMainMenu(access(true, null), { ADMIN_DASHBOARD_URL: "http://example.com" });
-  assert.equal(insecure.keyboard[0][0].web_app.url, menu.DEFAULT_DASHBOARD_URL, "Telegram only opens https Mini Apps");
-  const rop = menu.buildMainMenu(access(false, active("ROP")));
-  assert.equal(rop.keyboard.flat().some((b) => b.web_app), false);
+test("the dashboard address is configurable and must be https", () => {
+  const dashboard = require("../dist/bot/keyboards/dashboard");
+  assert.deepEqual(dashboard.dashboardInlineButton({}), { text: "Dashboard", web_app: { url: "https://qadam-dogovor.uz/reports/tg/" } });
+  assert.equal(dashboard.dashboardUrl({ ADMIN_DASHBOARD_URL: "https://example.com/x " }), "https://example.com/x");
+  assert.equal(dashboard.dashboardUrl({ ADMIN_DASHBOARD_URL: "http://example.com" }), dashboard.DEFAULT_DASHBOARD_URL, "Telegram only opens https Mini Apps");
 });
 
 test("the keyboard is persistent and resized, never one-time", () => {
@@ -85,4 +82,22 @@ test("a role-change refresh sends nothing while keyboards are off", async () => 
   } finally {
     if (previous === undefined) delete process.env.BOT_KEYBOARDS_ENABLED; else process.env.BOT_KEYBOARDS_ENABLED = previous;
   }
+});
+
+test("the rollout list limits the keyboard to the named roles; without it everyone linked gets it", () => {
+  const on = { BOT_KEYBOARDS_ENABLED: "1" };
+  assert.equal(menu.keyboardRolloutRoles({}), null);
+  assert.equal(menu.keyboardRolloutRoles({ BOT_KEYBOARDS_ROLES: " , junk " }), null, "unknown names do not restrict anyone");
+  assert.deepEqual([...menu.keyboardRolloutRoles({ BOT_KEYBOARDS_ROLES: "Admin, rop" })], ["admin", "rop"]);
+
+  const manager = access(false, active("MANAGER"));
+  const admin = access(true, null);
+  assert.equal(menu.keyboardsEnabledFor(manager, on), true);
+  assert.equal(menu.keyboardsEnabledFor(manager, { ...on, BOT_KEYBOARDS_ROLES: "admin" }), false);
+  assert.equal(menu.keyboardsEnabledFor(admin, { ...on, BOT_KEYBOARDS_ROLES: "admin" }), true);
+  assert.equal(menu.keyboardsEnabledFor(access(true, active("MANAGER")), { ...on, BOT_KEYBOARDS_ROLES: "manager" }), true, "an admin who is also a manager rides the manager stage");
+  assert.equal(menu.keyboardsEnabledFor(manager, { BOT_KEYBOARDS_ENABLED: "false", BOT_KEYBOARDS_ROLES: "manager" }), false);
+  assert.equal(menu.keyboardsEnabledFor(access(false, null), on), false);
+
+  assert.deepEqual(menu.mainMenuMarkup(manager, menu.keyboardsEnabledFor(manager, { ...on, BOT_KEYBOARDS_ROLES: "admin" })), { remove_keyboard: true });
 });

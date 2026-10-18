@@ -7,6 +7,7 @@ import { getAction, SECTIONS, visibleActions, type SectionDefinition } from "../
 import type { ActionDefinition, SectionId } from "../actions/types";
 import { claimCallback as claimCallbackInRedis, claimCallbackAction as claimCallbackActionInRedis } from "../dedupe";
 import { pendingInput } from "../pendingInput";
+import { dashboardInlineButton } from "./dashboard";
 
 /**
  * Inline buttons of the menu: `m:<action>[:<arg>]`, `m:sec:<section>`,
@@ -74,6 +75,8 @@ export async function sectionKeyboard(access: Access, section: SectionDefinition
     }
   }
   const rows: TelegramBot.InlineKeyboardButton[][] = [];
+  // The admin dashboard heads the reports section: a Mini App, not an action.
+  if (section.id === "reports" && access.isAdmin) rows.push([dashboardInlineButton()]);
   for (let index = 0; index < buttons.length; index += BUTTONS_PER_ROW) rows.push(buttons.slice(index, index + BUTTONS_PER_ROW));
   return { inline_keyboard: rows };
 }

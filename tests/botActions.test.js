@@ -166,7 +166,8 @@ test("with keyboards on, help names the button next to each command and the gree
   const named = { ...active("MANAGER"), name: "Aziza" };
   assert.ok(help.startManagerText("Aziza", true).includes("Pastdagi menyudan"));
   assert.ok(help.startManagerText("Aziza", false).includes("/report — bugun"));
-  assert.deepEqual(help.startReply(access(false, named)), { text: help.startManagerText("Aziza"), awaitCode: false });
+  assert.deepEqual(help.startReply(access(false, named), false), { text: help.startManagerText("Aziza", false), awaitCode: false });
+  assert.deepEqual(help.startReply(access(false, named), true), { text: help.startManagerText("Aziza", true), awaitCode: false });
   assert.deepEqual(help.startReply(access(true, null)), { text: help.START_ADMIN_TEXT, awaitCode: false });
   assert.deepEqual(help.startReply(access(false, null)), { text: help.START_CODE_PROMPT_TEXT, awaitCode: true });
 });

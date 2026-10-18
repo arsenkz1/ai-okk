@@ -122,7 +122,20 @@ test("the AI section offers the periods, and the stop button only during a sessi
 test("the reports section lists the report buttons in order, with the deal question and own stats", async () => {
   const reports = registry.SECTIONS.find((s) => s.id === "reports");
   // Actions defined by this test file live in the same section; leave them out.
-  const real = (markup) => markup.inline_keyboard.flat().map((b) => b.callback_data).filter((d) => !d.startsWith("m:test_"));
+  const real = (markup) => markup.inline_keyboard.flat().map((b) => b.callback_data).filter((d) => d && !d.startsWith("m:test_"));
   assert.deepEqual(real(await sectionKeyboard(access(false, active("MANAGER")), reports, 1)), ["m:report", "m:week", "m:month", "m:period", "m:errors", "m:deal", "m:my_stats"]);
   assert.deepEqual(real(await sectionKeyboard(access(true, null), reports, 1)), ["m:report", "m:week", "m:month", "m:period", "m:errors", "m:deal", "m:team_stats"]);
+});
+
+test("the admin's reports section opens with the dashboard Mini App; nobody else sees it", async () => {
+  const reports = registry.SECTIONS.find((s) => s.id === "reports");
+  const admin = (await sectionKeyboard(access(true, null), reports, 1)).inline_keyboard;
+  assert.deepEqual(admin[0], [{ text: "Dashboard", web_app: { url: "https://qadam-dogovor.uz/reports/tg/" } }]);
+  assert.equal(admin[1][0].callback_data, "m:report");
+  for (const a of [access(false, active("MANAGER")), access(false, active("TEAMLEAD")), access(false, active("ROP"))]) {
+    const rows = (await sectionKeyboard(a, reports, 1)).inline_keyboard;
+    assert.equal(rows.flat().some((b) => b.web_app), false);
+  }
+  const company = registry.SECTIONS.find((s) => s.id === "company");
+  assert.equal((await sectionKeyboard(access(true, null), company, 1)).inline_keyboard.flat().some((b) => b.web_app), false, "only the reports section");
 });

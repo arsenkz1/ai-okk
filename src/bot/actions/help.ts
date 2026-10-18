@@ -1,7 +1,7 @@
 import { hasRole, type Access } from "../access";
 import { awaitingCode } from "../state";
 import { syncCommandMenu } from "../commandMenu";
-import { keyboardsEnabled, mainMenuMarkup, mainMenuSections } from "../keyboards/mainMenu";
+import { keyboardsEnabledFor, mainMenuMarkup, mainMenuSections } from "../keyboards/mainMenu";
 import { allActions, defineAction, isAllowed, visibleActions } from "./registry";
 import type { ActionDefinition } from "./types";
 
@@ -40,7 +40,7 @@ export function commandLines(action: ActionDefinition, keyboards: boolean): stri
  * Help is built from the registry, so it lists exactly what this user may
  * run: sections with their commands, then the commands that have no button.
  */
-export function helpTextFor(access: Access, keyboards: boolean = keyboardsEnabled()): string {
+export function helpTextFor(access: Access, keyboards: boolean = keyboardsEnabledFor(access)): string {
   if (access.roles.size === 0) return UNLINKED_HELP_TEXT;
 
   const lines: string[] = [helpHeader(access), ""];
@@ -69,7 +69,7 @@ export const START_ADMIN_TEXT = `👋 Salom, Admin!\n\nBarcha buyruqlarni ko'ris
 export const START_CODE_PROMPT_TEXT =
   `👋 Salom!\n\nBoshlash uchun 6 xonali kodni kiriting.\nUni menejerlar jadvalidan topishingiz mumkin (rahbaringizdan so'rang).`;
 
-export function startManagerText(name: string, keyboards: boolean = keyboardsEnabled()): string {
+export function startManagerText(name: string, keyboards: boolean): string {
   // With the keyboard on screen the greeting points at it; without it the
   // historical command list stays.
   if (keyboards) return `👋 Salom, ${name}!\n\nPastdagi menyudan kerakli bo'limni tanlang.\nBarcha buyruqlar: /help`;
@@ -94,8 +94,8 @@ export function startManagerText(name: string, keyboards: boolean = keyboardsEna
  * A linked manager (active or not) is greeted by name; an administrator
  * without a link gets the admin greeting; anyone else is asked for a code.
  */
-export function startReply(access: Access): { text: string; awaitCode: boolean } {
-  if (access.manager) return { text: startManagerText(access.manager.name), awaitCode: false };
+export function startReply(access: Access, keyboards: boolean = keyboardsEnabledFor(access)): { text: string; awaitCode: boolean } {
+  if (access.manager) return { text: startManagerText(access.manager.name, keyboards), awaitCode: false };
   if (access.isAdmin) return { text: START_ADMIN_TEXT, awaitCode: false };
   return { text: START_CODE_PROMPT_TEXT, awaitCode: true };
 }

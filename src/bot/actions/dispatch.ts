@@ -49,11 +49,18 @@ export function needsMoreArgs(action: ActionDefinition, args: readonly string[])
   return action.command !== undefined && args.length < requiredArgCount(action.command.usage);
 }
 
+/** Role names for the log line; never the message text. */
+function rolesOf(access: Access): string {
+  return [...access.roles].sort().join(",") || "none";
+}
+
 export async function execute(action: ActionDefinition, ctx: ActionContext): Promise<void> {
   if (!isAllowed(action, ctx.access)) {
+    console.log(`[BotMenu] denied action=${action.id} source=${ctx.source} roles=${rolesOf(ctx.access)}`);
     await ctx.bot.sendMessage(ctx.chatId, denialText(action, ctx.access));
     return;
   }
+  console.log(`[BotMenu] action=${action.id} source=${ctx.source} roles=${rolesOf(ctx.access)} args=${ctx.args.length}`);
   // A command always arrives with its arguments matched; a button may not.
   // An action with a multi-step collector lets it decide; one that knows the
   // single value to ask for asks; any other answers with the usage line
