@@ -1,6 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+// Each pipeline's own "квалифицирован" stage: a sweep now checks the stage, not just the pipeline.
+const QUALIFIED_STATUS_BY_PIPELINE = { 6909890: 58160726, 9055778: 72917586, 9888398: 78631750, 11071910: 86963446 };
+
 const {
   runNightlyInactivitySweep,
   claimNightlySweepDay,
@@ -11,7 +14,7 @@ const {
 
 const now = new Date("2026-09-18T17:00:00.000Z"); // 22:00 Almaty
 const idle = (id, hours, pipelineId = 6909890) => ({
-  id, createdAt: now, updatedAt: new Date(now.getTime() - hours * 3600 * 1000), pipelineId, statusId: 58160726, responsibleUserId: 1, name: null,
+  id, createdAt: now, updatedAt: new Date(now.getTime() - hours * 3600 * 1000), pipelineId, statusId: QUALIFIED_STATUS_BY_PIPELINE[pipelineId] ?? 58160726, responsibleUserId: 1, name: null,
 });
 const PRODUCTION = { AMOCRM_INACTIVITY_WORKER_ENABLED: "true", TESTING_LEADS_MOVEMENT: "false" };
 
@@ -122,6 +125,15 @@ test("the operator report accounts for everything that did not move", () => {
   assert.equal(text.includes("переведено 5 из 10 (проверено: 900)"), true);
   assert.equal(text.includes("было касание за последние 3 дня: 2"), true);
   assert.equal(text.includes("не удалось проверить историю, сделки не тронуты: 1"), true);
-  assert.equal(text.includes("не обработано: 1. Продолжит завтрашняя сверка."), true);
+  assert.equal(text.includes("не обработано: 1. Продолжит следующая сверка."), true);
   assert.equal(formatNightlySweepReport({ kind: "skipped", reason: "stopped" }), null, "a skipped night sends nothing");
+});
+
+test("a sweep stopped by the daily cap says how many deals wait for the next days", () => {
+  const text = formatNightlySweepReport({
+    kind: "swept", scanned: 400, candidates: 120,
+    result: { moved: 50, notMoved: 0, uncertain: 0, skippedRecentTouch: 0, guardFailed: 0, movedCandidates: [], stoppedAt: { index: 50, reason: "daily_cap" } },
+  });
+  assert.equal(text.includes("переведено 50 из 120"), true);
+  assert.equal(text.includes("Суточный лимит переводов исчерпан; не перенесено: 70."), true);
 });

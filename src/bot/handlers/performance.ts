@@ -46,6 +46,7 @@ import { defineAction } from "../actions/registry";
 import { registerCommandActions } from "../actions/dispatch";
 import { createChoiceCollect, createPickManagerCollect, createSetPlanCollect, DAY_OPTIONS, planViewMonthOptions, splitPacked } from "../actions/pickerFlows";
 import { actionCallback } from "../keyboards/menuCallbacks";
+import { dailyLeadInactivityMovementLimit } from "../../services/leadInactivityDailyCap";
 
 /**
  * Plan management and the call/revenue/plan report for a manager, a team lead's
@@ -260,7 +261,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
         );
         return;
       }
-      await bot.sendMessage(msg.chat.id, formatSweepProposal(started.pending, started.scanned), {
+      await bot.sendMessage(msg.chat.id, formatSweepProposal(started.pending, started.scanned, state.dailyCapDisabled ? null : dailyLeadInactivityMovementLimit()), {
         reply_markup: buildSweepKeyboard(started.pending.token),
       });
     } catch (error) {
@@ -309,7 +310,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
       pattern: /^\/inactivity_limit(?:_(on|off))?$/, usage: "/inactivity_limit[_on|_off]", description: "kunlik limit holati va o'zgartirish",
       menu: [
         { command: "inactivity_limit", description: "limit holatini ko'rish" },
-        { command: "inactivity_limit_on", description: "kuniga 100 ta ko'chirish limitini yoqish" },
+        { command: "inactivity_limit_on", description: "kunlik ko'chirish limitini yoqish (vorker va sverkalar uchun umumiy)" },
         { command: "inactivity_limit_off", description: "kunlik limitni o'chirish (cheklovsiz)" },
       ],
     },

@@ -1,5 +1,11 @@
 import type { AmoInactivityLead, AmoInactivityMoveOutcome } from "./leadInactivityAmoClient";
-import { INACTIVITY_MS, SOURCE_PIPELINE_IDS, TARGET_PIPELINE_ID, TARGET_STATUS_ID } from "./leadInactivityPolicy";
+import {
+  INACTIVITY_MS,
+  inactivityStagePriority,
+  SOURCE_PIPELINE_IDS,
+  TARGET_PIPELINE_ID,
+  TARGET_STATUS_ID,
+} from "./leadInactivityPolicy";
 
 /**
  * Sweep of idle leads straight from amoCRM.
@@ -28,7 +34,12 @@ export interface SweepCandidate {
   lastTouchedAt: Date;
 }
 
-/** Leads on an eligible stage idle for at least the window, longest-idle first. */
+/**
+ * Leads on an eligible stage idle for at least the window, in the worker's
+ * stage priority ("взято в работу" before "квалифицирован"), longest-idle
+ * first inside a stage group. With a daily cap the order decides who moves
+ * today, so it must be the business order.
+ */
 export function selectSweepCandidates(
   leads: readonly AmoInactivityLead[],
   now: Date,
@@ -42,6 +53,7 @@ export function selectSweepCandidates(
     if (seen.has(lead.id)) continue;
     seen.add(lead.id);
     if (!SOURCE_PIPELINE_IDS.includes(lead.pipelineId)) continue;
+    if (inactivityStagePriority(lead.pipelineId, lead.statusId) === null) continue;
     if (lead.updatedAt.getTime() > cutoff) continue;
     candidates.push({
       leadId: lead.id,
@@ -51,9 +63,12 @@ export function selectSweepCandidates(
     });
   }
 
-  // Longest-idle first: if amoCRM starts failing part-way, the leads that most
-  // needed moving are the ones already done.
-  return candidates.sort((left, right) => left.lastTouchedAt.getTime() - right.lastTouchedAt.getTime());
+  // Longest-idle first within a stage group: if amoCRM starts failing
+  // part-way, the leads that most needed moving are the ones already done.
+  const rank = (candidate: SweepCandidate): number => inactivityStagePriority(candidate.pipelineId, candidate.statusId) ?? Number.MAX_SAFE_INTEGER;
+  return candidates.sort((left, right) => (
+    rank(left) - rank(right) || left.lastTouchedAt.getTime() - right.lastTouchedAt.getTime()
+  ));
 }
 
 export interface SweepCountByPipeline {
@@ -111,7 +126,14 @@ export interface SweepMoveResult {
   guardFailed: number;
   movedCandidates: SweepCandidate[];
   /** Set when the run was cut short; nothing after this index was attempted. */
-  stoppedAt?: { index: number; reason: "uncertain" | "stopped" };
+  stoppedAt?: { index: number; reason: "uncertain" | "stopped" | "daily_cap" };
+}
+
+/** One reserved place in the day's shared move budget. */
+export interface DailySlotTicket {
+  confirm(): Promise<void>;
+  release(): Promise<void>;
+  markUncertain(): Promise<void>;
 }
 
 export interface SweepMoveDependencies {
@@ -124,6 +146,11 @@ export interface SweepMoveDependencies {
   hasRecentTouch?(candidate: SweepCandidate): Promise<boolean>;
   onMoved?(candidate: SweepCandidate): Promise<void>;
   onUncertain?(candidate: SweepCandidate): Promise<void>;
+  /**
+   * Takes a place in the day's move budget, the one the worker uses too.
+   * null: the budget is spent and the sweep stops. Absent: no budget applies.
+   */
+  reserveDailySlot?(candidate: SweepCandidate): Promise<DailySlotTicket | null>;
 }
 
 async function bestEffort(task: (() => Promise<void>) | undefined): Promise<void> {
@@ -175,20 +202,35 @@ export async function moveSweepCandidates(
       }
     }
 
+    // The budget is taken only for a lead that is really about to move, after
+    // the touch fence, so skipped leads never spend a place.
+    let ticket: DailySlotTicket | null = null;
+    if (dependencies.reserveDailySlot) {
+      ticket = await dependencies.reserveDailySlot(candidate);
+      if (!ticket) {
+        result.stoppedAt = { index, reason: "daily_cap" };
+        break;
+      }
+    }
+
     const outcome = await dependencies.moveLeadToTarget(candidate.leadId, target);
     if (outcome.kind === "confirmed") {
       result.moved += 1;
       result.movedCandidates.push(candidate);
+      await bestEffort(ticket ? () => ticket!.confirm() : undefined);
       await bestEffort(dependencies.onMoved && (() => dependencies.onMoved!(candidate)));
     } else if (outcome.kind === "uncertain") {
       result.uncertain += 1;
       result.stoppedAt = { index, reason: "uncertain" };
+      // Counted against the budget: the move may well have happened.
+      await bestEffort(ticket ? () => ticket!.markUncertain() : undefined);
       await bestEffort(dependencies.onUncertain && (() => dependencies.onUncertain!(candidate)));
       break;
     } else {
       // The lead was touched or moved between listing and PATCH; that is the
-      // fresh read doing its job, not an error.
+      // fresh read doing its job, not an error. Its place goes back.
       result.notMoved += 1;
+      await bestEffort(ticket ? () => ticket!.release() : undefined);
     }
   }
   return result;

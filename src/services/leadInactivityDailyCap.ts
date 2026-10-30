@@ -1,6 +1,19 @@
 export const ALMATY_TIME_ZONE = "Asia/Almaty";
-/** Maximum confirmed or uncertain moves in one operational day beginning at 14:00 Almaty. */
-export const DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT = 100;
+/**
+ * Default maximum of confirmed or uncertain moves in one operational day
+ * beginning at 14:00 Almaty, shared by the worker and both sweeps.
+ */
+export const DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT = 50;
+/** The slot table's CHECK constraint allows slot numbers 1–100 (migration 20260804170000). */
+export const MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT = 100;
+
+/** `LEAD_INACTIVITY_DAILY_LIMIT` (1–100) overrides the default; anything else is ignored. */
+export function dailyLeadInactivityMovementLimit(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.LEAD_INACTIVITY_DAILY_LIMIT?.trim();
+  if (!raw || !/^\d{1,3}$/.test(raw)) return DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT;
+  const value = Number(raw);
+  return value >= 1 && value <= MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT ? value : DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT;
+}
 /** Capacity retained only until the forward migration's first operational-day boundary. */
 export const LEGACY_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT = 50;
 export const DAILY_MOVEMENT_OPERATIONAL_BUCKET_PREFIX = "operational:";
@@ -78,7 +91,7 @@ export function almatyDailyMovementBucket(now: Date, operationalStartDate: strin
 }
 
 export function dailyMovementLimitForBucket(bucketDate: string): number {
-  if (isOperationalDailyMovementBucket(bucketDate)) return DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT;
+  if (isOperationalDailyMovementBucket(bucketDate)) return dailyLeadInactivityMovementLimit();
   if (isIsoCalendarDate(bucketDate)) return LEGACY_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT;
   throw new Error("daily movement bucket date is invalid");
 }

@@ -54,7 +54,7 @@ test("renders amoCRM arrivals with every origin pipeline, and names unknown ones
     total: 6,
     byPipeline: [
       { pipelineId: 6909890, count: 3 },
-      { pipelineId: 10734414, count: 2 },
+      { pipelineId: 8425422, count: 2 },
     ],
     unknownOrigin: 1,
   });

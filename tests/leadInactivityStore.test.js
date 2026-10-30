@@ -274,8 +274,9 @@ test("accepts new operational capacity buckets but rejects malformed bucket iden
   const persistence = new MemoryPersistence();
   const store = createLeadInactivityStore(persistence);
 
-  await store.ensureDailyMovementSlots("operational:2026-08-05", 100);
-  assert.deepEqual(persistence.dailyMovementEnsures, [{ bucketDate: "operational:2026-08-05", limit: 100 }]);
+  await store.ensureDailyMovementSlots("operational:2026-08-05", 50);
+  assert.deepEqual(persistence.dailyMovementEnsures, [{ bucketDate: "operational:2026-08-05", limit: 50 }]);
+  await assert.rejects(store.ensureDailyMovementSlots("operational:2026-08-05", 100), /limit must be exactly 50/);
   await assert.rejects(store.ensureDailyMovementSlots("2026-08-05", 100), /limit must be exactly 50/);
   await assert.rejects(store.ensureDailyMovementSlots("operational:2026-02-30", 100), /bucket date is invalid/);
   await assert.rejects(store.ensureDailyMovementSlots("operational:2026-8-5", 100), /bucket date is invalid/);

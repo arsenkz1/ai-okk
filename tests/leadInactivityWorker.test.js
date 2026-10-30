@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { createLeadInactivityWorker } = require("../dist/workers/leadInactivityWorker");
 const { INACTIVITY_STAGE_PRIORITY_GROUPS } = require("../dist/services/leadInactivityPolicy");
 
-const [OZHOP_STAGES, QUALIFIED_STAGES, TAKEN_IN_WORK_STAGES] = INACTIVITY_STAGE_PRIORITY_GROUPS;
+const [TAKEN_IN_WORK_STAGES, QUALIFIED_STAGES] = INACTIVITY_STAGE_PRIORITY_GROUPS;
 const NOW = new Date("2026-07-19T12:00:00.000Z");
 
 function watch(leadId = 100, overrides = {}) {
@@ -309,15 +309,15 @@ test("marks an existing watch outside scope when the fresh amoCRM lead leaves th
   assert.deepEqual(calls.completeAudit, [{ auditId: "audit-100", outcome: { kind: "skipped", slotNumber: null } }]);
 });
 
-test("prioritizes OZHOP, then qualified, then taken-in-work even when lower stages are older", async () => {
+test("prioritizes taken-in-work, then qualified, even when qualified stages are older; never touches OZHOP", async () => {
   const priorityQueries = [];
   const claimed = new Map([
-    [301, watch(301, { pipelineId: 6909890, statusId: 58160902, dueAt: new Date("2026-07-19T11:55:00.000Z") })],
-    [302, watch(302, { pipelineId: 9055778, statusId: 72919958, dueAt: new Date("2026-07-19T11:50:00.000Z") })],
+    [101, watch(101, { pipelineId: 6909890, statusId: 58160718, dueAt: new Date("2026-07-19T11:55:00.000Z") })],
+    [102, watch(102, { pipelineId: 9055778, statusId: 72917582, dueAt: new Date("2026-07-19T11:50:00.000Z") })],
     [201, watch(201, { pipelineId: 6909890, statusId: 58160726, dueAt: new Date("2026-07-19T11:40:00.000Z") })],
     [202, watch(202, { pipelineId: 9055778, statusId: 72917586, dueAt: new Date("2026-07-19T11:39:00.000Z") })],
-    [101, watch(101, { pipelineId: 6909890, statusId: 58160718, dueAt: new Date("2026-07-19T11:30:00.000Z") })],
-    [102, watch(102, { pipelineId: 9055778, statusId: 72917582, dueAt: new Date("2026-07-19T11:29:00.000Z") })],
+    // OZHOP left the rollout: even the oldest due watch there is never picked.
+    [301, watch(301, { pipelineId: 6909890, statusId: 58160902, dueAt: new Date("2026-07-19T11:30:00.000Z") })],
   ]);
   const { store, amo, calls } = fixture({
     claimed,
@@ -344,28 +344,25 @@ test("prioritizes OZHOP, then qualified, then taken-in-work even when lower stag
 
   const result = await worker.runOnce();
 
-  assert.deepEqual(result, { scanned: 6, claimed: 6, moved: 6, deferred: 0, uncertain: 0, failed: 0 });
-  assert.deepEqual(calls.claim, [302, 301, 202, 201, 102, 101]);
+  assert.deepEqual(result, { scanned: 4, claimed: 4, moved: 4, deferred: 0, uncertain: 0, failed: 0 });
+  assert.deepEqual(calls.claim, [102, 101, 202, 201]);
   assert.deepEqual(priorityQueries, [
-    { limit: 50, stagePairs: OZHOP_STAGES },
+    { limit: 50, stagePairs: TAKEN_IN_WORK_STAGES },
     { limit: 48, stagePairs: QUALIFIED_STAGES },
-    { limit: 46, stagePairs: TAKEN_IN_WORK_STAGES },
   ]);
-  assert.deepEqual(OZHOP_STAGES[0], { pipelineId: 6909890, statusId: 58160902 });
-  assert.deepEqual(QUALIFIED_STAGES[0], { pipelineId: 6909890, statusId: 58160726 });
+  assert.equal(INACTIVITY_STAGE_PRIORITY_GROUPS.length, 2);
   assert.deepEqual(TAKEN_IN_WORK_STAGES[0], { pipelineId: 6909890, statusId: 58160718 });
+  assert.deepEqual(QUALIFIED_STAGES[0], { pipelineId: 6909890, statusId: 58160726 });
 });
 
-test("falls through to qualified and taken-in-work only when higher priority groups have no due watches", async () => {
+test("falls through to qualified only when taken-in-work has no due watches", async () => {
   const priorityQueries = [];
   const claimed = new Map([
     [201, watch(201, { pipelineId: 6909890, statusId: 58160726 })],
-    [101, watch(101, { pipelineId: 6909890, statusId: 58160718 })],
-    [102, watch(102, { pipelineId: 9055778, statusId: 72917582 })],
+    [202, watch(202, { pipelineId: 9055778, statusId: 72917586 })],
   ]);
   const idsByStage = new Map([
-    ["6909890:58160726", [201]],
-    ["6909890:58160718", [101]], ["9055778:72917582", [102]],
+    ["6909890:58160726", [201]], ["9055778:72917586", [202]],
   ]);
   const { store, amo, calls } = fixture({
     claimed,
@@ -386,27 +383,26 @@ test("falls through to qualified and taken-in-work only when higher priority gro
 
   const result = await worker.runOnce();
 
-  assert.deepEqual(result, { scanned: 3, claimed: 3, moved: 3, deferred: 0, uncertain: 0, failed: 0 });
-  assert.deepEqual(calls.claim, [201, 101, 102]);
+  assert.deepEqual(result, { scanned: 2, claimed: 2, moved: 2, deferred: 0, uncertain: 0, failed: 0 });
+  assert.deepEqual(calls.claim, [201, 202]);
   const statusIdsOf = (stages) => stages.map((stage) => stage.statusId);
   assert.deepEqual(priorityQueries.map(({ limit, stagePairs }) => ({ limit, statusIds: statusIdsOf(stagePairs) })), [
-    { limit: 50, statusIds: statusIdsOf(OZHOP_STAGES) },
+    { limit: 50, statusIds: statusIdsOf(TAKEN_IN_WORK_STAGES) },
     { limit: 50, statusIds: statusIdsOf(QUALIFIED_STAGES) },
-    { limit: 49, statusIds: statusIdsOf(TAKEN_IN_WORK_STAGES) },
   ]);
 });
 
-test("does not let a second replica move a lower-priority watch while the first is processing OZHOP", async () => {
+test("does not let a second replica move a lower-priority watch while the first is processing a taken-in-work watch", async () => {
   const claimed = new Map([
-    [301, watch(301, { pipelineId: 6909890, statusId: 58160902, dueAt: new Date("2026-07-19T11:58:00.000Z") })],
-    [101, watch(101, { pipelineId: 6909890, statusId: 58160718, dueAt: new Date("2026-07-19T11:59:00.000Z") })],
+    [301, watch(301, { pipelineId: 6909890, statusId: 58160718, dueAt: new Date("2026-07-19T11:58:00.000Z") })],
+    [101, watch(101, { pipelineId: 6909890, statusId: 58160726, dueAt: new Date("2026-07-19T11:59:00.000Z") })],
   ]);
   const claimedIds = new Set();
   const workerLease = { token: null };
-  let markOzhopReadStarted;
-  let allowOzhopRead;
-  const ozhopReadStarted = new Promise((resolve) => { markOzhopReadStarted = resolve; });
-  const ozhopReadCanFinish = new Promise((resolve) => { allowOzhopRead = resolve; });
+  let markFirstReadStarted;
+  let allowFirstRead;
+  const firstReadStarted = new Promise((resolve) => { markFirstReadStarted = resolve; });
+  const firstReadCanFinish = new Promise((resolve) => { allowFirstRead = resolve; });
   const { store, amo, calls } = fixture({
     claimed,
     store: {
@@ -439,8 +435,8 @@ test("does not let a second replica move a lower-priority watch while the first 
       readLead: async (leadId) => {
         const claimedWatch = claimed.get(leadId);
         if (leadId === 301) {
-          markOzhopReadStarted();
-          await ozhopReadCanFinish;
+          markFirstReadStarted();
+          await firstReadCanFinish;
         }
         return lead(leadId, { pipelineId: claimedWatch.pipelineId, statusId: claimedWatch.statusId });
       },
@@ -464,27 +460,27 @@ test("does not let a second replica move a lower-priority watch while the first 
   });
 
   const firstRun = first.runOnce();
-  await ozhopReadStarted;
+  await firstReadStarted;
   const secondResult = await second.runOnce();
 
   assert.deepEqual(secondResult, { scanned: 0, claimed: 0, moved: 0, deferred: 0, uncertain: 0, failed: 0 });
   assert.deepEqual(calls.move, []);
 
-  allowOzhopRead();
+  allowFirstRead();
   const firstResult = await firstRun;
   assert.deepEqual(firstResult, { scanned: 2, claimed: 2, moved: 2, deferred: 0, uncertain: 0, failed: 0 });
 });
 
 test("does not claim a preselected lower-priority watch after a replacement owner takes the expired run lease", async () => {
   const claimed = new Map([
-    [301, watch(301, { pipelineId: 6909890, statusId: 58160902 })],
-    [101, watch(101, { pipelineId: 6909890, statusId: 58160718 })],
+    [301, watch(301, { pipelineId: 6909890, statusId: 58160718 })],
+    [101, watch(101, { pipelineId: 6909890, statusId: 58160726 })],
   ]);
   const workerLease = { token: null };
-  let markOzhopReadStarted;
-  let allowOzhopRead;
-  const ozhopReadStarted = new Promise((resolve) => { markOzhopReadStarted = resolve; });
-  const ozhopReadCanFinish = new Promise((resolve) => { allowOzhopRead = resolve; });
+  let markFirstReadStarted;
+  let allowFirstRead;
+  const firstReadStarted = new Promise((resolve) => { markFirstReadStarted = resolve; });
+  const firstReadCanFinish = new Promise((resolve) => { allowFirstRead = resolve; });
   const { store, amo, calls } = fixture({
     claimed,
     store: {
@@ -515,8 +511,8 @@ test("does not claim a preselected lower-priority watch after a replacement owne
       readLead: async (leadId) => {
         const claimedWatch = claimed.get(leadId);
         if (leadId === 301) {
-          markOzhopReadStarted();
-          await ozhopReadCanFinish;
+          markFirstReadStarted();
+          await firstReadCanFinish;
         }
         return lead(leadId, { pipelineId: claimedWatch.pipelineId, statusId: claimedWatch.statusId });
       },
@@ -532,9 +528,9 @@ test("does not claim a preselected lower-priority watch after a replacement owne
   });
 
   const firstRun = worker.runOnce();
-  await ozhopReadStarted;
+  await firstReadStarted;
   workerLease.token = "replacement-owner-after-expiry";
-  allowOzhopRead();
+  allowFirstRead();
 
   assert.deepEqual(await firstRun, { scanned: 2, claimed: 1, moved: 0, deferred: 1, uncertain: 0, failed: 0 });
   assert.deepEqual(calls.claim, [301]);
@@ -547,7 +543,7 @@ test("unrestricted worker has no five-watch per-pass limit and queries the curre
     store: {
       listDueWatchLeadIds: async (_now, limit) => {
         calls.list += 1;
-        assert.equal(limit, 100);
+        assert.equal(limit, 50);
         return dueLeadIds;
       },
       getDailyMovementOperationalStartDate: async () => "2026-07-19",
@@ -762,7 +758,7 @@ test("reserves a post-midnight Almaty move against the new calendar day", async 
   assert.deepEqual(calls.reserveDailySlot.map(({ bucketDate }) => bucketDate), ["2026-07-20"]);
 });
 
-test("resets production capacity at 14:00 Almaty into a fresh 100-slot operational bucket", async () => {
+test("resets production capacity at 14:00 Almaty into a fresh 50-slot operational bucket", async () => {
   const atOperationalBoundary = new Date("2026-08-05T09:00:00.000Z");
   const { store, amo, calls } = fixture();
   const worker = createLeadInactivityWorker({
@@ -776,7 +772,7 @@ test("resets production capacity at 14:00 Almaty into a fresh 100-slot operation
   const result = await worker.runOnce();
 
   assert.equal(result.moved, 1);
-  assert.deepEqual(calls.ensureDailySlots, [{ bucketDate: "operational:2026-08-05", limit: 100 }]);
+  assert.deepEqual(calls.ensureDailySlots, [{ bucketDate: "operational:2026-08-05", limit: 50 }]);
   assert.deepEqual(calls.reserveDailySlot, [{ bucketDate: "operational:2026-08-05", leadId: 100, auditId: "audit-100" }]);
   assert.deepEqual(calls.confirmDailySlot, [{ bucketDate: "operational:2026-08-05", slotNumber: 1, auditId: "audit-100" }]);
 });

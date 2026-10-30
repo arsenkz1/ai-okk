@@ -17,23 +17,25 @@ const {
   isDirectLeadActivity,
   canWatchLeadInPipeline,
   isAllowedInactivitySourceStage,
+  inactivityStagePriority,
 } = require("../dist/services/leadInactivityPolicy");
 
 test("defines the approved source and target pipeline policy", () => {
   assert.deepEqual(
-    INACTIVITY_SOURCE_PIPELINES.map(({ pipelineId, name, takenInWork, qualified, ozhop }) => (
-      [pipelineId, name, takenInWork, qualified, ozhop]
+    INACTIVITY_SOURCE_PIPELINES.map(({ pipelineId, name, takenInWork, qualified }) => (
+      [pipelineId, name, takenInWork, qualified]
     )),
     [
-      [6909890, "UZUM", 58160718, 58160726, 58160902],
-      [9055778, "EXODE", 72917582, 72917586, 72919958],
-      [9888398, "\u0414\u0430\u0442\u0430", 78602098, 78631750, 78631754],
-      [11071910, "\u0412\u0438\u0434\u0435\u043e\u0447\u0430\u0442", 86963442, 86963446, 86963494],
+      [6909890, "UZUM", 58160718, 58160726],
+      [9055778, "EXODE", 72917582, 72917586],
+      [9888398, "\u0414\u0430\u0442\u0430", 78602098, 78631750],
+      [11071910, "\u0412\u0438\u0434\u0435\u043e\u0447\u0430\u0442", 86963442, 86963446],
+      [10734414, "AI", 84554886, 84554934],
     ],
   );
   assert.deepEqual(
     [...SOURCE_PIPELINE_IDS].sort((a, b) => a - b),
-    [6909890, 9055778, 9888398, 11071910],
+    [6909890, 9055778, 9888398, 10734414, 11071910],
   );
   assert.equal(TARGET_PIPELINE_ID, 9055770);
   assert.equal(TARGET_STATUS_ID, 72917546);
@@ -42,7 +44,6 @@ test("defines the approved source and target pipeline policy", () => {
   }
   assert.equal(isSourcePipeline(9055770), false);
   assert.equal(isSourcePipeline(6945006), false);
-  assert.equal(isSourcePipeline(10734414), false);
   assert.equal(isSourcePipeline(8425422), false);
   assert.equal(isSourcePipeline(10630306), false);
 });
@@ -52,27 +53,29 @@ test("never lists the target pipeline or a duplicate stage as an inactivity sour
   assert.equal(new Set(SOURCE_PIPELINE_IDS).size, SOURCE_PIPELINE_IDS.length);
   const stageKeys = ALLOWED_INACTIVITY_SOURCE_STAGES.map(({ pipelineId, statusId }) => `${pipelineId}:${statusId}`);
   assert.equal(new Set(stageKeys).size, stageKeys.length);
-  assert.equal(ALLOWED_INACTIVITY_SOURCE_STAGES.length, SOURCE_PIPELINE_IDS.length * 3);
+  assert.equal(ALLOWED_INACTIVITY_SOURCE_STAGES.length, SOURCE_PIPELINE_IDS.length * 2);
 });
 
-test("defines the business priority as OZHOP then qualified then taken-in-work in every source pipeline", () => {
-  assert.equal(INACTIVITY_STAGE_PRIORITY_GROUPS.length, 3);
-  const [ozhopGroup, qualifiedGroup, takenGroup] = INACTIVITY_STAGE_PRIORITY_GROUPS;
-  for (const [group, stageKey] of [[ozhopGroup, "ozhop"], [qualifiedGroup, "qualified"], [takenGroup, "takenInWork"]]) {
+test("defines the business priority as taken-in-work then qualified in every source pipeline", () => {
+  assert.equal(INACTIVITY_STAGE_PRIORITY_GROUPS.length, 2);
+  const [takenGroup, qualifiedGroup] = INACTIVITY_STAGE_PRIORITY_GROUPS;
+  for (const [group, stageKey] of [[takenGroup, "takenInWork"], [qualifiedGroup, "qualified"]]) {
     assert.deepEqual(
       group.map(({ pipelineId, statusId }) => [pipelineId, statusId]),
       INACTIVITY_SOURCE_PIPELINES.map((pipeline) => [pipeline.pipelineId, pipeline[stageKey]]),
     );
   }
-  assert.deepEqual(ozhopGroup[0], { pipelineId: 6909890, statusId: 58160902 });
-  assert.deepEqual(qualifiedGroup[0], { pipelineId: 6909890, statusId: 58160726 });
   assert.deepEqual(takenGroup[0], { pipelineId: 6909890, statusId: 58160718 });
+  assert.deepEqual(qualifiedGroup[0], { pipelineId: 6909890, statusId: 58160726 });
 
   const stageKey = ({ pipelineId, statusId }) => `${pipelineId}:${statusId}`;
   assert.deepEqual(
     INACTIVITY_STAGE_PRIORITY_GROUPS.flat().map(stageKey).sort(),
     ALLOWED_INACTIVITY_SOURCE_STAGES.map(stageKey).sort(),
   );
+  assert.equal(inactivityStagePriority(6909890, 58160718), 0);
+  assert.equal(inactivityStagePriority(9055778, 72917586), 1);
+  assert.equal(inactivityStagePriority(6909890, 58160902), null, "OZHOP has no priority: it is not moved");
 });
 
 test("treats exactly 72 elapsed calendar hours as due but never earlier", () => {
@@ -85,20 +88,23 @@ test("treats exactly 72 elapsed calendar hours as due but never earlier", () => 
   assert.equal(isDue(oneMillisecondEarly, now), false);
 });
 
-test("allows inactivity watches only from taken, qualified, and OZHOP stages of every source pipeline", () => {
+test("allows inactivity watches only from taken and qualified stages of every source pipeline", () => {
   for (const pipeline of INACTIVITY_SOURCE_PIPELINES) {
-    for (const statusId of [pipeline.takenInWork, pipeline.qualified, pipeline.ozhop]) {
+    for (const statusId of [pipeline.takenInWork, pipeline.qualified]) {
       assert.equal(isAllowedInactivitySourceStage(pipeline.pipelineId, statusId), true);
     }
+  }
+  // OZHOP left the rollout on 2026-10-30 in every source pipeline, AI included.
+  for (const [pipelineId, ozhop] of [[6909890, 58160902], [9055778, 72919958], [9888398, 78631754], [11071910, 86963494], [10734414, 84554938]]) {
+    assert.equal(isAllowedInactivitySourceStage(pipelineId, ozhop), false, `${pipelineId}:${ozhop}`);
   }
 
   // New-lead stages, closed stages, and cross-pipeline stage IDs stay excluded.
   assert.equal(isAllowedInactivitySourceStage(6909890, 58160714), false);
   assert.equal(isAllowedInactivitySourceStage(9055778, 87347062), false);
   assert.equal(isAllowedInactivitySourceStage(9888398, 78602094), false);
-  // The AI, WB, and accounting pipelines are deliberately excluded, working stages included.
+  // The WB and accounting pipelines are deliberately excluded, working stages included.
   for (const [pipelineId, takenInWork, qualified, ozhop] of [
-    [10734414, 84554886, 84554934, 84554938],
     [8425422, 68567422, 68567458, 68567462],
     [10630306, 83801774, 83801898, 83801778],
   ]) {

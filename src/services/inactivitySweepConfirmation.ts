@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { countByPipeline, moveSweepCandidates, selectSweepCandidates, type SweepCandidate, type SweepMoveResult } from "./inactivitySweep";
+import { countByPipeline, moveSweepCandidates, selectSweepCandidates, type DailySlotTicket, type SweepCandidate, type SweepMoveResult } from "./inactivitySweep";
+import { formatSweepStop } from "./inactivityNightlySweep";
 import { phoenixSourceName } from "./phoenixMovementStats";
 import type { AmoInactivityLead, AmoInactivityMoveOutcome } from "./leadInactivityAmoClient";
 
@@ -47,6 +48,7 @@ export interface SweepConfirmationDependencies {
   hasRecentTouch?(candidate: SweepCandidate): Promise<boolean>;
   onMoved?(candidate: SweepCandidate): Promise<void>;
   onUncertain?(candidate: SweepCandidate): Promise<void>;
+  reserveDailySlot?(candidate: SweepCandidate): Promise<DailySlotTicket | null>;
   now?: () => Date;
   randomToken?: () => string;
 }
@@ -111,6 +113,7 @@ export function createSweepConfirmationService(dependencies: SweepConfirmationDe
         hasRecentTouch: dependencies.hasRecentTouch,
         onMoved: dependencies.onMoved,
         onUncertain: dependencies.onUncertain,
+        reserveDailySlot: dependencies.reserveDailySlot,
       });
       return { kind: "swept", result, candidates: entry.candidates.length };
     },
@@ -145,7 +148,11 @@ function idleDays(candidate: SweepCandidate, now: Date): string {
   return ((now.getTime() - candidate.lastTouchedAt.getTime()) / (24 * 3600 * 1000)).toFixed(1);
 }
 
-export function formatSweepProposal(pending: PendingSweep, scanned: number): string {
+/**
+ * `dailyLimit`: the shared budget when the cap is on, null when it is lifted.
+ * The operator should know before saying yes that not everything moves today.
+ */
+export function formatSweepProposal(pending: PendingSweep, scanned: number, dailyLimit: number | null = null): string {
   const byPipeline = countByPipeline(pending.candidates);
   const listed = pending.candidates.slice(0, SWEEP_PROPOSAL_MAX_LISTED);
   const rest = pending.candidates.length - listed.length;
@@ -162,6 +169,10 @@ export function formatSweepProposal(pending: PendingSweep, scanned: number): str
     ...(rest > 0 ? [`… и ещё ${rest}`] : []),
     "Почему конкретная сделка не уехала сама: /inactivity_lead <ID>",
     "",
+    ...(dailyLimit !== null ? [
+      `Суточный лимит включён: не больше ${dailyLimit} переводов в сутки вместе с воркером и сверкой. Сверх лимита сделки уйдут в следующие дни.`,
+      "",
+    ] : []),
     "Перевести их все в Феникс сейчас?",
     "(Перед переносом каждая сделка перепроверяется по истории: тронутые за последние 3 дня пропускаются.)",
     "Ответить может только тот, кто отправил команду. Запрос действует 10 минут.",
@@ -188,14 +199,7 @@ export function formatSweepDecision(result: SweepDecisionResult): string {
       if (sweep.notMoved > 0) lines.push(`• не переведены (лид изменился между проверкой и переносом): ${sweep.notMoved}`);
       if (sweep.guardFailed > 0) lines.push(`• ⚠️ не удалось проверить историю, сделки не тронуты: ${sweep.guardFailed}`);
       if (sweep.uncertain > 0) lines.push(`• ⚠️ неопределённый ответ amoCRM: ${sweep.uncertain} — требует ручной проверки`);
-      if (sweep.stoppedAt) {
-        const left = candidates - sweep.stoppedAt.index;
-        lines.push(
-          sweep.stoppedAt.reason === "uncertain"
-            ? `⛔ Остановлено после неопределённого ответа; не обработано: ${left}. Проверьте amoCRM и повторите /inactivity_on.`
-            : `⛔ Остановлено командой /inactivity_off; не обработано: ${left}.`,
-        );
-      }
+      if (sweep.stoppedAt) lines.push(formatSweepStop(sweep.stoppedAt, candidates));
       lines.push("", "Дальше: воркер по правилу 3 дня без касаний, без суточного лимита, плюс ежедневная сверка в 22:00.");
       return lines.join("\n");
     }

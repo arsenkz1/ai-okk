@@ -444,6 +444,11 @@ function createAdapter(database: PrismaInactivityDb, transactionRunner?: Transac
           select: { slotNumber: true },
         });
       }
+      // A limit lowered during the day must bite now, not tomorrow: free slots
+      // above it are dropped. Used ones stay; they are the record of moves.
+      await database.leadInactivityDailyMovementSlot.deleteMany({
+        where: { bucketDate, state: "free", slotNumber: { gt: limit } },
+      });
     },
 
     async hasAvailableDailyMovementSlot(bucketDate: string): Promise<boolean> {

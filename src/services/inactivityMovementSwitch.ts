@@ -1,5 +1,5 @@
 import { prisma } from "../config/database";
-import { DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT } from "./leadInactivityDailyCap";
+import { dailyLeadInactivityMovementLimit } from "./leadInactivityDailyCap";
 
 /**
  * Durable on/off switch for Phoenix inactivity moves.
@@ -211,15 +211,17 @@ export function formatInactivityDailyCap(
   const who = state.changedBy && state.changedAt
     ? ` (изменил ${state.changedBy}, ${formatAlmaty(state.changedAt)})`
     : "";
-  const limit = today?.limit ?? DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT;
+  const limit = today?.limit ?? dailyLeadInactivityMovementLimit();
   const lines = [
     state.dailyCapDisabled
-      ? `Суточный лимит переводов в Феникс СНЯТ${who}. Воркер переводит всех просроченных без ограничения.`
-      : `Суточный лимит переводов в Феникс ВКЛЮЧЁН${who}: не больше ${limit} в день, остальные ждут следующего дня.`,
+      ? `Суточный лимит переводов в Феникс СНЯТ${who}. Воркер, сверка 22:00 и массовый перенос переводят всех просроченных без ограничения.`
+      : `Суточный лимит переводов в Феникс ВКЛЮЧЁН${who}: не больше ${limit} в сутки, остальные ждут следующих суток.`,
   ];
-  if (today) lines.push(`Сегодня уже переведено воркером: ${today.used}.`);
+  if (today) lines.push(`Уже переведено за текущие сутки: ${today.used}.`);
   if (state.paused) lines.push("Сами переводы сейчас остановлены (/inactivity_off); настройка применится после /inactivity_on.");
-  lines.push("Сверка в 22:00 и массовый перенос по /inactivity_on лимитом не ограничены.");
+  if (!state.dailyCapDisabled) {
+    lines.push("Лимит общий: воркер, сверка 22:00 и массовый перенос по /inactivity_on расходуют один счётчик. Сутки считаются с 14:00 до 14:00 по Алматы.");
+  }
   return lines.join("\n");
 }
 

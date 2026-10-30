@@ -74,7 +74,7 @@ export function diagnoseLead(input: LeadDiagnosisInput): LeadDiagnosis {
   if (!isAllowedInactivitySourceStage(lead.pipelineId, lead.statusId)) {
     return {
       kind: "outside_stages",
-      explanation: "Сделка стоит на стадии, с которой перенос по неактивности не выполняется (только ОЖОП / квалифицирован / взято в работу в UZUM, EXODE, Дата, Видеочат).",
+      explanation: "Сделка стоит на стадии, с которой перенос по неактивности не выполняется (только «взято в работу» и «квалифицирован» в UZUM, EXODE, Дата, Видеочат, AI; ОЖОП не переносится).",
       remedy: "Это ожидаемое поведение, не ошибка.",
     };
   }
@@ -142,8 +142,8 @@ export function diagnoseLead(input: LeadDiagnosisInput): LeadDiagnosis {
       : " Попыток переноса ещё не было.";
     return {
       kind: "due_waiting",
-      explanation: `Просрочена на ${overdue} дн. и стоит в очереди.${audit} Обычная причина — суточный лимит: очередь разбирается по приоритету ОЖОП → квал → взято в работу, и нижние группы могли не доходить.`,
-      remedy: "После снятия лимита (/inactivity_on) уедет на ближайшем проходе. Если нет — смотрите /inactivity_status.",
+      explanation: `Просрочена на ${overdue} дн. и стоит в очереди.${audit} Обычная причина — суточный лимит: очередь разбирается по приоритету «взято в работу» → «квалифицирован», и вторая группа могла не доходить.`,
+      remedy: "Уедет, когда в суточном лимите появится место (сутки с 14:00 по Алматы), или сразу после снятия лимита (/inactivity_limit_off). Если нет — смотрите /inactivity_status.",
     };
   }
   return {

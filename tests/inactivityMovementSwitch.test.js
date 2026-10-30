@@ -241,10 +241,15 @@ test("an explicit cap survives /inactivity_on instead of being lifted again", as
 
 test("the cap message says which way it is set and what it does not limit", () => {
   const base = { paused: false, dailyCapExplicit: true, changedBy: null, changedAt: null };
-  const capped = formatInactivityDailyCap({ ...base, dailyCapDisabled: false }, { limit: 100, used: 37 });
-  assert.match(capped, /ВКЛЮЧЁН: не больше 100 в день/);
-  assert.match(capped, /Сегодня уже переведено воркером: 37/);
+  const capped = formatInactivityDailyCap({ ...base, dailyCapDisabled: false }, { limit: 50, used: 37 });
+  assert.match(capped, /ВКЛЮЧЁН: не больше 50 в сутки/);
+  assert.match(capped, /Уже переведено за текущие сутки: 37/);
+  assert.match(capped, /воркер, сверка 22:00 и массовый перенос по \/inactivity_on расходуют один счётчик/);
+  assert.match(capped, /с 14:00 до 14:00 по Алматы/);
+  // Without a reading of today, the configured default is shown.
+  assert.match(formatInactivityDailyCap({ ...base, dailyCapDisabled: false }), /не больше 50 в сутки/);
   const lifted = formatInactivityDailyCap({ ...base, dailyCapDisabled: true, paused: true });
   assert.match(lifted, /СНЯТ/);
   assert.match(lifted, /остановлены/);
+  assert.equal(lifted.includes("один счётчик"), false);
 });

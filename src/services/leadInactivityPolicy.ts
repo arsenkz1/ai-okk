@@ -9,29 +9,32 @@ export interface InactivitySourcePipeline {
   name: string;
   takenInWork: number;
   qualified: number;
-  ozhop: number;
 }
 
 /**
- * Every amoCRM pipeline whose "взято в работу", "квалифицирован", and "ОЖОП"
- * stages take part in the inactivity rollout. This table is the single source
- * for the webhook filter, the worker's priority scan, the move guard, and the
- * production baseline enumeration; adding a pipeline here extends all four.
+ * Every amoCRM pipeline whose "взято в работу" and "квалифицирован" stages
+ * take part in the inactivity rollout. This table is the single source for the
+ * webhook filter, the worker's priority scan, the move guard, both sweeps and
+ * the production baseline enumeration; adding a pipeline here extends them all.
+ *
+ * "ОЖОП" was removed from the rollout on 2026-10-30: those deals stay put.
+ * The AI pipeline joined on the same day, with its two working stages.
  */
 export const INACTIVITY_SOURCE_PIPELINES: readonly InactivitySourcePipeline[] = Object.freeze([
-  { pipelineId: 6909890, name: "UZUM", takenInWork: 58160718, qualified: 58160726, ozhop: 58160902 },
-  { pipelineId: 9055778, name: "EXODE", takenInWork: 72917582, qualified: 72917586, ozhop: 72919958 },
-  { pipelineId: 9888398, name: "Дата", takenInWork: 78602098, qualified: 78631750, ozhop: 78631754 },
-  { pipelineId: 11071910, name: "Видеочат", takenInWork: 86963442, qualified: 86963446, ozhop: 86963494 },
+  { pipelineId: 6909890, name: "UZUM", takenInWork: 58160718, qualified: 58160726 },
+  { pipelineId: 9055778, name: "EXODE", takenInWork: 72917582, qualified: 72917586 },
+  { pipelineId: 9888398, name: "Дата", takenInWork: 78602098, qualified: 78631750 },
+  { pipelineId: 11071910, name: "Видеочат", takenInWork: 86963442, qualified: 86963446 },
+  { pipelineId: 10734414, name: "AI", takenInWork: 84554886, qualified: 84554934 },
 ].map((pipeline) => Object.freeze(pipeline)));
 
 /**
- * Business ordering for due inactivity movements: OZHOP, then qualified, then
- * taken-in-work. The order inside one group is deliberately not a pipeline
+ * Business ordering for due inactivity movements: taken-in-work first, then
+ * qualified. The order inside one group is deliberately not a pipeline
  * priority; persisted dueAt/leadId ordering breaks ties after the worker has
  * selected the business stage group.
  */
-const INACTIVITY_STAGE_PRIORITY_ORDER = Object.freeze(["ozhop", "qualified", "takenInWork"] as const);
+const INACTIVITY_STAGE_PRIORITY_ORDER = Object.freeze(["takenInWork", "qualified"] as const);
 
 export const SOURCE_PIPELINE_IDS: readonly number[] = Object.freeze(
   INACTIVITY_SOURCE_PIPELINES.map(({ pipelineId }) => pipelineId),
@@ -49,6 +52,14 @@ export const INACTIVITY_STAGE_PRIORITY_GROUPS: readonly (readonly InactivityStag
 export const ALLOWED_INACTIVITY_SOURCE_STAGES: readonly InactivityStagePair[] = Object.freeze(
   INACTIVITY_STAGE_PRIORITY_GROUPS.flat(),
 );
+
+/** 0 for the first priority group, 1 for the next; null for a stage outside the rollout. */
+export function inactivityStagePriority(pipelineId: number, statusId: number): number | null {
+  const index = INACTIVITY_STAGE_PRIORITY_GROUPS.findIndex((group) => (
+    group.some((stage) => stage.pipelineId === pipelineId && stage.statusId === statusId)
+  ));
+  return index === -1 ? null : index;
+}
 
 export const TARGET_PIPELINE_ID = 9055770;
 export const TARGET_STATUS_ID = 72917546;

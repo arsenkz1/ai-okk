@@ -109,13 +109,18 @@ export function formatNightlySweepReport(result: NightlySweepResult): string | n
   if (sweep.notMoved > 0) lines.push(`• не переведены — сделка изменилась между проверкой и переносом: ${sweep.notMoved}`);
   if (sweep.guardFailed > 0) lines.push(`• ⚠️ не удалось проверить историю, сделки не тронуты: ${sweep.guardFailed}`);
   if (sweep.uncertain > 0) lines.push(`• ⚠️ неопределённый ответ amoCRM: ${sweep.uncertain} — проверьте сделку вручную`);
-  if (sweep.stoppedAt) {
-    const left = result.candidates - sweep.stoppedAt.index;
-    lines.push(
-      sweep.stoppedAt.reason === "uncertain"
-        ? `⛔ Остановлено после неопределённого ответа; не обработано: ${left}. Продолжит завтрашняя сверка.`
-        : `⛔ Остановлено командой /inactivity_off; не обработано: ${left}.`,
-    );
-  }
+  if (sweep.stoppedAt) lines.push(formatSweepStop(sweep.stoppedAt, result.candidates));
   return lines.join("\n");
+}
+
+/** Why a sweep stopped early and how many candidates it did not reach. */
+export function formatSweepStop(stoppedAt: NonNullable<SweepMoveResult["stoppedAt"]>, candidates: number): string {
+  const left = candidates - stoppedAt.index;
+  if (stoppedAt.reason === "daily_cap") {
+    return `⏸ Суточный лимит переводов исчерпан; не перенесено: ${left}. Уйдут в следующие дни (воркер и сверка 22:00).`;
+  }
+  if (stoppedAt.reason === "uncertain") {
+    return `⛔ Остановлено после неопределённого ответа; не обработано: ${left}. Продолжит следующая сверка.`;
+  }
+  return `⛔ Остановлено командой /inactivity_off; не обработано: ${left}.`;
 }

@@ -1,6 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { prisma } from "../config/database";
-import { isInactivityMovementPaused } from "./inactivityMovementSwitch";
-import { createRecentTouchGuard, type SweepCandidate, type SweepMoveDependencies } from "./inactivitySweep";
+import { isInactivityDailyCapDisabled, isInactivityMovementPaused } from "./inactivityMovementSwitch";
+import { createRecentTouchGuard, type DailySlotTicket, type SweepCandidate, type SweepMoveDependencies } from "./inactivitySweep";
+import { almatyDailyMovementBucket, dailyMovementLimitForBucket } from "./leadInactivityDailyCap";
+import { createPrismaLeadInactivityPersistence } from "./leadInactivityPrismaPersistence";
+import { createLeadInactivityStore, type LeadInactivityStore } from "./leadInactivityStore";
 import { createLeadInactivityAmoClient, type AmoInactivityLead } from "./leadInactivityAmoClient";
 import { TARGET_PIPELINE_ID, TARGET_STATUS_ID } from "./leadInactivityPolicy";
 
@@ -10,8 +14,47 @@ import { TARGET_PIPELINE_ID, TARGET_STATUS_ID } from "./leadInactivityPolicy";
  * same listing, same touch fence, same audit trail.
  */
 
-export interface SweepRuntime extends Required<Pick<SweepMoveDependencies, "moveLeadToTarget" | "isStopped" | "hasRecentTouch" | "onMoved" | "onUncertain">> {
+export interface SweepRuntime extends Required<Pick<SweepMoveDependencies, "moveLeadToTarget" | "isStopped" | "hasRecentTouch" | "onMoved" | "onUncertain" | "reserveDailySlot">> {
   listEligibleLeads(): Promise<AmoInactivityLead[]>;
+}
+
+/** A ticket for when the cap is lifted: nothing to count, nothing to settle. */
+const UNCAPPED_TICKET: DailySlotTicket = { confirm: async () => {}, release: async () => {}, markUncertain: async () => {} };
+
+type SlotStore = Pick<LeadInactivityStore,
+  "getDailyMovementOperationalStartDate" | "ensureDailyMovementSlots" | "reserveDailyMovementSlot"
+  | "confirmDailyMovementSlot" | "releaseDailyMovementSlotAfterKnownNoMove" | "markDailyMovementSlotUncertain">;
+
+/**
+ * The sweeps draw from the same per-day slot table as the worker, so the cap
+ * set with /inactivity_limit_on bounds every path, not the worker alone.
+ */
+export function createDailySlotReserver(dependencies: {
+  store: SlotStore;
+  isCapDisabled: () => Promise<boolean>;
+  now?: () => Date;
+  randomId?: () => string;
+}): (candidate: SweepCandidate) => Promise<DailySlotTicket | null> {
+  const now = dependencies.now ?? (() => new Date());
+  const randomId = dependencies.randomId ?? randomUUID;
+  const ensured = new Set<string>();
+  return async (candidate) => {
+    if (await dependencies.isCapDisabled()) return UNCAPPED_TICKET;
+    const at = now();
+    const bucket = almatyDailyMovementBucket(at, await dependencies.store.getDailyMovementOperationalStartDate());
+    if (!ensured.has(bucket)) {
+      await dependencies.store.ensureDailyMovementSlots(bucket, dailyMovementLimitForBucket(bucket));
+      ensured.add(bucket);
+    }
+    const auditId = `sweep:${randomId()}`;
+    const slot = await dependencies.store.reserveDailyMovementSlot(bucket, candidate.leadId, auditId, at);
+    if (!slot) return null;
+    return {
+      confirm: async () => { await dependencies.store.confirmDailyMovementSlot(bucket, slot.slotNumber, auditId, now()); },
+      release: () => dependencies.store.releaseDailyMovementSlotAfterKnownNoMove(bucket, slot.slotNumber, auditId),
+      markUncertain: async () => { await dependencies.store.markDailyMovementSlotUncertain(bucket, slot.slotNumber, auditId, now()); },
+    };
+  };
 }
 
 /**
@@ -54,5 +97,9 @@ export function createSweepRuntime(environment: Record<string, string | undefine
     }),
     onMoved: (candidate) => recordSweepAudit(candidate, "confirmed"),
     onUncertain: (candidate) => recordSweepAudit(candidate, "uncertain"),
+    reserveDailySlot: createDailySlotReserver({
+      store: createLeadInactivityStore(createPrismaLeadInactivityPersistence(prisma)),
+      isCapDisabled: () => isInactivityDailyCapDisabled(),
+    }),
   };
 }
