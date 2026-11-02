@@ -18,14 +18,13 @@ export interface InactivitySourcePipeline {
  * the production baseline enumeration; adding a pipeline here extends them all.
  *
  * "ОЖОП" was removed from the rollout on 2026-10-30: those deals stay put.
- * The AI pipeline joined on the same day, with its two working stages.
+ * The AI pipeline (10734414) is deliberately not tracked.
  */
 export const INACTIVITY_SOURCE_PIPELINES: readonly InactivitySourcePipeline[] = Object.freeze([
   { pipelineId: 6909890, name: "UZUM", takenInWork: 58160718, qualified: 58160726 },
   { pipelineId: 9055778, name: "EXODE", takenInWork: 72917582, qualified: 72917586 },
   { pipelineId: 9888398, name: "Дата", takenInWork: 78602098, qualified: 78631750 },
   { pipelineId: 11071910, name: "Видеочат", takenInWork: 86963442, qualified: 86963446 },
-  { pipelineId: 10734414, name: "AI", takenInWork: 84554886, qualified: 84554934 },
 ].map((pipeline) => Object.freeze(pipeline)));
 
 /**

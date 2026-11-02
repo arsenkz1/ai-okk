@@ -30,12 +30,11 @@ test("defines the approved source and target pipeline policy", () => {
       [9055778, "EXODE", 72917582, 72917586],
       [9888398, "\u0414\u0430\u0442\u0430", 78602098, 78631750],
       [11071910, "\u0412\u0438\u0434\u0435\u043e\u0447\u0430\u0442", 86963442, 86963446],
-      [10734414, "AI", 84554886, 84554934],
     ],
   );
   assert.deepEqual(
     [...SOURCE_PIPELINE_IDS].sort((a, b) => a - b),
-    [6909890, 9055778, 9888398, 10734414, 11071910],
+    [6909890, 9055778, 9888398, 11071910],
   );
   assert.equal(TARGET_PIPELINE_ID, 9055770);
   assert.equal(TARGET_STATUS_ID, 72917546);
@@ -46,6 +45,7 @@ test("defines the approved source and target pipeline policy", () => {
   assert.equal(isSourcePipeline(6945006), false);
   assert.equal(isSourcePipeline(8425422), false);
   assert.equal(isSourcePipeline(10630306), false);
+  assert.equal(isSourcePipeline(10734414), false);
 });
 
 test("never lists the target pipeline or a duplicate stage as an inactivity source", () => {
@@ -94,8 +94,8 @@ test("allows inactivity watches only from taken and qualified stages of every so
       assert.equal(isAllowedInactivitySourceStage(pipeline.pipelineId, statusId), true);
     }
   }
-  // OZHOP left the rollout on 2026-10-30 in every source pipeline, AI included.
-  for (const [pipelineId, ozhop] of [[6909890, 58160902], [9055778, 72919958], [9888398, 78631754], [11071910, 86963494], [10734414, 84554938]]) {
+  // OZHOP left the rollout on 2026-10-30 in every source pipeline.
+  for (const [pipelineId, ozhop] of [[6909890, 58160902], [9055778, 72919958], [9888398, 78631754], [11071910, 86963494]]) {
     assert.equal(isAllowedInactivitySourceStage(pipelineId, ozhop), false, `${pipelineId}:${ozhop}`);
   }
 
@@ -103,10 +103,11 @@ test("allows inactivity watches only from taken and qualified stages of every so
   assert.equal(isAllowedInactivitySourceStage(6909890, 58160714), false);
   assert.equal(isAllowedInactivitySourceStage(9055778, 87347062), false);
   assert.equal(isAllowedInactivitySourceStage(9888398, 78602094), false);
-  // The WB and accounting pipelines are deliberately excluded, working stages included.
+  // The WB, accounting and AI pipelines are deliberately excluded, working stages included.
   for (const [pipelineId, takenInWork, qualified, ozhop] of [
     [8425422, 68567422, 68567458, 68567462],
     [10630306, 83801774, 83801898, 83801778],
+    [10734414, 84554886, 84554934, 84554938],
   ]) {
     for (const statusId of [takenInWork, qualified, ozhop]) {
       assert.equal(isAllowedInactivitySourceStage(pipelineId, statusId), false);

@@ -74,7 +74,7 @@ export function diagnoseLead(input: LeadDiagnosisInput): LeadDiagnosis {
   if (!isAllowedInactivitySourceStage(lead.pipelineId, lead.statusId)) {
     return {
       kind: "outside_stages",
-      explanation: "Сделка стоит на стадии, с которой перенос по неактивности не выполняется (только «взято в работу» и «квалифицирован» в UZUM, EXODE, Дата, Видеочат, AI; ОЖОП не переносится).",
+      explanation: "Сделка стоит на стадии, с которой перенос по неактивности не выполняется (только «взято в работу» и «квалифицирован» в UZUM, EXODE, Дата, Видеочат; ОЖОП не переносится).",
       remedy: "Это ожидаемое поведение, не ошибка.",
     };
   }
