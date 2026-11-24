@@ -8,6 +8,7 @@ import {
 } from "../queues/callProcessing";
 import {
   analyzeCallWithGemini,
+  type CallAnalysisResult,
   transcribeAudioFromBuffer,
   transcribeAudioWithGemini,
 } from "../services/aiAnalysis";
@@ -17,6 +18,8 @@ import { getCallTaskAutomationRuntime } from "../services/callTaskAutomationRunt
 import { runCallStageAutomation } from "../services/callStageAutomation";
 import { buildCallRecommendationsNote } from "../services/callRecommendationsNote";
 import { getCallStageAutomationRuntime } from "../services/callStageAutomationRuntime";
+import { createIsLatestCompletedCall } from "../services/callStageAutomationRuntime";
+import { getRefusalReasonWriter } from "../services/callRefusalReason";
 import {
   addNoteToDeal,
   lookupDealByPhone,
@@ -164,6 +167,36 @@ async function writeDealNote(
     `UUID: ${callUuid}\n` +
     `Две попытки провалились. Проверь amoCRM или логи.`
   );
+}
+
+/**
+ * Writes the predicted close reason into lead field 1046167. Best-effort like
+ * the notes: it is a hint for the manager, so a failure is logged and never
+ * makes the call job retry.
+ */
+async function maybeWriteRefusalReason(
+  callId: number,
+  dealId: number,
+  callEndedAt: Date,
+  analysis: CallAnalysisResult,
+): Promise<void> {
+  try {
+    const writeRefusalReason = await getRefusalReasonWriter();
+    if (!writeRefusalReason) return;
+    const isLatestCompletedCall = createIsLatestCompletedCall();
+    const result = await writeRefusalReason({
+      dealId,
+      refusalLikely: analysis.refusalLikely,
+      refusalReason: analysis.refusalReason,
+      isLatestCall: () => isLatestCompletedCall({ callId, dealId, callEndedAt }),
+    });
+    if (result.kind === "no_refusal") return;
+    const failed = result.kind === "unmatched" || result.kind === "not_written" || result.kind === "uncertain";
+    const log = failed ? console.warn : console.info;
+    log("[RefusalReason] Processed deal field", { callId, dealId, ...result });
+  } catch (error) {
+    console.error("[RefusalReason] Deal field write failed", { callId, dealId, error: summarizeError(error) });
+  }
 }
 
 /**
@@ -542,6 +575,9 @@ async function processCallJob(jobData: CallProcessingJobData, jobAttemptsMade: n
     // recommendations, and so reviewers can tell the two apart in the feed.
     const recommendations = buildCallRecommendationsNote(analysis);
     if (recommendations) await writeDealNote(dealId, recommendations, "рекомендации AI", payload.uuid);
+
+    const callTimes = await prisma.call.findUnique({ where: { id: callId }, select: { endedAt: true } });
+    if (callTimes?.endedAt) await maybeWriteRefusalReason(callId, dealId, callTimes.endedAt, analysis);
   }
 
   // Each path catches and records its own failures. They were started in parallel

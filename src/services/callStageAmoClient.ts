@@ -57,6 +57,9 @@ export interface AmoCallStageCustomField {
   requiredStatuses: readonly { pipelineId: number; statusId: number }[];
 }
 
+/** One lead field's type and options, without the required-status rules. */
+export type AmoLeadCustomFieldMeta = Pick<AmoCallStageCustomField, "id" | "name" | "type" | "enums">;
+
 export interface AmoCallStageSafeError {
   kind: "http" | "network";
   status: number | null;
@@ -122,6 +125,7 @@ export interface CallStageAmoClient {
   }): Promise<WriteCallStageFieldsOutcome>;
   addFieldOption(input: { fieldId: number; value: string }): Promise<AddCallStageFieldOptionOutcome>;
   getFieldOptions(fieldId: number): Promise<readonly AmoCallStageFieldEnum[]>;
+  getLeadCustomField(fieldId: number): Promise<AmoLeadCustomFieldMeta>;
   replaceFieldOptions(input: {
     fieldId: number;
     enums: readonly AmoCallStageFieldEnum[];
@@ -605,6 +609,22 @@ export function createCallStageAmoClient(options: CreateCallStageAmoClientOption
       requiredPositiveInteger(fieldId, "field id");
       const response = await request("GET", `/api/v4/leads/custom_fields/${fieldId}`, undefined, true);
       return normalizeFieldEnums((response.data as { enums?: unknown } | null)?.enums);
+    },
+
+    async getLeadCustomField(fieldId): Promise<AmoLeadCustomFieldMeta> {
+      requiredPositiveInteger(fieldId, "field id");
+      const response = await request("GET", `/api/v4/leads/custom_fields/${fieldId}`, undefined, true);
+      const field = response.data as RawAmoLeadCustomField | null;
+      if (!field || typeof field !== "object") throw new Error("amoCRM lead custom field is malformed");
+      if (requiredPositiveInteger(field.id, "lead custom field id") !== fieldId) {
+        throw new Error("amoCRM lead custom field response is outside the requested field");
+      }
+      return {
+        id: fieldId,
+        name: typeof field.name === "string" ? field.name.trim() : "",
+        type: typeof field.type === "string" ? field.type.trim() : "",
+        enums: normalizeFieldEnums(field.enums),
+      };
     },
 
     /**

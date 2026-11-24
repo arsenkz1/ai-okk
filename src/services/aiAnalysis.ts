@@ -4,6 +4,7 @@ import { z } from "zod";
 import { resolveCallTaskDueAt } from "./callTaskDueDate";
 import { jsonrepair } from "jsonrepair";
 import { type UZUMStageTargetKey } from "./callStagePolicy";
+import { CALL_REFUSAL_REASON_OPTIONS, promptRefusalReason } from "./callRefusalReason";
 
 // ---------------------------------------------------------------------------
 // Gemini helpers
@@ -482,7 +483,20 @@ const CallAnalysisSchema = z.object({
   managerRecommendations: z.array(z.string()).default([]),
   // Портрет клиента (на узбекском, для примечания в amoCRM)
   clientPortrait:    z.string().default(""),
+  // Прогноз отказа: причина пишется только в поле сделки 1046167
+  refusalLikely:     z.preprocess(readModelBoolean, z.boolean()),
+  refusalReason:     z.preprocess((value) => typeof value === "string" ? value : "", z.string()),
 });
+
+/** The model sometimes answers "true" as a string; anything else is false. */
+function readModelBoolean(value: unknown): boolean {
+  return value === true || (typeof value === "string" && value.trim().toLowerCase() === "true");
+}
+
+const REFUSAL_REASON_PROMPT_LIST = CALL_REFUSAL_REASON_OPTIONS
+  .filter((option) => option.hint !== null)
+  .map((option) => `   - ${promptRefusalReason(option.reason)} — ${option.hint}`)
+  .join("\n");
 
 export type CallAnalysisResult = z.infer<typeof CallAnalysisSchema> & {
   rawGeminiResponse?: string; // заполняется только при ошибке парсинга
@@ -509,6 +523,8 @@ export async function analyzeCallWithGemini(
     clientRecommendations: [],
     managerRecommendations: [],
     clientPortrait: "",
+    refusalLikely: false,
+    refusalReason: "",
   };
 
   if (!apiKey) return fallback;
@@ -548,6 +564,11 @@ export async function analyzeCallWithGemini(
 - managerRecommendations — что менеджеру улучшить в технике продаж по итогам этого звонка. 2–4 пункта, каждый привязан к конкретному моменту разговора, а не общий совет.
 - Если разговор слишком короткий или пустой и опереться не на что — верни пустой массив [], не выдумывай.
 
+ПРОГНОЗ ОТКАЗА:
+- refusalLikely — true, если по разговору сделка скорее всего закончится отказом: клиент прямо отказался, или возражение осталось не закрытым и клиент не готов двигаться дальше, или следующего шага к оплате нет и клиент уходит от решения без интереса. false — если клиент заинтересован, договорились о следующем шаге или оплате, или по разговору судить нельзя. Сомневаешься — false.
+- refusalReason — только при refusalLikely = true: одна причина из списка ниже, слово в слово как написано. При false — пустая строка "". Свои формулировки не придумывай; если отказ вероятен, но ни одна причина не подходит, выбери Boshqa sabab.
+${REFUSAL_REASON_PROMPT_LIST}
+
 MUHIM QOIDALAR JSON uchun:
 - JSON kalit nomlari va qiymatlar uchun FAQAT qo'sh tirnoq (") ishlating — bu JSON standarti.
 - Matn ICHIDA hech qanday tirnoq belgisi ishlatmang (na qo'sh ", na oddiy '). Iboralarni tirnoqsiz yozing.
@@ -570,6 +591,8 @@ MUHIM QOIDALAR JSON uchun:
   "weaknesses": ["<o'sish sohasi 1>", "<o'sish sohasi 2>"],
   "clientRecommendations": ["<shu mijoz bilan keyingi qadam 1>", "<keyingi qadam 2>", "<keyingi qadam 3>"],
   "managerRecommendations": ["<menejerga tavsiya 1>", "<tavsiya 2>", "<tavsiya 3>"],
+  "refusalLikely": <true или false>,
+  "refusalReason": "<причина из списка или пустая строка>",
   "clientPortrait": "<portret o'zbek tilida (lotin). Gaplar orasida \\n belgisini ishlat (haqiqiy yangi qator EMAS). Tarkib: ismi (agar aytilgan bo'lsa), taxminiy yoshi, sohasi, asosiy ehtiyoji, xulq-atvori — 2–4 gap>"
 }
 
@@ -642,6 +665,8 @@ ${transcript}`;
         clientRecommendations: Array.isArray(raw.clientRecommendations) ? raw.clientRecommendations as string[] : [],
         managerRecommendations: Array.isArray(raw.managerRecommendations) ? raw.managerRecommendations as string[] : [],
         clientPortrait: typeof raw.clientPortrait === "string" ? raw.clientPortrait : "",
+        refusalLikely: readModelBoolean(raw.refusalLikely),
+        refusalReason: typeof raw.refusalReason === "string" ? raw.refusalReason : "",
       };
     }
 

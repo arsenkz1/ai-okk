@@ -111,6 +111,7 @@ export function createCallStageAutomationRuntime(
         async writeLeadFields() { throw new Error("call-stage automation is disabled"); },
         async addFieldOption() { throw new Error("call-stage automation is disabled"); },
         async getFieldOptions() { throw new Error("call-stage automation is disabled"); },
+        async getLeadCustomField() { throw new Error("call-stage automation is disabled"); },
         async replaceFieldOptions() { throw new Error("call-stage automation is disabled"); },
       },
       analyze: analyzeCallStageRoutingWithGemini,
