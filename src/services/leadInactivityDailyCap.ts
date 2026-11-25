@@ -7,12 +7,23 @@ export const DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT = 50;
 /** The slot table's CHECK constraint allows slot numbers 1–100 (migration 20260804170000). */
 export const MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT = 100;
 
-/** `LEAD_INACTIVITY_DAILY_LIMIT` (1–100) overrides the default; anything else is ignored. */
+export function isValidDailyMovementLimit(value: unknown): value is number {
+  return typeof value === "number"
+    && Number.isInteger(value)
+    && value >= 1
+    && value <= MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT;
+}
+
+/**
+ * `LEAD_INACTIVITY_DAILY_LIMIT` (1–100) overrides the default; anything else is
+ * ignored. A number set in the bot (/inactivity_limit N) takes precedence over
+ * both; see effectiveDailyLimit in inactivityMovementSwitch.
+ */
 export function dailyLeadInactivityMovementLimit(env: Record<string, string | undefined> = process.env): number {
   const raw = env.LEAD_INACTIVITY_DAILY_LIMIT?.trim();
   if (!raw || !/^\d{1,3}$/.test(raw)) return DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT;
   const value = Number(raw);
-  return value >= 1 && value <= MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT ? value : DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT;
+  return isValidDailyMovementLimit(value) ? value : DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT;
 }
 /** Capacity retained only until the forward migration's first operational-day boundary. */
 export const LEGACY_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT = 50;
@@ -90,8 +101,18 @@ export function almatyDailyMovementBucket(now: Date, operationalStartDate: strin
   return `${DAILY_MOVEMENT_OPERATIONAL_BUCKET_PREFIX}${operationalDate}`;
 }
 
-export function dailyMovementLimitForBucket(bucketDate: string): number {
-  if (isOperationalDailyMovementBucket(bucketDate)) return dailyLeadInactivityMovementLimit();
+/**
+ * Operational buckets use the configured limit, read once per pass by the
+ * caller; legacy calendar buckets keep their fixed capacity.
+ */
+export function dailyMovementLimitForBucket(
+  bucketDate: string,
+  operationalLimit: number = dailyLeadInactivityMovementLimit(),
+): number {
+  if (isOperationalDailyMovementBucket(bucketDate)) {
+    if (!isValidDailyMovementLimit(operationalLimit)) throw new Error("daily movement limit is invalid");
+    return operationalLimit;
+  }
   if (isIsoCalendarDate(bucketDate)) return LEGACY_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT;
   throw new Error("daily movement bucket date is invalid");
 }

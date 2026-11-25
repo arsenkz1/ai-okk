@@ -9,6 +9,9 @@ const {
   INACTIVITY_MOVEMENT_PAUSED_SETTING_KEY,
   formatInactivityDailyCap,
   setInactivityDailyCap,
+  setInactivityDailyLimit,
+  effectiveDailyLimit,
+  getInactivityDailyMovementLimit,
 } = require("../dist/services/inactivityMovementSwitch");
 const { createLeadInactivityWorker } = require("../dist/workers/leadInactivityWorker");
 
@@ -41,7 +44,7 @@ function fakeDatabase(initial = null, watches = []) {
 
 test("defaults to running when the switch has never been touched", async () => {
   const database = fakeDatabase();
-  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: false, dailyCapDisabled: false, dailyCapExplicit: false, changedBy: null, changedAt: null });
+  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: false, dailyCapDisabled: false, dailyCapExplicit: false, dailyLimit: null, changedBy: null, changedAt: null });
   assert.equal(await isInactivityMovementPaused(database), false);
 });
 
@@ -50,9 +53,9 @@ test("records who paused it and when, and reads it back", async () => {
   const at = new Date("2026-09-15T05:00:00.000Z");
   const state = await setInactivityMovementPaused(true, "295612129", database, at);
 
-  assert.deepEqual(state, { paused: true, dailyCapDisabled: false, dailyCapExplicit: false, changedBy: "295612129", changedAt: at, clearedWatches: 0 });
+  assert.deepEqual(state, { paused: true, dailyCapDisabled: false, dailyCapExplicit: false, dailyLimit: null, changedBy: "295612129", changedAt: at, clearedWatches: 0 });
   // Reading back returns the stored state; the cleared count is per-operation.
-  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: true, dailyCapDisabled: false, dailyCapExplicit: false, changedBy: "295612129", changedAt: at });
+  assert.deepEqual(await getInactivityMovementSwitch(database), { paused: true, dailyCapDisabled: false, dailyCapExplicit: false, dailyLimit: null, changedBy: "295612129", changedAt: at });
   assert.equal(await isInactivityMovementPaused(database), true);
 });
 
@@ -223,7 +226,7 @@ test("the cap command toggles only the cap and leaves moves as they are", async 
   assert.equal(on.dailyCapDisabled, false);
   assert.deepEqual(
     { ...(await getInactivityMovementSwitch(database)), changedAt: null },
-    { paused: true, dailyCapDisabled: false, dailyCapExplicit: true, changedBy: "222", changedAt: null },
+    { paused: true, dailyCapDisabled: false, dailyCapExplicit: true, dailyLimit: null, changedBy: "222", changedAt: null },
   );
 });
 
@@ -252,4 +255,55 @@ test("the cap message says which way it is set and what it does not limit", () =
   assert.match(lifted, /СНЯТ/);
   assert.match(lifted, /остановлены/);
   assert.equal(lifted.includes("один счётчик"), false);
+});
+
+test("a number set in the bot switches the cap on and becomes the limit", async () => {
+  const database = fakeDatabase();
+  await setInactivityDailyCap(false, "111", database);
+  const at = new Date("2026-11-25T09:00:00.000Z");
+  const state = await setInactivityDailyLimit(30, "222", database, at);
+
+  assert.deepEqual(state, {
+    paused: false, dailyCapDisabled: false, dailyCapExplicit: true, dailyLimit: 30, changedBy: "222", changedAt: at,
+  });
+  assert.deepEqual(await getInactivityMovementSwitch(database), state);
+  assert.equal(await getInactivityDailyMovementLimit(database), 30);
+});
+
+test("the number survives pausing, resuming and switching the cap", async () => {
+  const database = fakeDatabase();
+  await setInactivityDailyLimit(25, "222", database);
+  await setInactivityMovementPaused(true, "111", database);
+  await setInactivityMovementPaused(false, "111", database);
+  await setInactivityDailyCap(false, "111", database);
+  await setInactivityDailyCap(true, "111", database);
+  const state = await getInactivityMovementSwitch(database);
+  assert.equal(state.dailyLimit, 25);
+  assert.equal(state.dailyCapDisabled, false);
+  assert.equal(state.paused, false);
+});
+
+test("rejects a number outside 1-100 and leaves the stored one alone", async () => {
+  const database = fakeDatabase();
+  await setInactivityDailyLimit(40, "222", database);
+  for (const bad of [0, 101, 2.5, NaN]) {
+    await assert.rejects(setInactivityDailyLimit(bad, "222", database), /от 1 до 100/);
+  }
+  assert.equal((await getInactivityMovementSwitch(database)).dailyLimit, 40);
+});
+
+test("the bot's number wins over LEAD_INACTIVITY_DAILY_LIMIT, which wins over the default", async () => {
+  assert.equal(effectiveDailyLimit({ dailyLimit: 30 }, { LEAD_INACTIVITY_DAILY_LIMIT: "70" }), 30);
+  assert.equal(effectiveDailyLimit({ dailyLimit: null }, { LEAD_INACTIVITY_DAILY_LIMIT: "70" }), 70);
+  assert.equal(effectiveDailyLimit({ dailyLimit: null }, {}), 50);
+  // A stored number outside the slot table's range falls back instead of breaking every pass.
+  const corrupt = fakeDatabase(JSON.stringify({ paused: false, dailyLimit: 500, changedBy: null, changedAt: "2026-11-25T00:00:00Z" }));
+  assert.equal((await getInactivityMovementSwitch(corrupt)).dailyLimit, null);
+});
+
+test("the cap screen tells a number from the bot apart from the default and shows how to set one", () => {
+  const base = { paused: false, dailyCapDisabled: false, dailyCapExplicit: true, changedBy: null, changedAt: null };
+  assert.match(formatInactivityDailyCap({ ...base, dailyLimit: 30 }), /не больше 30 в сутки \(задано в боте\)/);
+  assert.match(formatInactivityDailyCap({ ...base, dailyLimit: null }), /\(по умолчанию\)/);
+  assert.match(formatInactivityDailyCap({ ...base, dailyLimit: null }), /\/inactivity_limit 30/);
 });

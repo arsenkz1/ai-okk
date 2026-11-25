@@ -276,7 +276,16 @@ test("accepts new operational capacity buckets but rejects malformed bucket iden
 
   await store.ensureDailyMovementSlots("operational:2026-08-05", 50);
   assert.deepEqual(persistence.dailyMovementEnsures, [{ bucketDate: "operational:2026-08-05", limit: 50 }]);
-  await assert.rejects(store.ensureDailyMovementSlots("operational:2026-08-05", 100), /limit must be exactly 50/);
+  // An operational day takes the operator's number within the slot table's range.
+  await store.ensureDailyMovementSlots("operational:2026-08-05", 30);
+  await store.ensureDailyMovementSlots("operational:2026-08-05", 100);
+  assert.deepEqual(persistence.dailyMovementEnsures.slice(1), [
+    { bucketDate: "operational:2026-08-05", limit: 30 },
+    { bucketDate: "operational:2026-08-05", limit: 100 },
+  ]);
+  await assert.rejects(store.ensureDailyMovementSlots("operational:2026-08-05", 101), /between 1 and 100/);
+  await assert.rejects(store.ensureDailyMovementSlots("operational:2026-08-05", 0), /daily movement limit/);
+  // A legacy calendar day keeps its fixed capacity.
   await assert.rejects(store.ensureDailyMovementSlots("2026-08-05", 100), /limit must be exactly 50/);
   await assert.rejects(store.ensureDailyMovementSlots("operational:2026-02-30", 100), /bucket date is invalid/);
   await assert.rejects(store.ensureDailyMovementSlots("operational:2026-8-5", 100), /bucket date is invalid/);

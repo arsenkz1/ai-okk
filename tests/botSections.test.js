@@ -125,3 +125,44 @@ test("stopping Phoenix is dangerous and asks for a deal id where needed; the lim
   // The command pattern still yields the same single argument.
   assert.equal(registry.getAction("inactivity_limit").command.pattern.exec("/inactivity_limit_on")[1], "on");
 });
+
+test("the limit screen asks for a number, and the command takes one", async () => {
+  const { parseMenuCallback } = require("../dist/bot/keyboards/menuCallbacks");
+  const { inactivityLimitKeyboard, parseInactivityLimit, INACTIVITY_LIMIT_PROMPT } = require("../dist/bot/handlers/performance");
+  const { hasInputHandler } = require("../dist/bot/inputHandlers");
+  const action = registry.getAction("inactivity_limit");
+
+  const [setButton] = inactivityLimitKeyboard().inline_keyboard[1];
+  assert.equal(setButton.text, "Задать число");
+  assert.deepEqual(parseMenuCallback(setButton.callback_data), { kind: "action", actionId: "inactivity_limit", arg: "set", decision: null });
+
+  const args = (text) => {
+    const match = action.command.pattern.exec(text);
+    return match ? match.slice(1).filter((part) => typeof part === "string") : null;
+  };
+  assert.deepEqual(args("/inactivity_limit 30"), ["30"]);
+  assert.deepEqual(args("/inactivity_limit"), []);
+  assert.deepEqual(args("/inactivity_limit_off"), ["off"]);
+  assert.equal(args("/inactivity_limit abc"), null);
+  assert.equal(args("/inactivity_limit30"), null);
+
+  assert.equal(parseInactivityLimit(" 30 "), 30);
+  assert.equal(parseInactivityLimit("100"), 100);
+  for (const bad of ["0", "101", "3.5", "abc", "", "-5"]) assert.equal(parseInactivityLimit(bad), null, bad);
+
+  // "Задать число" opens the question; every other trigger runs straight away.
+  const expected = [];
+  const sent = [];
+  const ctx = (argsList) => ({
+    args: argsList,
+    userId: 7,
+    chatId: 7,
+    pending: { expect: async (userId, kind, payload) => { expected.push([kind, payload]); } },
+    bot: { sendMessage: async (chatId, text) => { sent.push(text); } },
+  });
+  assert.equal(await action.collect(ctx(["set"])), "waiting");
+  assert.deepEqual(expected, [["inactivity_limit_value", { action: "inactivity_limit" }]]);
+  assert.deepEqual(sent, [INACTIVITY_LIMIT_PROMPT]);
+  for (const argsList of [[], ["on"], ["30"]]) assert.equal(await action.collect(ctx(argsList)), "done");
+  assert.equal(hasInputHandler("inactivity_limit_value"), true);
+});

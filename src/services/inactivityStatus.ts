@@ -1,5 +1,5 @@
 import { prisma } from "../config/database";
-import { getInactivityMovementSwitch } from "./inactivityMovementSwitch";
+import { effectiveDailyLimit, getInactivityMovementSwitch } from "./inactivityMovementSwitch";
 import { almatyDailyMovementBucket, dailyMovementLimitForBucket } from "./leadInactivityDailyCap";
 import {
   ACTIVATION_BOUNDARY_SETTING_KEY,
@@ -87,7 +87,7 @@ export async function loadInactivityStatus(
   if (operationalStartDate) {
     try {
       dailyBucket = almatyDailyMovementBucket(now, operationalStartDate);
-      dailyLimit = dailyMovementLimitForBucket(dailyBucket);
+      dailyLimit = dailyMovementLimitForBucket(dailyBucket, effectiveDailyLimit(movementSwitch));
       dailyUsed = await prisma.leadInactivityDailyMovementSlot.count({
         where: { bucketDate: dailyBucket, state: { in: ["reserved", "confirmed", "uncertain"] } },
       });

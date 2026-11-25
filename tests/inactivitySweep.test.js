@@ -230,3 +230,29 @@ test("the sweep runtime reserves from the shared day budget, ensures it once, an
   assert.ok(free_ticket);
   assert.equal(calls.length, before, "a lifted cap touches no slots");
 });
+
+test("the sweep sizes the day's slots by the number set in the bot and resizes on a change", async () => {
+  const { createDailySlotReserver } = require("../dist/services/inactivitySweepRuntime");
+  const ensures = [];
+  const store = {
+    getDailyMovementOperationalStartDate: async () => "2026-08-05",
+    ensureDailyMovementSlots: async (bucket, limit) => { ensures.push(limit); },
+    reserveDailyMovementSlot: async () => ({ slotNumber: 1 }),
+    confirmDailyMovementSlot: async () => {},
+    releaseDailyMovementSlotAfterKnownNoMove: async () => {},
+    markDailyMovementSlotUncertain: async () => {},
+  };
+  let limit = 30;
+  const reserve = createDailySlotReserver({
+    store,
+    isCapDisabled: async () => false,
+    getLimit: async () => limit,
+    now: () => new Date("2026-08-05T10:00:00.000Z"),
+  });
+
+  await reserve({ leadId: 1 });
+  await reserve({ leadId: 2 });
+  limit = 10;
+  await reserve({ leadId: 3 });
+  assert.deepEqual(ensures, [30, 10], "sized once per number, resized when it changes");
+});

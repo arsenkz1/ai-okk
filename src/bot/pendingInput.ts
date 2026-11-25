@@ -21,7 +21,8 @@ export type PendingInputKind =
   | "salary_days"
   | "salary_plan"
   | "salary_fact"
-  | "rate_amount";
+  | "rate_amount"
+  | "inactivity_limit_value";
 
 export type PendingPayload = Record<string, unknown>;
 

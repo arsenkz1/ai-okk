@@ -61,3 +61,11 @@ test("the operational limit can be set from the environment within what the slot
     if (previous === undefined) delete process.env.LEAD_INACTIVITY_DAILY_LIMIT; else process.env.LEAD_INACTIVITY_DAILY_LIMIT = previous;
   }
 });
+
+test("an operational day takes the number passed in; a legacy calendar day keeps 50", () => {
+  const { dailyMovementLimitForBucket } = require("../dist/services/leadInactivityDailyCap");
+  assert.equal(dailyMovementLimitForBucket("operational:2026-08-05", 30), 30);
+  assert.equal(dailyMovementLimitForBucket("2026-08-04", 30), 50);
+  assert.throws(() => dailyMovementLimitForBucket("operational:2026-08-05", 0), /invalid/);
+  assert.throws(() => dailyMovementLimitForBucket("operational:2026-08-05", 101), /invalid/);
+});

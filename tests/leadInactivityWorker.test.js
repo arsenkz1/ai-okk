@@ -777,6 +777,43 @@ test("resets production capacity at 14:00 Almaty into a fresh 50-slot operationa
   assert.deepEqual(calls.confirmDailySlot, [{ bucketDate: "operational:2026-08-05", slotNumber: 1, auditId: "audit-100" }]);
 });
 
+test("sizes the operational day by the number set in the bot, read once per pass", async () => {
+  const atOperationalBoundary = new Date("2026-08-05T09:00:00.000Z");
+  let reads = 0;
+  const { store, amo, calls } = fixture();
+  const worker = createLeadInactivityWorker({
+    store,
+    amo,
+    testingMode: false,
+    getDailyMovementLimit: async () => { reads += 1; return 30; },
+    clock: () => atOperationalBoundary,
+    randomId: () => "audit-100",
+  });
+
+  const result = await worker.runOnce();
+  assert.equal(result.moved, 1);
+  assert.equal(reads, 1);
+  assert.deepEqual(calls.ensureDailySlots, [{ bucketDate: "operational:2026-08-05", limit: 30 }]);
+});
+
+test("does not read the number while the cap is lifted", async () => {
+  let reads = 0;
+  const { store, amo, calls } = fixture();
+  const worker = createLeadInactivityWorker({
+    store,
+    amo,
+    testingMode: false,
+    isDailyCapDisabled: async () => true,
+    getDailyMovementLimit: async () => { reads += 1; return 30; },
+    clock: () => new Date("2026-08-05T09:00:00.000Z"),
+    randomId: () => "audit-100",
+  });
+
+  assert.equal((await worker.runOnce()).moved, 1);
+  assert.equal(reads, 0);
+  assert.deepEqual(calls.ensureDailySlots, []);
+});
+
 test("stops claiming the remaining batch as soon as the final daily slot is consumed", async () => {
   let capacityChecks = 0;
   const { store, amo, calls } = fixture({

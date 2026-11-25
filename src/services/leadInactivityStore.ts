@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { dailyMovementLimitForBucket, isIsoCalendarDate } from "./leadInactivityDailyCap";
+import {
+  isIsoCalendarDate,
+  isOperationalDailyMovementBucket,
+  isValidDailyMovementLimit,
+  LEGACY_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT,
+  MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT,
+} from "./leadInactivityDailyCap";
 
 export const INACTIVITY_MS = 72 * 60 * 60 * 1000;
 export const ACTIVATION_BOUNDARY_SETTING_KEY = "lead_inactivity.activation_boundary";
@@ -257,11 +263,23 @@ function assertDailyMovementBucketDate(bucketDate: string): void {
   }
 }
 
+/**
+ * An operational day takes the operator's number (bot or env), so the store
+ * checks only that it fits the slot table; a legacy calendar day keeps its
+ * fixed capacity.
+ */
 function assertDailyMovementLimit(bucketDate: string, limit: number): void {
   assertDailyMovementBucketDate(bucketDate);
   assertPositiveInteger(limit, "daily movement limit");
-  const expectedLimit = dailyMovementLimitForBucket(bucketDate);
-  if (limit !== expectedLimit) throw new Error(`daily movement limit must be exactly ${expectedLimit}`);
+  if (isOperationalDailyMovementBucket(bucketDate)) {
+    if (!isValidDailyMovementLimit(limit)) {
+      throw new Error(`daily movement limit must be between 1 and ${MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT}`);
+    }
+    return;
+  }
+  if (limit !== LEGACY_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT) {
+    throw new Error(`daily movement limit must be exactly ${LEGACY_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT}`);
+  }
 }
 
 function ceilToSecond(date: Date): Date {

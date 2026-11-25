@@ -15,7 +15,11 @@ import type {
   LeadInactivityWatchState,
 } from "../services/leadInactivityStore";
 import { TESTING_LEADS_MOVEMENT_LIMIT } from "../services/leadInactivityStore";
-import { almatyDailyMovementBucket, dailyMovementLimitForBucket } from "../services/leadInactivityDailyCap";
+import {
+  almatyDailyMovementBucket,
+  dailyLeadInactivityMovementLimit,
+  dailyMovementLimitForBucket,
+} from "../services/leadInactivityDailyCap";
 
 export const LEAD_INACTIVITY_WORKER_INTERVAL_MS = 60_000;
 /**
@@ -134,10 +138,12 @@ export interface CreateLeadInactivityWorkerOptions {
    */
   isMovementPaused?: () => Promise<boolean>;
   /**
-   * When it reports true the 100-per-day cap is not applied: no slot is
+   * When it reports true the daily cap is not applied: no slot is
    * reserved before the PATCH and a full day never returns early.
    */
   isDailyCapDisabled?: () => Promise<boolean>;
+  /** Per-day number for operational days, read once per pass; env/default when absent. */
+  getDailyMovementLimit?: () => Promise<number>;
   notifyAdmins?: (text: string) => Promise<void>;
   testingMode?: boolean;
   clock?: () => Date;
@@ -189,6 +195,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
     result: LeadInactivityWorkerResult,
     renewWorkerRunLease: () => Promise<boolean>,
     dailyCapApplies: boolean,
+    operationalDailyLimit: number,
   ): Promise<void> => {
     const auditId = randomId();
     const dailyReservation = { slot: null as LeadInactivityDailyMovementSlot | null };
@@ -273,7 +280,7 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
           beforeFinalPatch: async (): Promise<"allow" | "daily_capacity_unavailable"> => {
             const finalNow = clock();
             const finalBucketDate = almatyDailyMovementBucket(finalNow, operationalStartDate);
-            const finalLimit = dailyMovementLimitForBucket(finalBucketDate);
+            const finalLimit = dailyMovementLimitForBucket(finalBucketDate, operationalDailyLimit);
             if (finalBucketDate !== dailyBucketDate) {
               await options.store.ensureDailyMovementSlots(finalBucketDate, finalLimit);
             }
@@ -474,8 +481,11 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
         const operationalStartDate = testingMode
           ? "9999-12-31"
           : await options.store.getDailyMovementOperationalStartDate();
+        const operationalDailyLimit = dailyCapApplies && options.getDailyMovementLimit
+          ? await options.getDailyMovementLimit()
+          : dailyLeadInactivityMovementLimit();
         const dailyBucketDate = almatyDailyMovementBucket(now, operationalStartDate);
-        const dailyMovementLimit = dailyMovementLimitForBucket(dailyBucketDate);
+        const dailyMovementLimit = dailyMovementLimitForBucket(dailyBucketDate, operationalDailyLimit);
         if (dailyCapApplies) {
           await options.store.ensureDailyMovementSlots(dailyBucketDate, dailyMovementLimit);
           if (!await options.store.hasDailyMovementCapacity(dailyBucketDate, dailyMovementLimit)) {
@@ -500,9 +510,10 @@ export function createLeadInactivityWorker(options: CreateLeadInactivityWorkerOp
             result,
             () => options.store.renewWorkerRunLease(runLeaseToken, clock()),
             dailyCapApplies,
+            operationalDailyLimit,
           );
           const currentDailyBucketDate = almatyDailyMovementBucket(clock(), operationalStartDate);
-          const currentDailyMovementLimit = dailyMovementLimitForBucket(currentDailyBucketDate);
+          const currentDailyMovementLimit = dailyMovementLimitForBucket(currentDailyBucketDate, operationalDailyLimit);
           if (
             result.uncertain > 0
             || (dailyCapApplies && !await options.store.hasDailyMovementCapacity(currentDailyBucketDate, currentDailyMovementLimit))

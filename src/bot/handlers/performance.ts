@@ -13,10 +13,12 @@ import {
 import { formatRevenueStageSync, syncRevenueStages } from "../../services/revenueStageSync";
 import { formatInactivityStatus, loadInactivityStatus } from "../../services/inactivityStatus";
 import {
+  effectiveDailyLimit,
   formatInactivityDailyCap,
   formatInactivityMovementSwitch,
   getInactivityMovementSwitch,
   setInactivityDailyCap,
+  setInactivityDailyLimit,
   setInactivityMovementPaused,
 } from "../../services/inactivityMovementSwitch";
 import {
@@ -46,7 +48,10 @@ import { defineAction } from "../actions/registry";
 import { registerCommandActions } from "../actions/dispatch";
 import { createChoiceCollect, createPickManagerCollect, createSetPlanCollect, DAY_OPTIONS, planViewMonthOptions, splitPacked } from "../actions/pickerFlows";
 import { actionCallback } from "../keyboards/menuCallbacks";
-import { dailyLeadInactivityMovementLimit } from "../../services/leadInactivityDailyCap";
+import { isValidDailyMovementLimit, MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT } from "../../services/leadInactivityDailyCap";
+import { defineInputHandler } from "../inputHandlers";
+import { dispatchAnswer } from "../actions/inputFlows";
+import { cancelKeyboard } from "../keyboards/cancel";
 
 /**
  * Plan management and the call/revenue/plan report for a manager, a team lead's
@@ -61,15 +66,38 @@ async function linkedManager(telegramUserId: string) {
 
 export const PLAN_EDITOR_DENY_TEXT = "❌ Reja belgilash faqat ROP va administrator uchun.";
 
-/** The two switches under the limit screen; each re-runs the action with its argument. */
+/** The controls under the limit screen; each re-runs the action with its argument. */
 export function inactivityLimitKeyboard(): TelegramBot.InlineKeyboardMarkup {
   return {
-    inline_keyboard: [[
-      { text: "Включить лимит", callback_data: actionCallback("inactivity_limit", "on") },
-      { text: "Снять лимит", callback_data: actionCallback("inactivity_limit", "off") },
-    ]],
+    inline_keyboard: [
+      [
+        { text: "Включить лимит", callback_data: actionCallback("inactivity_limit", "on") },
+        { text: "Снять лимит", callback_data: actionCallback("inactivity_limit", "off") },
+      ],
+      [{ text: "Задать число", callback_data: actionCallback("inactivity_limit", "set") }],
+    ],
   };
 }
+
+export const INACTIVITY_LIMIT_PROMPT = `Сколько сделок в сутки можно переводить в Феникс? Отправьте число от 1 до ${MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT}.`;
+export const INACTIVITY_LIMIT_ERROR = `Нужно целое число от 1 до ${MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT}, например 30. Отправьте ещё раз.`;
+
+/** The typed number; a wrong one keeps the question open. */
+export function parseInactivityLimit(text: string): number | null {
+  const value = text.trim();
+  if (!/^\d{1,3}$/.test(value)) return null;
+  const limit = Number(value);
+  return isValidDailyMovementLimit(limit) ? limit : null;
+}
+
+defineInputHandler("inactivity_limit_value", async (ctx) => {
+  if (parseInactivityLimit(ctx.text) === null) {
+    await ctx.bot.sendMessage(ctx.chatId, INACTIVITY_LIMIT_ERROR, { reply_markup: cancelKeyboard() });
+    return;
+  }
+  await ctx.pending.cancel(ctx.userId);
+  await dispatchAnswer(ctx, ctx.text.trim());
+});
 
 /** Setting a plan is a ROP/admin action; team leads may only read one. */
 async function requirePlanEditor(bot: TelegramBot, msg: TelegramBot.Message): Promise<boolean> {
@@ -261,7 +289,7 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
         );
         return;
       }
-      await bot.sendMessage(msg.chat.id, formatSweepProposal(started.pending, started.scanned, state.dailyCapDisabled ? null : dailyLeadInactivityMovementLimit()), {
+      await bot.sendMessage(msg.chat.id, formatSweepProposal(started.pending, started.scanned, state.dailyCapDisabled ? null : effectiveDailyLimit(state)), {
         reply_markup: buildSweepKeyboard(started.pending.token),
       });
     } catch (error) {
@@ -302,26 +330,41 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
     }
   });
 
-  // /inactivity_limit_on | /inactivity_limit_off — the 100-per-day cap alone,
-  // independent of whether moves run. /inactivity_limit shows the current one.
+  // /inactivity_limit_on | /inactivity_limit_off | /inactivity_limit N — the
+  // daily cap alone, independent of whether moves run. /inactivity_limit
+  // shows the current one; the "Задать число" button asks for N.
   defineAction({
     id: "inactivity_limit", section: "phoenix", order: 30, roles: ["admin", "rop"], denyText: PLAN_EDITOR_DENY_TEXT, label: "Feniks limiti",
     command: {
-      pattern: /^\/inactivity_limit(?:_(on|off))?$/, usage: "/inactivity_limit[_on|_off]", description: "kunlik limit holati va o'zgartirish",
+      pattern: /^\/inactivity_limit(?:_(on|off)|\s+(\d+))?$/, usage: "/inactivity_limit[_on|_off] yoki /inactivity_limit 30", description: "kunlik limit holati, yoqish/o'chirish va sonini belgilash",
       menu: [
-        { command: "inactivity_limit", description: "limit holatini ko'rish" },
+        { command: "inactivity_limit", description: "limit holati; /inactivity_limit 30 — kunlik sonni belgilash" },
         { command: "inactivity_limit_on", description: "kunlik ko'chirish limitini yoqish (vorker va sverkalar uchun umumiy)" },
         { command: "inactivity_limit_off", description: "kunlik limitni o'chirish (cheklovsiz)" },
       ],
+    },
+    async collect(ctx) {
+      if (ctx.args[0] !== "set") return "done";
+      await ctx.pending.expect(ctx.userId, "inactivity_limit_value", { action: "inactivity_limit" });
+      await ctx.bot.sendMessage(ctx.chatId, INACTIVITY_LIMIT_PROMPT, { reply_markup: cancelKeyboard() });
+      return "waiting";
     },
     async run(ctx) {
       const msg = ctx.message!;
     if (!(await requirePlanEditor(bot, msg))) return;
     const action = ctx.args[0];
+    const isNumber = action !== undefined && /^\d+$/.test(action);
+    const typedLimit = isNumber ? parseInactivityLimit(action) : null;
+    if (isNumber && typedLimit === null) {
+      await bot.sendMessage(msg.chat.id, `Лимит должен быть от 1 до ${MAX_DAILY_LEAD_INACTIVITY_MOVEMENT_LIMIT}. Например: /inactivity_limit 30`);
+      return;
+    }
     try {
-      const state = action
-        ? await setInactivityDailyCap(action === "on", String(msg.from!.id))
-        : await getInactivityMovementSwitch();
+      const state = typedLimit !== null
+        ? await setInactivityDailyLimit(typedLimit, String(msg.from!.id))
+        : action === "on" || action === "off"
+          ? await setInactivityDailyCap(action === "on", String(msg.from!.id))
+          : await getInactivityMovementSwitch();
       let today: { limit: number | null; used: number } | null = null;
       try {
         const status = await loadInactivityStatus();
@@ -329,8 +372,8 @@ export function registerPerformanceHandlers(bot: TelegramBot): void {
       } catch {
         // The counter is a courtesy; the switch itself is already written.
       }
-      // From the keyboard the state comes with its two switches, so the limit
-      // is one screen; the command keeps its plain text.
+      // From the keyboard the state comes with its controls, so the limit is
+      // one screen; the command keeps its plain text.
       await bot.sendMessage(msg.chat.id, formatInactivityDailyCap(state, today), ctx.source === "command" ? {} : { reply_markup: inactivityLimitKeyboard() });
     } catch (error) {
       await bot.sendMessage(msg.chat.id, `Не удалось изменить лимит: ${error instanceof Error ? error.message : "ошибка"}`);

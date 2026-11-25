@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "../config/database";
-import { isInactivityDailyCapDisabled, isInactivityMovementPaused } from "./inactivityMovementSwitch";
+import {
+  getInactivityDailyMovementLimit,
+  isInactivityDailyCapDisabled,
+  isInactivityMovementPaused,
+} from "./inactivityMovementSwitch";
 import { createRecentTouchGuard, type DailySlotTicket, type SweepCandidate, type SweepMoveDependencies } from "./inactivitySweep";
 import { almatyDailyMovementBucket, dailyMovementLimitForBucket } from "./leadInactivityDailyCap";
 import { createPrismaLeadInactivityPersistence } from "./leadInactivityPrismaPersistence";
@@ -32,6 +36,8 @@ type SlotStore = Pick<LeadInactivityStore,
 export function createDailySlotReserver(dependencies: {
   store: SlotStore;
   isCapDisabled: () => Promise<boolean>;
+  /** The per-day number; env/default when absent. Re-read per lead, so a change mid-sweep applies. */
+  getLimit?: () => Promise<number>;
   now?: () => Date;
   randomId?: () => string;
 }): (candidate: SweepCandidate) => Promise<DailySlotTicket | null> {
@@ -42,9 +48,13 @@ export function createDailySlotReserver(dependencies: {
     if (await dependencies.isCapDisabled()) return UNCAPPED_TICKET;
     const at = now();
     const bucket = almatyDailyMovementBucket(at, await dependencies.store.getDailyMovementOperationalStartDate());
-    if (!ensured.has(bucket)) {
-      await dependencies.store.ensureDailyMovementSlots(bucket, dailyMovementLimitForBucket(bucket));
-      ensured.add(bucket);
+    const limit = dependencies.getLimit
+      ? dailyMovementLimitForBucket(bucket, await dependencies.getLimit())
+      : dailyMovementLimitForBucket(bucket);
+    // Slots are sized once per bucket and number; a new number resizes them.
+    if (!ensured.has(`${bucket}:${limit}`)) {
+      await dependencies.store.ensureDailyMovementSlots(bucket, limit);
+      ensured.add(`${bucket}:${limit}`);
     }
     const auditId = `sweep:${randomId()}`;
     const slot = await dependencies.store.reserveDailyMovementSlot(bucket, candidate.leadId, auditId, at);
@@ -100,6 +110,7 @@ export function createSweepRuntime(environment: Record<string, string | undefine
     reserveDailySlot: createDailySlotReserver({
       store: createLeadInactivityStore(createPrismaLeadInactivityPersistence(prisma)),
       isCapDisabled: () => isInactivityDailyCapDisabled(),
+      getLimit: () => getInactivityDailyMovementLimit(),
     }),
   };
 }
